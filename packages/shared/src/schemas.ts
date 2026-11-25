@@ -62,7 +62,7 @@ export const AppSettingsSchema = z.object({
   disabledHarnesses: z.array(HarnessIdSchema),
   /** Executable on PATH or a full path, started without arguments. */
   customCommand: z.string().max(2000),
-  /** Generic update feed (electron-updater latest.yml); empty disables checks. */
+  /** Generic update feed (electron-updater latest.yml); empty uses the built-in feed. */
   updateFeedUrl: z.string().max(2000).default(''),
 });
 export type AppSettings = z.infer<typeof AppSettingsSchema>;
