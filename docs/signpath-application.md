@@ -57,3 +57,7 @@ Use this as the project description in the application:
 5. Verify with `Get-AuthenticodeSignature` before publishing the draft.
 
 The publisher shown by Windows will be **SignPath Foundation**, not the individual maintainer. This is expected for certificates issued by the Foundation. If a custom publisher name is required later, use an OV certificate instead.
+
+## Risk
+
+SignPath states that it cannot sign binaries from source code nobody knows and requires some verifiable project reputation. Nest is a new repository, so the application may be declined. The fallback is an OV certificate with cloud signing; see [release.md](release.md#где-взять-сертификат).
