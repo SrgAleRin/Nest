@@ -124,11 +124,12 @@ Tauri 2 не входит в MVP, но оставлен как future experiment
 
 ## Следующий шаг
 
-Foundation собран локально. Перед тегом `foundation-v0.1`:
+Foundation собран; resume последней беседы и авто-возобновление уже работают. Дальше по порядку:
 
-1. прогнать CI на удалённом репозитории;
-2. сделать smoke реального harness (Claude Code / Codex) на машине коллег;
-3. проверить два одновременных dev-профиля;
-4. собрать NSIS-установщик.
+1. **Точный resume по сохранённому `harness_session_id`** — миграция, discovery-адаптеры Claude/Codex/OpenCode/pi/Copilot, fallback на `--continue`, бейдж режима в UI.
+2. Smoke **Codex и OpenCode** в самом Nest; Claude — на машине коллег.
+3. Собрать NSIS-установщик и проверить на чистой Windows.
+4. Прогнать CI на удалённом репозитории, проверить два одновременных dev-профиля.
+5. Поставить тег `foundation-v0.1` и перейти к fork point.
 
-После этого — fork point и параллельные workstreams из [parallel-dev.md](docs/parallel-dev.md). Оставшиеся продуктовые вопросы — в [roadmap](docs/roadmap.md#5-открытые-вопросы).
+Подробный план и таблица discovery — в [roadmap](docs/roadmap.md#точный-resume-по-session-id-следующий-шаг). После тега — параллельные workstreams из [parallel-dev.md](docs/parallel-dev.md).

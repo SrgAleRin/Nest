@@ -14,7 +14,22 @@ MVP считается готовым, если можно:
 8. переключиться на другую задачу и вернуться без потери контекста;
 9. закрыть и открыть приложение — задачи и scrollback на месте.
 
-В MVP **нет**: нативного чата, browser, плагинов, remote/SSH, mobile, split panes, PR-провайдеров и checks, фонового daemon. PTY-сессии завершаются вместе с приложением; после перезапуска остаются метаданные и scrollback.
+В MVP **нет**: нативного чата, browser, плагинов, remote/SSH, mobile, split panes, PR-провайдеров и checks, фонового daemon. PTY-сессии завершаются вместе с приложением, но сессии, живые при закрытии, автоматически продолжаются через resume harness; метаданные и scrollback сохраняются.
+
+## 1.1 Ближайший план
+
+Порядок работ после текущего foundation:
+
+| # | Шаг | Зачем |
+|---|---|---|
+| 1 | **Точный resume по `harness_session_id`** | Resume должен продолжать именно эту беседу, а не последнюю в workspace |
+| 2 | Smoke реальных harness: Codex, OpenCode | Проверить TUI, ввод, resize, exit и resume на живых CLI |
+| 3 | Установщик NSIS + запуск на чистой Windows | Проверить `node-pty` prebuilds, `node:sqlite`, asar, первый запуск |
+| 4 | CI на удалённом репозитории + два dev-профиля | Закрыть exit criteria foundation |
+| 5 | Тег `foundation-v0.1` и fork point | Разрешить параллельные workstreams |
+| 6 | P1-полировка (уведомления, palette, настройки, range-комментарии) | «Удобно каждый день» |
+
+Точный resume — единственный пункт, который меняет контракты и схему БД, поэтому он идёт первым, до fork point.
 
 ## 2. План разработки
 
@@ -63,6 +78,8 @@ Phase 5 Integration / release
 - [x] `packages/core`: SQLite baseline, миграции, project/task/git/session/comment services;
 - [x] PTY + xterm, scrollback в SQLite, восстановление `exited` после рестарта;
 - [x] Resume завершённой сессии в той же вкладке (`--continue` / `resume --last`);
+- [x] Авто-возобновление сессий, живых при закрытии/краше (`resume_on_start`);
+- [ ] Точный resume по сохранённому `harness_session_id`;
 - [x] git status/diff/stage/commit/push, inline-комментарии, отправка в сессию;
 - [x] `MockRpcClient` и `FakeHarness`;
 - [x] `NEST_PROFILE` изолирует userData, БД, worktree-root;
@@ -97,7 +114,37 @@ git worktree add ../nest-platform -b chore/platform main
 
 Phase 2–4 — это milestones, а не отдельные ветки. Их закрывают параллельные workstreams; один workstream может трогать несколько фаз. Правила merge, contract changes, миграции и изоляция профилей — в [parallel-dev.md](parallel-dev.md).
 
+### Точный resume по session id (следующий шаг)
+
+`--continue` продолжает последнюю беседу harness в рабочей директории. Если в задаче несколько сессий одного CLI, этого мало. Нужно хранить id беседы и продолжать именно её.
+
+План:
+
+1. Миграция: `sessions.harness_session_id TEXT`, `sessions.resume_mode TEXT` (`exact` / `latest`).
+2. После старта сессии — discovery-адаптер harness с таймаутом ~3 с: найти id, созданный после `created_at`, для текущего `cwd`.
+3. Resume: если id известен — запускать по id; иначе fallback на `--continue` / `resume --last`.
+4. В UI показывать, какой режим будет использован: `Resume exact` или `Resume latest`.
+5. Если exact resume падает — не терять сессию, предложить `Resume latest` / `New session`.
+
+Discovery по harness:
+
+| Harness | Где искать id | Resume exact |
+|---|---|---|
+| Claude Code | `~/.claude/projects/<escaped-cwd>/*.jsonl`, новейший файл | `claude --resume <id>` |
+| Codex | `~/.codex/sessions/.../rollout-*.jsonl`, `session_meta.payload.id` | `codex resume <id>` |
+| OpenCode | `opencode session list --format json` в cwd | `opencode --session <id>` |
+| pi | `~/.pi/agent/sessions/<cwd-key>/*.jsonl` | `pi --session <id>` |
+| Copilot | `~/.copilot/session-state/<uuid>/workspace.yaml` | `copilot --resume <id>` |
+| DSH | пока неизвестно | `dsh tui --resume <id>` (best effort) |
+| Fake | id не нужен | тест через подмену адаптера |
+
+Проверка: unit-тест на выбор id по mtime/cwd, e2e на `FakeHarness`, ручной smoke на OpenCode и Codex.
+
 ### Phase 2 — задачи и worktrees (parallel, 1 неделя)
+
+Частично сделано в foundation: `worktree add/remove`, main checkout, New task.
+
+Осталось: `git fetch`, прогресс и rollback, setup script и копирование `.env`, проверка dirty перед удалением, выбор `New worktree` / `Main checkout` в модалке, running-секция в сайдбаре.
 
 - модалка New task с выбором `New worktree` / `Main checkout` (второй просто открывает существующий main checkout);
 - `git fetch` + `git worktree add` для worktree;
@@ -110,6 +157,10 @@ Phase 2–4 — это milestones, а не отдельные ветки. Их �
 
 ### Phase 3 — сессии и терминал (parallel, 1 неделя)
 
+Сделано в foundation: профили, start/stop/resume, табы, resize, scrollback, статусы, завершение PTY.
+
+Осталось: search и links, copy/paste shortcuts, лимит смонтированных xterm, точный resume по session id.
+
 - реестр harness-профилей: Claude Code, Codex, DeepSeek Harness, OpenCode, pi, Copilot, custom;
 - запуск/остановка/рестарт сессии;
 - табы сессий, переключение задач без убийства PTY;
@@ -121,6 +172,10 @@ Phase 2–4 — это milestones, а не отдельные ветки. Их �
 **Exit criteria:** 5 параллельных сессий, переключение между ними < 100 мс, память < 500 МБ, после рестарта scrollback на месте, процессы не висят.
 
 ### Phase 4 — git, diff и комментарии (parallel, 1–2 недели)
+
+Сделано в foundation: status/diff/stage/commit/push, inline-комментарии, отправка в сессию, Sessions-панель.
+
+Осталось: `@parcel/watcher`, numstat, подсветка/виртуализация diff, range-комментарии и re-anchor (P1).
 
 - `git status` с watcher;
 - список файлов, numstat;
@@ -164,7 +219,6 @@ Phase 2–4 — это milestones, а не отдельные ветки. Их �
 
 - системные уведомления + бейдж;
 - command palette;
-- точный resume по harness session id (сейчас — последняя беседа в workspace);
 - комментарии к диапазону строк (range) и re-anchor при изменении diff;
 - shared dirs (`node_modules`) через junction/symlink;
 - архив задач и очистка старых worktree;
@@ -209,7 +263,7 @@ Phase 2–4 — это milestones, а не отдельные ветки. Их �
 ## 5. Открытые вопросы
 
 1. **Проверка Claude Code.** Кто из коллег и на какой версии CLI делает первый реальный smoke-тест после MVP? План: `FakeHarness` в e2e сейчас, реальный запуск — после MVP, фиксация версии в `harness-compat.md`.
-2. **Точные команды/версии.** Подтвердить `pi`, `copilot`, `dsh`, `opencode`: команда, флаги resume, hooks. Собрать в таблицу совместимости.
+2. **Точные команды/версии.** Подтверждены launch/resume-флаги OpenCode (`--continue`, `--session`), Codex (`resume --last`, `resume <id>`), pi (`--continue`, `--session`), Copilot (`--continue`, `--resume`). Осталось: discovery session id для каждого CLI, `dsh` resume и hooks.
 3. **Main checkout.** Разрешать несколько сессий одновременно? Рекомендация: да, но с предупреждением; worktree — для рискованных задач.
 4. **Комментарии к diff.** Как отправлять многострочный текст в конкретный CLI: bracketed paste, построчная отправка или clipboard fallback? Проверить на Claude/Codex/DSH.
 5. **Anchor комментариев.** Что делать, если строка уехала после нового diff: показывать предупреждение или пытаться re-anchor? В MVP — предупреждение, re-anchor в P1.
@@ -224,7 +278,7 @@ Phase 2–4 — это milestones, а не отдельные ветки. Их �
 - комментарий к строке diff сохраняется после рестарта и отправляется в `FakeHarness`;
 - создание worktree-задачи и запуск агента — < 30 секунд на среднем репо;
 - ни одного потерянного worktree при штатных сценариях;
-- PTY-сессии завершаются при выходе из приложения, scrollback восстанавливается;
+- PTY-сессии завершаются при выходе из приложения, живые сессии автоматически возобновляются через resume, scrollback восстанавливается;
 - хотя бы 2 harness проходят smoke-тест; Claude-профиль проверен через `FakeHarness`;
 - ошибки git/PTY показываются человеческим текстом с действием;
 - e2e-тест проходит полный цикл;
