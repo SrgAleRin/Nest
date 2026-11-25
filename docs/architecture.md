@@ -395,9 +395,9 @@ pty.onData(chunk)
 
 ### 6.7 Безопасность терминала
 
-- `allowProposedApi: false`;
-- OSC 8 ссылки — только по подтверждению, открывать в системном браузере;
-- clipboard: `Ctrl+Shift+C/V` на Linux/Windows, `Cmd+C/V` на macOS;
+- `allowProposedApi: true` только ради decorations у `@xterm/addon-search`; xterm закреплён версией, а приложение не исполняет код из PTY-потока как API;
+- ссылки в выводе — `@xterm/addon-web-links`, открываются по Ctrl/Cmd+клику через `app.openExternal`, который пропускает только `http:`, `https:` и `mailto:`;
+- clipboard: `Ctrl+Shift+C/V` на Linux/Windows, `Cmd+Shift+C/V` на macOS; `Ctrl+C` копирует только когда есть выделение, иначе уходит в PTY как SIGINT;
 - не интерпретировать вывод агента как HTML.
 
 ## 7. Git и workspace

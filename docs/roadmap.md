@@ -153,7 +153,9 @@ Shared dirs (`node_modules`) остаются в P1.
 
 Сделано в foundation: профили, start/stop/resume, табы, resize, scrollback, статусы, завершение PTY, точный resume по session id.
 
-Осталось: search и links, copy/paste shortcuts, лимит смонтированных xterm.
+Сделано в Phase 3: поиск по терминалу (`Ctrl/Cmd+F`, подсветка всех совпадений, счётчик, Enter/Shift+Enter), кликабельные ссылки через allowlist `app.openExternal`.
+
+Осталось: copy/paste shortcuts через clipboard, лимит смонтированных xterm.
 
 - реестр harness-профилей: Claude Code, Codex, DeepSeek Harness, OpenCode, pi, Copilot, custom;
 - запуск/остановка/рестарт сессии;
