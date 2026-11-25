@@ -49,7 +49,10 @@ export const rpcMethods = {
     }),
     result: TaskSchema,
   },
-  'tasks.remove': { params: z.object({ taskId: id }), result: z.void() },
+  'tasks.remove': {
+    params: z.object({ taskId: id, force: z.boolean().optional() }),
+    result: z.void(),
+  },
   'tasks.reveal': { params: z.object({ taskId: id }), result: z.void() },
 
   'git.status': { params: z.object({ taskId: id }), result: GitStatusSchema },

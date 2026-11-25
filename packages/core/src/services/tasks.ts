@@ -142,22 +142,49 @@ export class TaskService {
     return this.get(id);
   }
 
-  async remove(taskId: string): Promise<void> {
+  async remove(taskId: string, options: { force?: boolean } = {}): Promise<void> {
     const task = this.get(taskId);
     if (task.kind === 'checkout' || task.slug === MAIN_CHECKOUT_SLUG) {
       throw new NestError('checkout_immutable', 'The main checkout cannot be removed');
     }
 
+    if (!options.force) {
+      const changes = await this.worktreeChanges(task.workspacePath);
+      if (changes.length > 0) {
+        const preview = changes.slice(0, 20).join('\n');
+        const more =
+          changes.length > 20 ? `\n…and ${changes.length - 20} more changed files` : '';
+        throw new NestError(
+          'workspace_dirty',
+          `Worktree has ${changes.length} uncommitted change${changes.length === 1 ? '' : 's'}`,
+          `${preview}${more}\n\nRemove the task only if these changes are not needed.`,
+        );
+      }
+    }
+
     await this.beforeRemove(task);
     const project = this.projects.get(task.projectId);
 
-    await git(project.path, ['worktree', 'remove', '--force', task.workspacePath]).catch(
-      async () => {
-        await git(project.path, ['worktree', 'prune']).catch(() => {});
-      },
-    );
+    const args = options.force
+      ? ['worktree', 'remove', '--force', task.workspacePath]
+      : ['worktree', 'remove', task.workspacePath];
+    await git(project.path, args).catch(async () => {
+      await git(project.path, ['worktree', 'prune']).catch(() => {});
+    });
 
     this.db.prepare('DELETE FROM tasks WHERE id = ?').run(taskId);
+  }
+
+  /** Tracked, staged and untracked changes; an already missing worktree is clean. */
+  private async worktreeChanges(workspacePath: string): Promise<string[]> {
+    const output = await gitOrNull(workspacePath, ['status', '--porcelain']);
+    if (!output) return [];
+    return output
+      .split('\n')
+      .map((line) => line.trimEnd())
+      .filter(Boolean)
+      .map((line) => line.slice(3).trim() || line.trim())
+      .filter(Boolean);
   }
 
   private async fetch(repoPath: string): Promise<void> {

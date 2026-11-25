@@ -136,9 +136,9 @@ Discovery по harness:
 
 Частично сделано в foundation: `worktree add/remove`, main checkout, New task.
 
-Сделано в Phase 2: `git fetch --prune` перед созданием (best effort, база может быть `origin/main`), setup script на проекте + копирование `.env` / `.env.local`, `setup_error` и бейдж `setup` при падении скрипта.
+Сделано в Phase 2: `git fetch --prune` перед созданием (best effort, база может быть `origin/main`), setup script на проекте + копирование `.env` / `.env.local`, `setup_error` и бейдж `setup` при падении скрипта, проверка dirty перед удалением worktree (`workspace_dirty` без `force`, файлы перечисляются в подтверждении).
 
-Осталось: прогресс создания и rollback в UI, проверка dirty перед удалением, выбор `New worktree` / `Main checkout` в модалке, running-секция в сайдбаре.
+Осталось: прогресс создания и rollback в UI, выбор `New worktree` / `Main checkout` в модалке, running-секция в сайдбаре.
 
 - модалка New task с выбором `New worktree` / `Main checkout` (второй просто открывает существующий main checkout);
 - `git fetch` + `git worktree add` для worktree;

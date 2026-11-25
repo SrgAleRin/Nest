@@ -217,12 +217,49 @@ export function App() {
 
   const removeTask = useCallback(
     async (task: Task) => {
-      if (!window.confirm(`Remove task "${task.title}" and its worktree?`)) return;
+      let changes: string[] = [];
       try {
-        await client.invoke('tasks.remove', { taskId: task.id });
+        const status = await client.invoke('git.status', { taskId: task.id });
+        changes = status.files.map((file) => file.path);
+      } catch {
+        // The workspace may already be gone; removeTask still has to work.
+      }
+
+      const preview =
+        changes.slice(0, 15).join('\n') +
+        (changes.length > 15 ? `\n…and ${changes.length - 15} more` : '');
+      const message =
+        changes.length > 0
+          ? `Worktree of "${task.title}" has ${changes.length} uncommitted ` +
+            `change${changes.length === 1 ? '' : 's'}:\n\n${preview}\n\n` +
+            'Remove the task and discard these changes?'
+          : `Remove task "${task.title}" and its worktree?`;
+      if (!window.confirm(message)) return;
+
+      const remove = async (force: boolean) => {
+        await client.invoke('tasks.remove', { taskId: task.id, force });
         setTasks((prev) => prev.filter((candidate) => candidate.id !== task.id));
         await refreshAll();
+      };
+
+      try {
+        await remove(changes.length > 0);
       } catch (error) {
+        // The status may have changed between the check and the removal.
+        if (error instanceof Error && error.name === 'workspace_dirty') {
+          if (
+            window.confirm(
+              `${error.message}\n\nDelete anyway? The worktree and its uncommitted changes will be lost.`,
+            )
+          ) {
+            try {
+              await remove(true);
+            } catch (forceError) {
+              notify('error', errorMessage(forceError));
+            }
+          }
+          return;
+        }
         notify('error', errorMessage(error));
       }
     },

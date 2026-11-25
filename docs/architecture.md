@@ -464,7 +464,7 @@ Rollback:
 | unstage | `git restore --staged -- <path>` |
 | commit | `git commit -m <message>` |
 | push | `git push -u origin HEAD` |
-| delete worktree | `git worktree remove <path>` (только для `kind=worktree`) |
+| delete worktree | `git worktree remove <path>`; `--force` — только после подтверждения dirty-файлов |
 | list worktrees | `git worktree list --porcelain` |
 
 Все команды — через `execa` с `windowsHide: true`, таймаутом и `maxBuffer`. Долгие (`fetch`, `status` на огромном репо, `diff`) — в worker thread или дочернем процессе, чтобы не блокировать main.
@@ -484,6 +484,7 @@ PR и checks в MVP нет. Если появятся позже, это отд�
 - пути с пробелами и кириллицей — всегда массив аргументов, не склейка строк;
 - Windows long paths (>260) — включить long path support, предупреждать в настройках;
 - file locks (antivirus, editor) — `git worktree remove` может упасть; предложить `Force delete` и повторить;
+- dirty worktree — удаление возвращает `workspace_dirty` со списком файлов; UI сначала спрашивает подтверждение и только потом передаёт `force: true`;
 - submodules и LFS — не поддерживаем в MVP, показываем предупреждение;
 - detached HEAD в worktree-задаче — задача не создаётся, показываем ошибку;
 - detached HEAD в main checkout — работать можно, но показываем предупреждение и не даём создать worktree-задачу от «detached» base;

@@ -132,4 +132,41 @@ describe('task setup', () => {
       core.tasks.create({ projectId, title: 'Bad base', baseBranch: 'missing-branch' }),
     ).rejects.toThrow(/does not exist/);
   });
+
+  it('removes a clean worktree without force', async () => {
+    if (!core) throw new Error('core was not created');
+    const task = await core.tasks.create({
+      projectId,
+      title: 'Clean remove',
+      setupScript: null,
+    });
+
+    await core.tasks.remove(task.id);
+
+    expect(existsSync(task.workspacePath)).toBe(false);
+    expect(core.tasks.list(projectId).some((candidate) => candidate.id === task.id)).toBe(false);
+  });
+
+  it('refuses a dirty worktree until the removal is forced', async () => {
+    if (!core) throw new Error('core was not created');
+    const task = await core.tasks.create({
+      projectId,
+      title: 'Dirty remove',
+      setupScript: null,
+    });
+    writeFileSync(path.join(task.workspacePath, 'dirty.txt'), 'not committed\n', 'utf8');
+
+    const failure = await core.tasks.remove(task.id).then(
+      () => null,
+      (error: unknown) => error as { code?: string; details?: string },
+    );
+    expect(failure).toMatchObject({ code: 'workspace_dirty' });
+    expect(failure?.details).toContain('dirty.txt');
+    expect(existsSync(task.workspacePath)).toBe(true);
+    expect(core.tasks.get(task.id).id).toBe(task.id);
+
+    await core.tasks.remove(task.id, { force: true });
+    expect(existsSync(task.workspacePath)).toBe(false);
+    expect(() => core!.tasks.get(task.id)).toThrow(/not found/);
+  });
 });
