@@ -1,0 +1,1154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Nest — UI preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#080a0e;
+    --panel:#0b0e13;
+    --panel-2:#0e1218;
+    --elev:#11161e;
+    --border:#222a35;
+    --border-soft:#1a2029;
+    --text:#e7ecf6;
+    --muted:#8b95a7;
+    --dim:#5d6676;
+    --accent:#7aa2f7;
+    --accent-2:#7dcfff;
+    --green:#9ece6a;
+    --amber:#e0af68;
+    --red:#f7768e;
+    --purple:#bb9af7;
+    --font-ui:'Inter','Segoe UI',system-ui,sans-serif;
+    --font-mono:'JetBrains Mono','Cascadia Code',Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:#06080b;
+    color:var(--text);
+    font-family:var(--font-ui);
+    -webkit-font-smoothing:antialiased;
+  }
+  .preview-bar{
+    height:54px;display:flex;align-items:center;gap:18px;padding:0 20px;
+    background:#0a0d12;border-bottom:1px solid #1b222c;position:sticky;top:0;z-index:20;
+  }
+  .preview-title{font-weight:600;font-size:13px;letter-spacing:.2px;color:#cfd6e4;white-space:nowrap}
+  .preview-title span{color:#5d6676;font-weight:400}
+  .preview-tabs{display:flex;gap:3px;background:#10141b;padding:3px;border-radius:8px;border:1px solid #1e2530}
+  .preview-tabs button{
+    height:26px;padding:0 11px;border:0;border-radius:6px;background:transparent;color:#7d8798;
+    font:500 11.5px var(--font-ui);cursor:pointer;
+  }
+  .preview-tabs button:hover{color:#c3cbd9}
+  .preview-tabs button.active{background:#232b38;color:#fff;box-shadow:0 1px 0 rgba(255,255,255,.05) inset}
+  .preview-hint{margin-left:auto;color:#4f5a6c;font:10.5px var(--font-mono);white-space:nowrap;display:flex;align-items:center;gap:10px}
+  .zoom-btn{
+    height:24px;padding:0 8px;border:1px solid #232a35;border-radius:5px;background:#10141b;
+    color:#8b95a7;font:10px var(--font-mono);cursor:pointer;
+  }
+  .zoom-btn:hover{color:#dfe6f3;border-color:#2c3646}
+  .viewport{width:100%;padding:18px;display:flex;justify-content:center}
+  .frame{width:1440px;height:900px;flex:0 0 auto}
+  .app{
+    width:1440px;height:900px;display:flex;flex-direction:column;position:relative;
+    background:var(--bg);border:1px solid #242c38;border-radius:12px;overflow:hidden;
+    box-shadow:0 30px 90px rgba(0,0,0,.6);
+    transform-origin:top left;
+  }
+  body.clean .preview-bar{display:none}
+  body.clean .viewport{padding:0}
+  body.zoomed .viewport{justify-content:flex-start;overflow-x:auto}
+  body.clean .app{border-radius:0;border:0;box-shadow:none}
+  .icon{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:0 0 auto}
+  .icon.sm{width:12px;height:12px}
+  .icon.lg{width:16px;height:16px}
+
+  /* ---------- titlebar ---------- */
+  .titlebar{
+    height:46px;flex:0 0 46px;display:flex;align-items:center;gap:14px;
+    padding:0 12px 0 14px;border-bottom:1px solid var(--border);background:#0b0e13;
+  }
+  .brand{display:flex;align-items:center;gap:9px;min-width:188px}
+  .logo{
+    width:24px;height:24px;border-radius:7px;display:grid;place-items:center;
+    background:linear-gradient(135deg,#7aa2f7,#bb9af7);color:#080a0e;
+    font-weight:800;font-size:14px;box-shadow:0 0 0 1px rgba(255,255,255,.12) inset;
+  }
+  .brand-name{font-weight:600;font-size:14px;letter-spacing:.2px}
+  .brand-ver{font:9.5px var(--font-mono);color:var(--dim);border:1px solid var(--border);padding:1px 5px;border-radius:4px}
+  .search{
+    flex:0 1 420px;height:30px;display:flex;align-items:center;gap:8px;padding:0 10px;
+    background:#10141b;border:1px solid #222a35;border-radius:7px;color:#7d8798;
+    font-size:11.5px;cursor:pointer;white-space:nowrap;
+  }
+  .search:hover{border-color:#2c3646;color:#9aa6b8}
+  .search kbd{
+    margin-left:auto;font:9.5px var(--font-mono);color:#6f7a8c;background:#0a0d12;
+    border:1px solid #232a35;border-radius:4px;padding:1px 5px;
+  }
+  .title-actions{margin-left:auto;display:flex;align-items:center;gap:8px}
+  .run-pill{
+    display:flex;align-items:center;gap:6px;height:26px;padding:0 9px;border-radius:999px;
+    background:rgba(158,206,106,.07);border:1px solid rgba(158,206,106,.18);color:#b9d99a;font-size:10.5px;
+  }
+  .icon-btn{
+    width:28px;height:28px;display:grid;place-items:center;border-radius:6px;border:1px solid transparent;
+    background:transparent;color:#8b95a7;cursor:pointer;position:relative;
+  }
+  .icon-btn:hover{background:#161c25;color:#dfe6f3}
+  .badge{
+    position:absolute;top:2px;right:2px;min-width:12px;height:12px;padding:0 3px;border-radius:999px;
+    background:var(--red);color:#1a0b10;font:700 8px/12px var(--font-ui);text-align:center;
+  }
+  .avatar{
+    width:24px;height:24px;border-radius:50%;background:#2a3140;color:#cfd6e4;font-size:9.5px;
+    display:grid;place-items:center;border:1px solid #3a4354;margin-left:2px;
+  }
+
+  /* ---------- shell ---------- */
+  .app-body{flex:1;min-height:0;display:flex}
+
+  /* ---------- sidebar ---------- */
+  .sidebar{
+    width:268px;flex:0 0 268px;border-right:1px solid var(--border);background:#0a0d12;
+    display:flex;flex-direction:column;min-height:0;
+  }
+  .side-head{height:38px;display:flex;align-items:center;padding:0 10px 0 14px;gap:8px}
+  .side-head .title{font-size:10px;font-weight:600;letter-spacing:.9px;text-transform:uppercase;color:#7f8a9c}
+  .side-head .actions{margin-left:auto;display:flex;gap:1px}
+  .side-scroll{flex:1;overflow:hidden;padding:0 6px 8px}
+  .section{margin-top:7px}
+  .section-head{
+    display:flex;align-items:center;gap:6px;height:24px;padding:0 8px;
+    color:#687385;font-size:9.5px;font-weight:600;letter-spacing:.9px;text-transform:uppercase;
+  }
+  .section-head .count{
+    font:9.5px var(--font-mono);color:#7d8798;background:#151b24;border:1px solid #232c38;
+    border-radius:4px;padding:0 4px;letter-spacing:0;
+  }
+  .section-head .actions{margin-left:auto;display:flex;gap:1px}
+  .run-list{display:flex;flex-direction:column;gap:1px}
+  .run-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer}
+  .run-row:hover{background:#11161e}
+  .run-main{min-width:0;flex:1}
+  .run-name{font-size:11.5px;color:#cfd6e4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .run-sub{font-size:10px;color:#6f7a8c;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+  .run-time{font:9.5px var(--font-mono);color:#5d6676}
+
+  .project{margin-top:2px}
+  .project-row{
+    height:30px;display:flex;align-items:center;gap:6px;padding:0 8px;border-radius:6px;
+    color:#c3cbd9;font-size:12px;cursor:pointer;
+  }
+  .project-row:hover{background:#11161e}
+  .project-row .chev{color:#5d6676}
+  .project-row .repo-icon{color:#7aa2f7}
+  .project-row .name{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .project-row .count{margin-left:auto;font:9.5px var(--font-mono);color:#5d6676}
+  .project-row .add{margin-left:2px;opacity:0}
+  .project-row:hover .add{opacity:1}
+  .tasks{margin-left:12px;border-left:1px solid #1a2029;padding-left:4px}
+  .task{margin:1px 0;border-radius:6px}
+  .task-row{
+    height:27px;display:flex;align-items:center;gap:7px;padding:0 7px;border-radius:6px;cursor:pointer;
+    color:#aeb8c8;
+  }
+  .task-row:hover{background:#11161e}
+  .task.active{background:rgba(122,162,247,.085);box-shadow:inset 2px 0 0 var(--accent)}
+  .task.active .task-row{color:#e7ecf6}
+  .task-name{font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .task-badge{
+    margin-left:auto;font:9.5px var(--font-mono);color:#8b95a7;background:#151b24;
+    border:1px solid #242c38;border-radius:4px;padding:0 4px;
+  }
+  .main-badge{
+    margin-left:auto;font:8.5px var(--font-mono);color:#e0af68;background:rgba(224,175,104,.07);
+    border:1px solid rgba(224,175,104,.2);border-radius:4px;padding:0 4px;
+  }
+  .task.main .task-row{color:#d8c39c}
+  .task.main .task-sub{color:#6f634c}
+  .task-sub{
+    margin:-2px 0 4px 21px;font:9.5px var(--font-mono);color:#5d6676;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .sessions{margin:2px 0 6px 14px;padding-left:7px;border-left:1px solid #1b222c;display:flex;flex-direction:column;gap:1px}
+  .session-row{height:25px;display:flex;align-items:center;gap:6px;padding:0 6px;border-radius:5px;cursor:pointer}
+  .session-row:hover,.session-row.active{background:#131922}
+  .session-row .sess-name{font-size:11px;color:#aeb8c8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .session-row .sess-time{margin-left:auto;font:9.5px var(--font-mono);color:#5d6676}
+
+  .side-foot{border-top:1px solid var(--border);padding:8px;display:flex;flex-direction:column;gap:6px}
+  .new-task{
+    height:30px;width:100%;display:flex;align-items:center;gap:7px;padding:0 9px;
+    background:#141a23;border:1px solid #26303d;border-radius:7px;color:#cfd6e4;font-size:11.5px;cursor:pointer;
+  }
+  .new-task:hover{background:#19212c}
+  .foot-row{display:flex;align-items:center;gap:7px;padding:0 4px;color:#6f7a8c;font-size:10.5px}
+
+  /* ---------- shared bits ---------- */
+  .agent{
+    width:17px;height:17px;border-radius:5px;display:grid;place-items:center;
+    font-size:8.5px;font-weight:700;border:1px solid transparent;flex:0 0 auto;
+  }
+  .agent.c{background:rgba(224,130,92,.13);color:#e89a78;border-color:rgba(224,130,92,.22)}
+  .agent.x{background:rgba(255,255,255,.06);color:#c9d2e2;border-color:#2a3240}
+  .agent.d{background:rgba(122,162,247,.12);color:#8fb2ff;border-color:rgba(122,162,247,.22)}
+  .agent.t{background:rgba(158,206,106,.09);color:#a9d17f;border-color:rgba(158,206,106,.2);font-family:var(--font-mono)}
+  .dot{width:6px;height:6px;border-radius:50%;background:#4a5363;flex:0 0 auto}
+  .dot.live{background:var(--green);box-shadow:0 0 0 3px rgba(158,206,106,.09)}
+  .dot.wait{background:var(--amber);box-shadow:0 0 0 3px rgba(224,175,104,.09)}
+  .dot.idle{background:#596274}
+  .dot.err{background:var(--red)}
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:6px;height:27px;padding:0 10px;
+    border-radius:6px;border:1px solid transparent;background:transparent;color:#9aa6b8;
+    font:500 11.5px var(--font-ui);cursor:pointer;white-space:nowrap;
+  }
+  .btn:hover{background:#161c25;color:#e7ecf6}
+  .btn.subtle{background:#141a23;border-color:#242c38;color:#c3cbd9}
+  .btn.subtle:hover{background:#19212c}
+  .btn.primary{background:#7aa2f7;border-color:#8fb2ff;color:#08101f;font-weight:600}
+  .btn.primary:hover{background:#8fb2ff}
+  .btn.ghost{border-color:transparent;color:#9aa6b8}
+  .btn.tiny{height:22px;padding:0 8px;font-size:10.5px;border-radius:5px}
+  .pill{
+    font:9.5px var(--font-mono);color:#8b95a7;background:#171c24;border:1px solid #242c38;
+    border-radius:4px;padding:0 4px;
+  }
+
+  /* ---------- center ---------- */
+  .center{flex:1;min-width:0;display:flex;flex-direction:column;background:#090b10}
+  .taskbar{
+    height:50px;flex:0 0 50px;display:flex;align-items:center;gap:10px;padding:0 12px 0 16px;
+    border-bottom:1px solid var(--border);background:#0b0e13;
+  }
+  .crumbs{display:flex;align-items:center;gap:7px;font-size:11.5px;color:#7d8798;white-space:nowrap}
+  .crumbs strong{color:#e7ecf6;font-weight:600}
+  .crumbs .sep{color:#3d4655}
+  .branch-chip{
+    display:flex;align-items:center;gap:5px;height:22px;padding:0 7px;border-radius:5px;
+    background:#10151d;border:1px solid #242c38;color:#9aa6b8;font:10px var(--font-mono);
+  }
+  .agent-state{display:flex;align-items:center;gap:6px;color:#9fb87f;font-size:10.5px;white-space:nowrap}
+  .spacer{flex:1}
+  .tabs{
+    height:38px;flex:0 0 38px;display:flex;align-items:flex-end;gap:2px;padding:0 8px;
+    border-bottom:1px solid var(--border);background:#0a0d12;
+  }
+  .tab{
+    height:32px;display:flex;align-items:center;gap:7px;padding:0 9px;border:1px solid transparent;
+    border-bottom:none;border-radius:7px 7px 0 0;color:#7d8798;font-size:11px;cursor:pointer;position:relative;
+  }
+  .tab.active{background:#090b10;border-color:#232a35;color:#e7ecf6}
+  .tab.active:after{content:'';position:absolute;left:0;right:0;bottom:-1px;height:1px;background:#090b10}
+  .tab .x{opacity:.35}
+  .tab:hover .x{opacity:.9}
+  .tab-plus{width:28px;height:28px;display:grid;place-items:center;color:#6f7a8c;border-radius:6px;cursor:pointer}
+  .tab-plus:hover{background:#161c25;color:#dfe6f3}
+  .tab-actions{display:flex;gap:1px;padding-bottom:3px}
+  .terminal{
+    flex:1;min-height:0;overflow:hidden;padding:14px 18px 10px;
+    background:radial-gradient(120% 80% at 50% 0%,#0c1017 0%,#080a0f 62%);
+    font:12.2px/1.58 var(--font-mono);color:#c0caf5;
+  }
+  .term-inner{white-space:pre;margin:0}
+  .t-dim{color:#565f89}
+  .t-muted{color:#737aa2}
+  .t-blue{color:#7aa2f7}
+  .t-green{color:#9ece6a}
+  .t-amber{color:#e0af68}
+  .t-red{color:#f7768e}
+  .t-purple{color:#bb9af7}
+  .t-cyan{color:#7dcfff}
+  .t-bold{font-weight:600}
+  .t-box{color:#3b4261}
+  .cursor{display:inline-block;width:7px;height:14px;background:#c0caf5;vertical-align:-2px;animation:blink 1.1s steps(2,start) infinite}
+  @keyframes blink{50%{opacity:0}}
+  .statusbar{
+    height:26px;flex:0 0 26px;display:flex;align-items:center;gap:14px;padding:0 12px;
+    border-top:1px solid var(--border);background:#0a0d12;color:#5d6676;font:9.5px var(--font-mono);
+    white-space:nowrap;overflow:hidden;
+  }
+  .statusbar .item{display:flex;align-items:center;gap:5px;min-width:0}
+  .statusbar .branch{color:#9ece6a}
+  .statusbar .path{overflow:hidden;text-overflow:ellipsis}
+  .statusbar .right{margin-left:auto}
+
+  /* ---------- right ---------- */
+  .right{width:420px;flex:0 0 420px;border-left:1px solid var(--border);background:#0a0d12;display:flex;flex-direction:column;min-height:0}
+  .right-tabs{
+    height:38px;flex:0 0 38px;display:flex;align-items:stretch;gap:1px;padding:0 8px;
+    border-bottom:1px solid var(--border);background:#0a0d12;
+  }
+  .rtab{
+    height:100%;display:flex;align-items:center;gap:6px;padding:0 8px;background:transparent;border:0;
+    border-bottom:2px solid transparent;color:#7d8798;font:500 11px var(--font-ui);cursor:pointer;
+  }
+  .rtab:hover{color:#c3cbd9}
+  .rtab.active{color:#e7ecf6;border-bottom-color:var(--accent)}
+  .right-tabs .spacer{flex:1}
+  .right-tabs .icon-btn{align-self:center;width:26px;height:26px}
+  .right-body{flex:1;min-height:0;display:flex;flex-direction:column}
+  .right-pane{flex:1;min-height:0;display:none;flex-direction:column}
+
+  /* diff */
+  .diff-head{padding:10px 12px 8px;border-bottom:1px solid var(--border-soft);display:flex;align-items:center;gap:8px}
+  .branch-line{display:flex;align-items:center;gap:5px;font:10px var(--font-mono);color:#9aa6b8;min-width:0}
+  .branch-line .arrow{color:#3d4655}
+  .branch-line .ref{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .diff-summary{margin-left:auto;display:flex;gap:8px;font:9.5px var(--font-mono);white-space:nowrap}
+  .add{color:var(--green)}
+  .del{color:var(--red)}
+  .file-list{flex:0 0 auto;max-height:174px;overflow:hidden;padding:4px 6px;border-bottom:1px solid var(--border-soft)}
+  .file-row{height:26px;display:flex;align-items:center;gap:7px;padding:0 6px;border-radius:5px;font-size:11px;color:#aeb8c8;cursor:pointer}
+  .file-row:hover{background:#11161e}
+  .file-row.active{background:#131922;color:#e7ecf6}
+  .fstatus{width:14px;font:9.5px var(--font-mono);font-weight:600;text-align:center}
+  .fstatus.m{color:var(--amber)}
+  .fstatus.a{color:var(--green)}
+  .fstatus.d{color:var(--red)}
+  .fname{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .fstat{display:flex;gap:6px;font:9.5px var(--font-mono)}
+  .diff-scroll{flex:1;min-height:0;overflow:hidden}
+  .diff-file-head{
+    height:32px;display:flex;align-items:center;gap:8px;padding:0 12px;background:#0d1117;
+    border-bottom:1px solid var(--border-soft);font:10.5px var(--font-mono);color:#c3cbd9;
+  }
+  .diff-file-head .btn{margin-left:auto}
+  .diff-hunk{padding:3px 12px;background:#101722;color:#7aa2f7;font:10px var(--font-mono);white-space:nowrap;overflow:hidden}
+  .diff-line{display:flex;min-height:19px;font:10.2px/19px var(--font-mono)}
+  .diff-line .ln{width:33px;flex:0 0 33px;text-align:right;padding-right:7px;color:#3d4655;user-select:none}
+  .diff-line .code{flex:1;padding-left:8px;white-space:pre;overflow:hidden}
+  .diff-line.add{background:rgba(158,206,106,.065)}
+  .diff-line.add .code{color:#b9d99a}
+  .diff-line.del{background:rgba(247,118,142,.055)}
+  .diff-line.del .code{color:#e9a0b0}
+  .diff-line.ctx .code{color:#9aa6b8}
+  .tok-kw{color:#bb9af7}
+  .tok-fn{color:#7aa2f7}
+  .tok-str{color:#9ece6a}
+  .tok-num{color:#ff9e64}
+  .tok-cmt{color:#565f89}
+  .comment-chip{
+    display:inline-flex;align-items:center;gap:4px;margin-left:6px;padding:0 4px;
+    font:9px var(--font-mono);color:#e0af68;background:rgba(224,175,104,.06);
+    border:1px solid rgba(224,175,104,.2);border-radius:4px;
+  }
+  .comment-chip .icon{width:10px;height:10px}
+  .comment-thread{
+    margin:2px 8px 5px 41px;padding:5px 7px;border:1px solid rgba(224,175,104,.22);
+    border-left:2px solid var(--amber);border-radius:6px;background:rgba(224,175,104,.04);
+  }
+  .comment-head{display:flex;align-items:center;gap:6px;font-size:9.5px;color:#c3cbd9}
+  .avatar-sm{
+    width:15px;height:15px;border-radius:50%;background:#2a3140;color:#cfd6e4;font-size:7px;
+    display:grid;place-items:center;border:1px solid #3a4354;flex:0 0 auto;
+  }
+  .comment-head b{font-weight:500;color:#dfe6f3}
+  .comment-time{color:#5d6676;font:8.5px var(--font-mono);margin-left:auto}
+  .comment-status{
+    font:8px var(--font-mono);color:#e0af68;border:1px solid rgba(224,175,104,.25);
+    border-radius:3px;padding:0 3px;
+  }
+  .comment-body{font-size:10px;color:#c3cbd9;margin:4px 0 5px;line-height:1.35}
+  .comment-actions{display:flex;gap:4px}
+  .diff-line.commented{background:rgba(224,175,104,.05);box-shadow:inset 2px 0 0 var(--amber)}
+  .right-foot{
+    height:46px;flex:0 0 46px;display:flex;align-items:center;gap:8px;padding:0 12px;
+    border-top:1px solid var(--border);background:#0a0d12;
+  }
+  .right-foot .summary{font:9.5px var(--font-mono);color:#7d8798;white-space:nowrap}
+  .right-foot .btn{margin-left:auto}
+
+  /* git */
+  .git-pane{flex:1;min-height:0;overflow:hidden;padding:10px 12px;display:flex;flex-direction:column;gap:9px}
+  .branch-card{display:flex;align-items:center;gap:9px;padding:9px;background:#10151d;border:1px solid #232c38;border-radius:8px}
+  .branch-card .branch-icon{
+    width:28px;height:28px;border-radius:6px;background:rgba(122,162,247,.1);color:#7aa2f7;
+    display:grid;place-items:center;flex:0 0 auto;
+  }
+  .branch-card .name{font:10.5px var(--font-mono);color:#d5dcea;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .branch-card .sub{font-size:10px;color:#6f7a8c;margin-top:2px}
+  .branch-card .btn{margin-left:auto}
+  .git-section{border:1px solid #1e2530;border-radius:8px;overflow:hidden;background:#0c1016}
+  .git-section-head{height:30px;display:flex;align-items:center;gap:6px;padding:0 9px;background:#10151c;color:#9aa6b8;font-size:10.5px}
+  .git-section-head .link{margin-left:auto;color:#7aa2f7;font-size:10px;cursor:pointer}
+  .change-row{height:27px;display:flex;align-items:center;gap:7px;padding:0 9px;border-top:1px solid #171d26;font-size:11px;color:#aeb8c8}
+  .change-row input{accent-color:#7aa2f7;width:12px;height:12px;margin:0}
+  .change-row .fname{flex:1}
+  .commit-box{border:1px solid #1e2530;border-radius:8px;padding:9px;background:#0c1016}
+  .commit-label{font-size:10px;color:#6f7a8c;margin-bottom:5px}
+  .commit-input{
+    min-height:46px;background:#090c11;border:1px solid #232c38;border-radius:6px;padding:7px 8px;
+    font:10.5px/1.45 var(--font-mono);color:#c3cbd9;
+  }
+  .commit-actions{display:flex;gap:6px;margin-top:8px}
+  .commit-actions .primary{flex:1}
+  .commit-row{display:flex;align-items:center;gap:8px;height:26px;padding:0 9px;border-top:1px solid #171d26;font-size:10.5px;color:#9aa6b8}
+  .commit-row .sha{font:9.5px var(--font-mono);color:#7aa2f7}
+  .commit-row .msg{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .commit-row .time{font:9.5px var(--font-mono);color:#5d6676}
+  .remote-card{display:flex;align-items:center;gap:9px;padding:9px;border:1px dashed #2a3442;border-radius:8px;background:#0c1016}
+  .remote-card .remote-icon{color:#7aa2f7;display:grid;place-items:center;width:24px;height:24px}
+  .remote-card .title{font-size:11px;color:#c3cbd9}
+  .remote-card .sub{font-size:10px;color:#6f7a8c;margin-top:1px}
+  .remote-card .btn{margin-left:auto}
+  .repo-card{border:1px solid #1e2530;border-radius:8px;background:#0c1016;overflow:hidden}
+  .repo-row{display:flex;align-items:center;gap:8px;height:27px;padding:0 9px;border-top:1px solid #171d26;font-size:10px;color:#8b95a7}
+  .repo-row:first-child{border-top:0}
+  .repo-row .k{width:58px;flex:0 0 58px;color:#5d6676}
+  .repo-row .v{font:9.5px var(--font-mono);color:#9aa6b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .repo-row .ok{color:var(--green);font:9.5px var(--font-mono);margin-right:4px}
+
+  /* sessions */
+  .sessions-pane{flex:1;min-height:0;overflow:hidden;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+  .sessions-head{display:flex;align-items:center;gap:8px;margin-bottom:2px}
+  .panel-title{font-size:12.5px;font-weight:600;color:#e7ecf6}
+  .sessions-head .sub{font-size:10px;color:#6f7a8c;margin-top:1px}
+  .sessions-head .btn{margin-left:auto}
+  .session-card{
+    border:1px solid #222b37;border-radius:8px;padding:9px 10px;background:#0d1117;
+    display:flex;flex-direction:column;gap:4px;
+  }
+  .session-card.active{
+    border-color:rgba(122,162,247,.32);
+    background:linear-gradient(180deg,rgba(122,162,247,.055),rgba(13,17,23,.95));
+  }
+  .sc-top{display:flex;align-items:center;gap:7px}
+  .sc-name{font-size:11.5px;font-weight:500;color:#dfe6f3;display:flex;align-items:center;gap:6px;white-space:nowrap}
+  .sc-time{margin-left:auto;font:9.5px var(--font-mono);color:#6f7a8c;white-space:nowrap}
+  .sc-meta{font:9.5px var(--font-mono);color:#6f7a8c;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sc-path{font:9.5px var(--font-mono);color:#56617a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sc-last{display:flex;align-items:center;gap:6px;font-size:10px;color:#9aa6b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sc-actions{display:flex;gap:6px;margin-top:2px;align-items:center}
+  .sessions-divider{margin:3px 2px 0;font-size:9.5px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:#5d6676}
+  .session-card.compact{padding:8px 10px}
+  .sessions-note{margin-top:auto;font-size:9.5px;color:#4f5a6c;line-height:1.5}
+  .needs{color:var(--amber)}
+
+  /* modal */
+  .overlay{
+    position:absolute;inset:0;background:rgba(4,6,9,.66);backdrop-filter:blur(2.5px);
+    display:none;align-items:center;justify-content:center;z-index:50;
+  }
+  .modal{
+    width:604px;max-width:calc(100% - 40px);background:#0d1117;border:1px solid #2a3442;
+    border-radius:12px;box-shadow:0 30px 90px rgba(0,0,0,.65);overflow:hidden;
+  }
+  .modal-head{height:48px;display:flex;align-items:center;padding:0 16px;border-bottom:1px solid #1e2530}
+  .modal-title{font-size:14px;font-weight:600}
+  .modal-head .icon-btn{margin-left:auto}
+  .modal-body{padding:14px 16px;display:flex;flex-direction:column;gap:9px}
+  .field-label{font-size:10.5px;color:#8b95a7}
+  .input,.select{
+    height:32px;display:flex;align-items:center;gap:8px;padding:0 10px;background:#090c11;
+    border:1px solid #26303d;border-radius:6px;color:#dfe6f3;font-size:11.5px;
+  }
+  .select .chev{margin-left:auto;color:#5d6676}
+  .hint{font-size:10px;color:#6f7a8c;margin-top:-3px}
+  .hint code{font:9.5px var(--font-mono);color:#9aa6b8;background:#151b24;padding:1px 4px;border-radius:3px}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .segmented{display:grid;grid-template-columns:1fr 1fr;gap:4px;background:#090c11;border:1px solid #26303d;border-radius:7px;padding:3px}
+  .seg{
+    height:28px;display:flex;align-items:center;justify-content:center;gap:6px;border:0;border-radius:5px;
+    background:transparent;color:#7d8798;font:500 11px var(--font-ui);cursor:pointer;
+  }
+  .seg.active{background:#1a2230;color:#dfe6f3;box-shadow:0 0 0 1px #2b3648 inset}
+  .seg .icon{color:#7aa2f7}
+  .agent-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .agent-option{
+    display:flex;align-items:center;gap:8px;padding:8px;border:1px solid #232c38;border-radius:7px;
+    background:#090c11;cursor:pointer;
+  }
+  .agent-option.selected{border-color:rgba(122,162,247,.5);background:rgba(122,162,247,.055)}
+  .agent-option .name{font-size:11px;color:#dfe6f3}
+  .agent-option .cmd{font:9px var(--font-mono);color:#6f7a8c;margin-top:1px}
+  .agent-option .check{margin-left:auto;color:#7aa2f7}
+  .check-row{display:flex;align-items:center;gap:7px;font-size:11px;color:#aeb8c8}
+  .check-row input{accent-color:#7aa2f7;width:12px;height:12px;margin:0}
+  .check-row code{font:9.5px var(--font-mono);color:#9aa6b8;background:#151b24;padding:1px 4px;border-radius:3px}
+  .modal-foot{height:52px;display:flex;align-items:center;gap:8px;padding:0 16px;border-top:1px solid #1e2530;background:#0a0d12}
+  .modal-foot .muted{font-size:10px;color:#6f7a8c}
+  .modal-foot .btn{margin-left:auto}
+  .modal-foot .btn + .btn{margin-left:0}
+
+  /* screen switching */
+  body[data-screen="main"] .right-pane[data-pane="diff"],
+  body[data-screen="new-task"] .right-pane[data-pane="diff"],
+  body[data-screen="git"] .right-pane[data-pane="git"],
+  body[data-screen="sessions"] .right-pane[data-pane="sessions"]{display:flex}
+  body[data-screen="main"] .rtab[data-tab="diff"],
+  body[data-screen="new-task"] .rtab[data-tab="diff"],
+  body[data-screen="git"] .rtab[data-tab="git"],
+  body[data-screen="sessions"] .rtab[data-tab="sessions"]{color:#e7ecf6;border-bottom-color:var(--accent)}
+  body[data-screen="new-task"] .overlay{display:flex}
+</style>
+</head>
+<body data-screen="main">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></symbol>
+    <symbol id="i-filter" viewBox="0 0 24 24"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></symbol>
+    <symbol id="i-chev-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-chev-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-repo" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
+    <symbol id="i-branch" viewBox="0 0 24 24"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
+    <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3"/></symbol>
+    <symbol id="i-square" viewBox="0 0 24 24"><rect width="14" height="14" x="5" y="5" rx="1"/></symbol>
+    <symbol id="i-split" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M12 3v18"/></symbol>
+    <symbol id="i-pr" viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" x2="6" y1="9" y2="21"/></symbol>
+    <symbol id="i-commit" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><line x1="3" x2="9" y1="12" y2="12"/><line x1="15" x2="21" y1="12" y2="12"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><polyline points="9 22 9 12 15 12 15 22"/></symbol>
+    <symbol id="i-message" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+  </defs>
+</svg>
+
+<div class="preview-bar">
+  <div class="preview-title">Nest <span>/ UI preview</span></div>
+  <div class="preview-tabs">
+    <button data-screen="main" class="active">Workspace</button>
+    <button data-screen="git">Git</button>
+    <button data-screen="sessions">Sessions</button>
+    <button data-screen="new-task">New task</button>
+  </div>
+  <div class="preview-hint">1440 × 900 · three-column shell <button class="zoom-btn" id="zoomBtn">100%</button></div>
+</div>
+
+<div class="viewport">
+  <div class="frame" id="frame">
+    <div class="app" id="app">
+
+      <!-- ================= TITLEBAR ================= -->
+      <header class="titlebar">
+        <div class="brand">
+          <div class="logo">n</div>
+          <div class="brand-name">Nest</div>
+          <div class="brand-ver">0.1</div>
+        </div>
+        <div class="search">
+          <svg class="icon sm"><use href="#i-search"/></svg>
+          <span>Search projects, tasks, sessions…</span>
+          <kbd>Ctrl K</kbd>
+        </div>
+        <div class="title-actions">
+          <div class="run-pill"><span class="dot live"></span> 3 running</div>
+          <button class="icon-btn" aria-label="Notifications">
+            <svg class="icon"><use href="#i-bell"/></svg>
+            <span class="badge">1</span>
+          </button>
+          <button class="icon-btn" aria-label="Settings"><svg class="icon"><use href="#i-settings"/></svg></button>
+          <div class="avatar">S</div>
+        </div>
+      </header>
+
+      <div class="app-body">
+
+        <!-- ================= SIDEBAR ================= -->
+        <aside class="sidebar">
+          <div class="side-head">
+            <div class="title">Workspace</div>
+            <div class="actions">
+              <button class="icon-btn" aria-label="Filter"><svg class="icon sm"><use href="#i-filter"/></svg></button>
+              <button class="icon-btn" aria-label="Add project"><svg class="icon sm"><use href="#i-plus"/></svg></button>
+            </div>
+          </div>
+
+          <div class="side-scroll">
+            <div class="section">
+              <div class="section-head">
+                <span>Running</span><span class="count">3</span>
+                <div class="actions"><button class="icon-btn" aria-label="Collapse"><svg class="icon sm"><use href="#i-chev-down"/></svg></button></div>
+              </div>
+              <div class="run-list">
+                <div class="run-row">
+                  <span class="agent c">C</span>
+                  <div class="run-main">
+                    <div class="run-name">Claude · checkout-redesign</div>
+                    <div class="run-sub">acme/web · writing tests</div>
+                  </div>
+                  <span class="run-time">12m</span>
+                </div>
+                <div class="run-row">
+                  <span class="agent x">X</span>
+                  <div class="run-main">
+                    <div class="run-name">Codex · auth-token-refresh</div>
+                    <div class="run-sub">acme/api · <span class="needs">needs input</span></div>
+                  </div>
+                  <span class="run-time">4m</span>
+                </div>
+                <div class="run-row">
+                  <span class="agent d">D</span>
+                  <div class="run-main">
+                    <div class="run-name">DeepSeek · architecture-notes</div>
+                    <div class="run-sub">nest/docs · idle</div>
+                  </div>
+                  <span class="run-time">2m</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="section">
+              <div class="section-head">
+                <span>Projects</span><span class="count">3</span>
+                <div class="actions"><button class="icon-btn" aria-label="Collapse all"><svg class="icon sm"><use href="#i-chev-down"/></svg></button></div>
+              </div>
+
+              <div class="project">
+                <div class="project-row">
+                  <svg class="icon sm chev"><use href="#i-chev-down"/></svg>
+                  <svg class="icon repo-icon"><use href="#i-repo"/></svg>
+                  <span class="name">acme/web</span>
+                  <span class="count">3</span>
+                  <button class="icon-btn add" aria-label="New task"><svg class="icon sm"><use href="#i-plus"/></svg></button>
+                </div>
+                <div class="tasks">
+                  <div class="task main">
+                    <div class="task-row">
+                      <svg class="icon sm" style="color:#e0af68"><use href="#i-home"/></svg>
+                      <span class="task-name">main checkout</span>
+                      <span class="main-badge">main</span>
+                    </div>
+                    <div class="task-sub">main · acme/web</div>
+                  </div>
+                  <div class="task active">
+                    <div class="task-row">
+                      <span class="dot live"></span>
+                      <span class="task-name">checkout-redesign</span>
+                      <span class="task-badge">2</span>
+                    </div>
+                    <div class="task-sub">nest/checkout-redesign</div>
+                    <div class="sessions">
+                      <div class="session-row active">
+                        <span class="agent c">C</span>
+                        <span class="sess-name">claude</span>
+                        <span class="dot live"></span>
+                        <span class="sess-time">12m</span>
+                      </div>
+                      <div class="session-row">
+                        <span class="agent x">X</span>
+                        <span class="sess-name">codex</span>
+                        <span class="dot idle"></span>
+                        <span class="sess-time">3m</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="task">
+                    <div class="task-row">
+                      <span class="dot idle"></span>
+                      <span class="task-name">search-filters</span>
+                      <span class="task-badge">1</span>
+                    </div>
+                    <div class="task-sub">nest/search-filters</div>
+                  </div>
+                  <div class="task">
+                    <div class="task-row">
+                      <span class="dot idle"></span>
+                      <span class="task-name">empty-state</span>
+                      <span class="task-badge">0</span>
+                    </div>
+                    <div class="task-sub">nest/empty-state</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="project">
+                <div class="project-row">
+                  <svg class="icon sm chev"><use href="#i-chev-down"/></svg>
+                  <svg class="icon repo-icon"><use href="#i-repo"/></svg>
+                  <span class="name">acme/api</span>
+                  <span class="count">2</span>
+                  <button class="icon-btn add" aria-label="New task"><svg class="icon sm"><use href="#i-plus"/></svg></button>
+                </div>
+                <div class="tasks">
+                  <div class="task">
+                    <div class="task-row">
+                      <span class="dot wait"></span>
+                      <span class="task-name">auth-token-refresh</span>
+                      <span class="task-badge">1</span>
+                    </div>
+                    <div class="task-sub">nest/auth-token-refresh</div>
+                  </div>
+                  <div class="task">
+                    <div class="task-row">
+                      <span class="dot idle"></span>
+                      <span class="task-name">rate-limit-headers</span>
+                      <span class="task-badge">0</span>
+                    </div>
+                    <div class="task-sub">nest/rate-limit-headers</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="project">
+                <div class="project-row">
+                  <svg class="icon sm chev"><use href="#i-chev-right"/></svg>
+                  <svg class="icon repo-icon"><use href="#i-repo"/></svg>
+                  <span class="name">nest/docs</span>
+                  <span class="count">1</span>
+                  <button class="icon-btn add" aria-label="New task"><svg class="icon sm"><use href="#i-plus"/></svg></button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="side-foot">
+            <button class="new-task">
+              <svg class="icon sm"><use href="#i-plus"/></svg>
+              New task
+              <span style="margin-left:auto;font:9px var(--font-mono);color:#5d6676">Ctrl N</span>
+            </button>
+            <div class="foot-row">
+              <svg class="icon sm"><use href="#i-terminal"/></svg>
+              <span>3 sessions</span>
+              <span style="margin-left:auto">v0.1.0</span>
+            </div>
+          </div>
+        </aside>
+
+        <!-- ================= CENTER ================= -->
+        <main class="center">
+          <div class="taskbar">
+            <div class="crumbs">
+              <span>acme / web</span>
+              <span class="sep">/</span>
+              <strong>checkout-redesign</strong>
+            </div>
+            <div class="branch-chip"><svg class="icon sm"><use href="#i-branch"/></svg> nest/checkout-redesign</div>
+            <div class="agent-state"><span class="dot live"></span> Claude running · 12m</div>
+            <div class="spacer"></div>
+            <button class="btn subtle"><svg class="icon sm"><use href="#i-plus"/></svg> New session</button>
+            <button class="icon-btn" aria-label="More"><svg class="icon"><use href="#i-more"/></svg></button>
+          </div>
+
+          <div class="tabs">
+            <div class="tab active">
+              <span class="agent c">C</span>
+              Claude
+              <span class="dot live"></span>
+              <svg class="icon sm x"><use href="#i-x"/></svg>
+            </div>
+            <div class="tab">
+              <span class="agent x">X</span>
+              Codex
+              <span class="dot idle"></span>
+              <svg class="icon sm x"><use href="#i-x"/></svg>
+            </div>
+            <div class="tab-plus"><svg class="icon sm"><use href="#i-plus"/></svg></div>
+            <div class="spacer"></div>
+            <div class="tab-actions">
+              <button class="icon-btn" aria-label="Split"><svg class="icon"><use href="#i-split"/></svg></button>
+              <button class="icon-btn" aria-label="More"><svg class="icon"><use href="#i-more"/></svg></button>
+            </div>
+          </div>
+
+          <div class="terminal">
+<div class="term-inner"><span class="t-purple">  ✻</span> <span class="t-bold">Claude Code</span> <span class="t-dim">v2.1.0</span>
+  <span class="t-dim">cwd</span>    ~/Nest/worktrees/acme-web/checkout-redesign
+  <span class="t-dim">model</span>  claude-sonnet-4-5
+
+<span class="t-muted">&gt;</span> the cart total is off by one cent when quantity &gt; 1. fix it and add a test
+
+<span class="t-blue">●</span> I'll inspect the total calculation and the existing checkout tests.
+
+<span class="t-blue">●</span> <span class="t-bold">Read</span>(src/checkout/total.ts)
+  <span class="t-dim">⎿  Read 84 lines</span>
+
+<span class="t-blue">●</span> <span class="t-bold">Read</span>(src/checkout/total.test.ts)
+  <span class="t-dim">⎿  Read 62 lines</span>
+
+<span class="t-blue">●</span> The bug is in <span class="t-cyan">roundTotal()</span>: it rounds the unit price before
+  multiplying by quantity. I'll round only the final amount.
+
+<span class="t-blue">●</span> <span class="t-bold">Update</span>(src/checkout/total.ts)
+  <span class="t-dim">⎿  Updated with 6 additions and 4 removals</span>
+<span class="t-dim">     18</span> <span class="t-red">-   const unit = roundMoney(item.price)</span>
+<span class="t-dim">     19</span> <span class="t-red">-   return sum + unit * item.quantity</span>
+<span class="t-dim">     18</span> <span class="t-green">+   const total = item.price * item.quantity</span>
+<span class="t-dim">     19</span> <span class="t-green">+   return sum + total</span>
+
+<span class="t-blue">●</span> <span class="t-bold">Update</span>(src/checkout/total.test.ts)
+  <span class="t-dim">⎿  Updated with 18 additions</span>
+
+<span class="t-blue">●</span> <span class="t-bold">Bash</span>(npm test -- checkout)
+  <span class="t-dim">⎿</span>  <span class="t-green">PASS</span> src/checkout/total.test.ts
+     <span class="t-green">8 passed</span> <span class="t-dim">(1.24s)</span>
+
+<span class="t-blue">●</span> Done. The total now rounds once at the end, and the regression test
+  covers quantity &gt; 1 and negative adjustments.
+
+<span class="t-muted">&gt;</span> <span class="cursor"></span>
+</div>
+          </div>
+
+          <div class="statusbar">
+            <div class="item branch"><svg class="icon sm"><use href="#i-branch"/></svg> nest/checkout-redesign</div>
+            <div class="item path"><svg class="icon sm"><use href="#i-repo"/></svg> ~/Nest/worktrees/acme-web/checkout-redesign</div>
+            <div class="item">UTF-8</div>
+            <div class="item">zsh</div>
+            <div class="item"><span class="dot live"></span> Claude · 12m</div>
+            <div class="right item">Ctrl+` terminal</div>
+          </div>
+        </main>
+
+        <!-- ================= RIGHT ================= -->
+        <aside class="right">
+          <div class="right-tabs">
+            <button class="rtab" data-tab="git">Git</button>
+            <button class="rtab" data-tab="diff">Diff <span class="pill">6</span></button>
+            <button class="rtab" data-tab="sessions">Sessions <span class="pill">2</span></button>
+            <div class="spacer"></div>
+            <button class="icon-btn" aria-label="Refresh"><svg class="icon sm"><use href="#i-refresh"/></svg></button>
+          </div>
+
+          <div class="right-body">
+
+            <!-- DIFF -->
+            <div class="right-pane" data-pane="diff">
+              <div class="diff-head">
+                <div class="branch-line">
+                  <svg class="icon sm"><use href="#i-branch"/></svg>
+                  <span class="ref">nest/checkout-redesign</span>
+                  <span class="arrow">→</span>
+                  <span class="ref">origin/main</span>
+                </div>
+                <div class="diff-summary"><span class="add">+62</span><span class="del">−10</span><span style="color:#5d6676">6 files</span></div>
+              </div>
+
+              <div class="file-list">
+                <div class="file-row active"><span class="fstatus m">M</span><span class="fname">src/checkout/total.ts</span><span class="fstat"><b class="add">+6</b><b class="del">−4</b></span></div>
+                <div class="file-row"><span class="fstatus m">M</span><span class="fname">src/checkout/total.test.ts</span><span class="fstat"><b class="add">+18</b><b class="del">−0</b></span></div>
+                <div class="file-row"><span class="fstatus m">M</span><span class="fname">src/checkout/CartSummary.tsx</span><span class="fstat"><b class="add">+9</b><b class="del">−3</b></span></div>
+                <div class="file-row"><span class="fstatus a">A</span><span class="fname">src/checkout/money.ts</span><span class="fstat"><b class="add">+24</b><b class="del">−0</b></span></div>
+                <div class="file-row"><span class="fstatus m">M</span><span class="fname">src/api/checkout.ts</span><span class="fstat"><b class="add">+4</b><b class="del">−2</b></span></div>
+                <div class="file-row"><span class="fstatus m">M</span><span class="fname">package.json</span><span class="fstat"><b class="add">+1</b><b class="del">−1</b></span></div>
+              </div>
+
+              <div class="diff-scroll">
+                <div class="diff-file-head">
+                  <svg class="icon sm"><use href="#i-file"/></svg>
+                  src/checkout/total.ts
+                  <span class="comment-chip"><svg class="icon sm"><use href="#i-message"/></svg> 1</span>
+                  <button class="btn tiny subtle">Stage file</button>
+                </div>
+                <div class="diff-hunk">@@ -14,10 +14,12 @@ import { roundMoney } from './money'</div>
+                <div class="diff-line ctx"><span class="ln">14</span><span class="ln">14</span><span class="code"> </span></div>
+                <div class="diff-line ctx"><span class="ln">15</span><span class="ln">15</span><span class="code"><span class="tok-kw">export</span> <span class="tok-kw">function</span> <span class="tok-fn">roundTotal</span>(items: <span class="tok-fn">CartItem</span>[]): <span class="tok-fn">number</span> {</span></div>
+                <div class="diff-line del"><span class="ln">16</span><span class="ln"></span><span class="code">-  <span class="tok-kw">return</span> items.<span class="tok-fn">reduce</span>((sum, item) =&gt; {</span></div>
+                <div class="diff-line del"><span class="ln">17</span><span class="ln"></span><span class="code">-    <span class="tok-kw">const</span> unit = <span class="tok-fn">roundMoney</span>(item.price)</span></div>
+                <div class="diff-line del"><span class="ln">18</span><span class="ln"></span><span class="code">-    <span class="tok-kw">return</span> sum + unit * item.quantity</span></div>
+                <div class="diff-line del"><span class="ln">19</span><span class="ln"></span><span class="code">-  }, <span class="tok-num">0</span>)</span></div>
+                <div class="diff-line add"><span class="ln"></span><span class="ln">16</span><span class="code">+  <span class="tok-kw">const</span> total = items.<span class="tok-fn">reduce</span>((sum, item) =&gt; {</span></div>
+                <div class="diff-line add"><span class="ln"></span><span class="ln">17</span><span class="code">+    <span class="tok-kw">return</span> sum + item.price * item.quantity</span></div>
+                <div class="diff-line add"><span class="ln"></span><span class="ln">18</span><span class="code">+  }, <span class="tok-num">0</span>)</span></div>
+                <div class="diff-line add"><span class="ln"></span><span class="ln">19</span><span class="code">+</span></div>
+                <div class="diff-line add commented"><span class="ln"></span><span class="ln">20</span><span class="code">+  <span class="tok-kw">return</span> <span class="tok-fn">roundMoney</span>(total)</span></div>
+                <div class="comment-thread">
+                  <div class="comment-head">
+                    <span class="avatar-sm">S</span>
+                    <b>You</b>
+                    <span class="comment-time">just now</span>
+                    <span class="comment-status">open</span>
+                  </div>
+                  <div class="comment-body">Should we also cover the negative quantity case here?</div>
+                  <div class="comment-actions">
+                    <button class="btn tiny subtle">Send to Claude</button>
+                    <button class="btn tiny ghost">Resolve</button>
+                  </div>
+                </div>
+                <div class="diff-line ctx"><span class="ln">20</span><span class="ln">21</span><span class="code"> }</span></div>
+                <div class="diff-line ctx"><span class="ln">21</span><span class="ln">22</span><span class="code"> </span></div>
+                <div class="diff-line ctx"><span class="ln">22</span><span class="ln">23</span><span class="code"><span class="tok-kw">export</span> <span class="tok-kw">function</span> <span class="tok-fn">lineTotal</span>(item: <span class="tok-fn">CartItem</span>) {</span></div>
+                <div class="diff-line ctx"><span class="ln">23</span><span class="ln">24</span><span class="code">   <span class="tok-kw">return</span> <span class="tok-fn">roundMoney</span>(item.price * item.quantity)</span></div>
+                <div class="diff-line ctx"><span class="ln">24</span><span class="ln">25</span><span class="code"> }</span></div>
+                <div class="diff-line ctx"><span class="ln">25</span><span class="ln">26</span><span class="code"> </span></div>
+                <div class="diff-line ctx"><span class="ln">26</span><span class="ln">27</span><span class="code"><span class="tok-kw">export</span> <span class="tok-kw">function</span> <span class="tok-fn">applyDiscount</span>(total: <span class="tok-fn">number</span>, pct: <span class="tok-fn">number</span>) {</span></div>
+                <div class="diff-line ctx"><span class="ln">27</span><span class="ln">28</span><span class="code">   <span class="tok-kw">return</span> <span class="tok-fn">roundMoney</span>(total * (<span class="tok-num">1</span> - pct / <span class="tok-num">100</span>))</span></div>
+                <div class="diff-line ctx"><span class="ln">28</span><span class="ln">29</span><span class="code"> }</span></div>
+                <div class="diff-line ctx"><span class="ln">29</span><span class="ln">30</span><span class="code"> </span></div>
+                <div class="diff-line ctx"><span class="ln">30</span><span class="ln">31</span><span class="code"><span class="tok-cmt">// Keep the public API stable for checkout screens.</span></span></div>
+                <div class="diff-line ctx"><span class="ln">31</span><span class="ln">32</span><span class="code"><span class="tok-kw">export</span> { roundMoney }</span></div>
+              </div>
+
+              <div class="right-foot">
+                <span class="summary">6 files · +62 −10</span>
+                <button class="btn tiny subtle">Stage all</button>
+                <button class="btn tiny primary">Commit</button>
+              </div>
+            </div>
+
+            <!-- GIT -->
+            <div class="right-pane" data-pane="git">
+              <div class="git-pane">
+                <div class="branch-card">
+                  <div class="branch-icon"><svg class="icon lg"><use href="#i-branch"/></svg></div>
+                  <div style="min-width:0">
+                    <div class="name">nest/checkout-redesign</div>
+                    <div class="sub">2 ahead · 0 behind <span style="color:#4f5a6c">origin/main</span></div>
+                  </div>
+                  <button class="btn tiny subtle">Push</button>
+                </div>
+
+                <div class="git-section">
+                  <div class="git-section-head">
+                    <svg class="icon sm"><use href="#i-commit"/></svg>
+                    Changes <span class="pill">6</span>
+                    <span class="link">Stage all</span>
+                  </div>
+                  <div class="change-row"><input type="checkbox" checked><span class="fstatus m">M</span><span class="fname">src/checkout/total.ts</span><span class="fstat"><b class="add">+6</b><b class="del">−4</b></span></div>
+                  <div class="change-row"><input type="checkbox" checked><span class="fstatus m">M</span><span class="fname">src/checkout/total.test.ts</span><span class="fstat"><b class="add">+18</b><b class="del">−0</b></span></div>
+                  <div class="change-row"><input type="checkbox" checked><span class="fstatus m">M</span><span class="fname">src/checkout/CartSummary.tsx</span><span class="fstat"><b class="add">+9</b><b class="del">−3</b></span></div>
+                  <div class="change-row"><input type="checkbox" checked><span class="fstatus a">A</span><span class="fname">src/checkout/money.ts</span><span class="fstat"><b class="add">+24</b><b class="del">−0</b></span></div>
+                  <div class="change-row"><input type="checkbox"><span class="fstatus m">M</span><span class="fname">src/api/checkout.ts</span><span class="fstat"><b class="add">+4</b><b class="del">−2</b></span></div>
+                  <div class="change-row"><input type="checkbox"><span class="fstatus m">M</span><span class="fname">package.json</span><span class="fstat"><b class="add">+1</b><b class="del">−1</b></span></div>
+                </div>
+
+                <div class="commit-box">
+                  <div class="commit-label">Commit message</div>
+                  <div class="commit-input">fix(checkout): round total after multiplying by quantity</div>
+                  <div class="commit-actions">
+                    <button class="btn tiny subtle">Commit</button>
+                    <button class="btn tiny primary">Commit &amp; push</button>
+                  </div>
+                </div>
+
+                <div class="git-section">
+                  <div class="git-section-head"><svg class="icon sm"><use href="#i-clock"/></svg> Recent commits</div>
+                  <div class="commit-row"><span class="sha">a1f9c2e</span><span class="msg">fix: round totals after quantity</span><span class="time">2m</span></div>
+                  <div class="commit-row"><span class="sha">7c41b08</span><span class="msg">test: add checkout regression cases</span><span class="time">18m</span></div>
+                  <div class="commit-row"><span class="sha">2de9a11</span><span class="msg">feat: add cart summary skeleton</span><span class="time">1h</span></div>
+                </div>
+
+                <div class="remote-card">
+                  <div class="remote-icon"><svg class="icon lg"><use href="#i-repo"/></svg></div>
+                  <div>
+                    <div class="title">origin</div>
+                    <div class="sub">github.com/acme/web</div>
+                  </div>
+                  <button class="btn tiny subtle">Fetch</button>
+                </div>
+
+                <div class="repo-card">
+                  <div class="repo-row"><span class="k">Base</span><span class="v">origin/main</span></div>
+                  <div class="repo-row"><span class="k">Worktree</span><span class="v">~/Nest/worktrees/acme-web/checkout-redesign</span></div>
+                  <div class="repo-row"><span class="k">Setup</span><span class="v"><span class="ok">passed</span> npm install · 8.4s</span></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- SESSIONS -->
+            <div class="right-pane" data-pane="sessions">
+              <div class="sessions-pane">
+                <div class="sessions-head">
+                  <div>
+                    <div class="panel-title">Sessions</div>
+                    <div class="sub">checkout-redesign · 2 sessions</div>
+                  </div>
+                  <button class="btn tiny subtle"><svg class="icon sm"><use href="#i-plus"/></svg> New</button>
+                </div>
+
+                <div class="session-card active">
+                  <div class="sc-top">
+                    <span class="agent c">C</span>
+                    <div class="sc-name">Claude Code <span class="dot live"></span></div>
+                    <span class="sc-time">12m 08s</span>
+                  </div>
+                  <div class="sc-meta">claude-sonnet-4-5 · PID 14208 · 48.2k tokens</div>
+                  <div class="sc-path">~/Nest/worktrees/acme-web/checkout-redesign</div>
+                  <div class="sc-last"><span class="dot live"></span> Writing src/checkout/total.test.ts</div>
+                  <div class="sc-actions">
+                    <button class="btn tiny subtle">Focus</button>
+                    <button class="btn tiny ghost">Stop</button>
+                    <button class="icon-btn" aria-label="More" style="width:22px;height:22px"><svg class="icon sm"><use href="#i-more"/></svg></button>
+                  </div>
+                </div>
+
+                <div class="session-card">
+                  <div class="sc-top">
+                    <span class="agent x">X</span>
+                    <div class="sc-name">Codex <span class="dot idle"></span></div>
+                    <span class="sc-time">3m 41s</span>
+                  </div>
+                  <div class="sc-meta">gpt-5-codex · exited 0 · 12.4k tokens</div>
+                  <div class="sc-last">Last output: “All tests pass.”</div>
+                  <div class="sc-actions">
+                    <button class="btn tiny subtle">Resume</button>
+                    <button class="btn tiny ghost">View log</button>
+                  </div>
+                </div>
+
+                <div class="sessions-divider">Other running</div>
+
+                <div class="session-card compact">
+                  <div class="sc-top">
+                    <span class="agent x">X</span>
+                    <div class="sc-name">Codex <span class="needs" style="font-size:9.5px;font-weight:500">needs input</span></div>
+                    <span class="sc-time">4m 12s</span>
+                  </div>
+                  <div class="sc-meta">acme/api · auth-token-refresh</div>
+                  <div class="sc-last"><span class="dot wait"></span> Approve command: <span class="t-cyan" style="font-family:var(--font-mono)">npm run db:migrate</span></div>
+                  <div class="sc-actions"><button class="btn tiny subtle">Open</button></div>
+                </div>
+
+                <div class="session-card compact">
+                  <div class="sc-top">
+                    <span class="agent d">D</span>
+                    <div class="sc-name">DeepSeek Harness <span class="dot idle"></span></div>
+                    <span class="sc-time">2m 05s</span>
+                  </div>
+                  <div class="sc-meta">nest/docs · architecture-notes</div>
+                  <div class="sc-last">Idle · waiting for prompt</div>
+                  <div class="sc-actions"><button class="btn tiny subtle">Open</button></div>
+                </div>
+
+                <div class="sessions-note">Scrollback is kept for 7 days. Sessions keep running while Nest is open. A background daemon is planned for full persistence.</div>
+              </div>
+            </div>
+
+          </div>
+        </aside>
+      </div>
+
+      <!-- ================= NEW TASK MODAL ================= -->
+      <div class="overlay">
+        <div class="modal">
+          <div class="modal-head">
+            <div class="modal-title">New task</div>
+            <button class="icon-btn" aria-label="Close"><svg class="icon"><use href="#i-x"/></svg></button>
+          </div>
+          <div class="modal-body">
+            <div class="field-label">Project</div>
+            <div class="select">
+              <svg class="icon sm" style="color:#7aa2f7"><use href="#i-repo"/></svg>
+              acme/web
+              <svg class="icon sm chev"><use href="#i-chev-down"/></svg>
+            </div>
+
+            <div class="field-label">Location</div>
+            <div class="segmented">
+              <button class="seg active"><svg class="icon sm"><use href="#i-branch"/></svg> New worktree</button>
+              <button class="seg"><svg class="icon sm" style="color:#e0af68"><use href="#i-home"/></svg> Main checkout</button>
+            </div>
+            <div class="hint">Worktree is isolated. Main checkout uses the repo root and is shared.</div>
+
+            <div class="field-label">Task title</div>
+            <div class="input">Fix rounding in checkout totals</div>
+            <div class="hint">Branch <code>nest/fix-rounding-in-checkout-totals</code></div>
+
+            <div class="row2">
+              <div>
+                <div class="field-label">Base branch</div>
+                <div class="select">origin/main <svg class="icon sm chev"><use href="#i-chev-down"/></svg></div>
+              </div>
+              <div>
+                <div class="field-label">Worktree</div>
+                <div class="input" style="font:9.5px var(--font-mono);color:#8b95a7">~/Nest/worktrees/acme-web/…</div>
+              </div>
+            </div>
+
+            <div class="field-label">Start with</div>
+            <div class="agent-grid">
+              <div class="agent-option selected">
+                <span class="agent c">C</span>
+                <div><div class="name">Claude Code</div><div class="cmd">claude</div></div>
+                <svg class="icon sm check"><use href="#i-check"/></svg>
+              </div>
+              <div class="agent-option">
+                <span class="agent x">X</span>
+                <div><div class="name">Codex</div><div class="cmd">codex</div></div>
+              </div>
+              <div class="agent-option">
+                <span class="agent d">D</span>
+                <div><div class="name">DeepSeek Harness</div><div class="cmd">dsh</div></div>
+              </div>
+              <div class="agent-option">
+                <span class="agent t">&gt;</span>
+                <div><div class="name">Blank terminal</div><div class="cmd">$SHELL</div></div>
+              </div>
+            </div>
+
+            <div class="check-row"><input type="checkbox" checked> Run setup script <code>npm install</code></div>
+            <div class="check-row"><input type="checkbox" checked> Copy <code>.env</code> from the main checkout</div>
+          </div>
+          <div class="modal-foot">
+            <div class="muted">Creates a worktree, a branch, and a session.</div>
+            <button class="btn ghost">Cancel</button>
+            <button class="btn primary">Create &amp; start</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+  const app = document.getElementById('app');
+  const frame = document.getElementById('frame');
+  const params = new URLSearchParams(location.search);
+  const screens = ['main','git','sessions','new-task'];
+  let zoomed = false;
+
+  function setScreen(name){
+    if(!screens.includes(name)) name = 'main';
+    document.body.dataset.screen = name;
+    document.querySelectorAll('.preview-tabs button').forEach(b=>{
+      b.classList.toggle('active', b.dataset.screen === name);
+    });
+    try {
+      const url = new URL(location.href);
+      url.searchParams.set('screen', name);
+      history.replaceState(null, '', url);
+    } catch {}
+
+  }
+
+  document.querySelectorAll('.preview-tabs button').forEach(b=>{
+    b.addEventListener('click', ()=>setScreen(b.dataset.screen));
+  });
+
+  if(params.get('clean') === '1') document.body.classList.add('clean');
+  setScreen(params.get('screen') || 'main');
+
+  const zoomBtn = document.getElementById('zoomBtn');
+  zoomBtn.addEventListener('click', ()=>{
+    zoomed = !zoomed;
+    document.body.classList.toggle('zoomed', zoomed);
+    zoomBtn.textContent = zoomed ? 'Fit' : '100%';
+    fit();
+  });
+
+  function fit(){
+    if(document.body.classList.contains('clean') || zoomed) {
+      app.style.transform='none';
+      frame.style.width='1440px';
+      frame.style.height='900px';
+      return;
+    }
+    const s = Math.min(1, (window.innerWidth - 36) / 1440);
+    app.style.transform = 'scale(' + s + ')';
+    frame.style.width = (1440 * s) + 'px';
+    frame.style.height = (900 * s) + 'px';
+  }
+  window.addEventListener('resize', fit);
+  fit();
+</script>
+</body>
+</html>

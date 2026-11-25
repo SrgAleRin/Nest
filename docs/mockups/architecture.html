@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Nest — architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#080a0e; --panel:#0d1117; --panel2:#10151d; --border:#232c38;
+    --text:#e7ecf6; --muted:#8b95a7; --dim:#5d6676;
+    --blue:#7aa2f7; --purple:#bb9af7; --green:#9ece6a; --amber:#e0af68; --red:#f7768e;
+    --mono:'JetBrains Mono','Cascadia Code',Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:'Inter','Segoe UI',system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{width:1120px;max-width:100%;margin:0 auto;padding:22px 22px 26px}
+  header{display:flex;align-items:flex-end;gap:14px;margin-bottom:18px}
+  .logo{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;background:linear-gradient(135deg,#7aa2f7,#bb9af7);color:#080a0e;font-weight:800;font-size:17px}
+  h1{font-size:18px;line-height:1.2;margin:0;font-weight:600;letter-spacing:.1px}
+  header p{margin:4px 0 0;color:var(--muted);font-size:11.5px}
+  .badge{margin-left:auto;font:10px var(--mono);color:#9aa6b8;border:1px solid var(--border);background:#0d1117;border-radius:999px;padding:4px 9px;white-space:nowrap}
+  .layout{display:grid;grid-template-columns:minmax(0,1fr) 238px;gap:14px;align-items:start}
+  .diagram{display:flex;flex-direction:column;gap:0}
+  .layer{border:1px solid var(--border);border-radius:10px;background:var(--panel);padding:12px;position:relative}
+  .layer + .layer{margin-top:0}
+  .layer-label{display:flex;align-items:center;gap:7px;font-size:10px;font-weight:600;letter-spacing:.9px;text-transform:uppercase;color:#7f8a9c;margin-bottom:9px}
+  .layer-label .tag{font:9px var(--mono);letter-spacing:0;text-transform:none;border:1px solid var(--border);border-radius:4px;padding:1px 5px;color:var(--dim);background:#0a0d12}
+  .row{display:grid;gap:8px}
+  .row.three{grid-template-columns:1fr 1fr 1fr}
+  .row.four{grid-template-columns:repeat(4,1fr)}
+  .row.five{grid-template-columns:repeat(5,1fr)}
+  .box{border:1px solid #2a3442;border-radius:7px;background:var(--panel2);padding:9px 10px;min-width:0}
+  .box .t{font-size:11.5px;font-weight:500;color:#dfe6f3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .box .s{font-size:10px;color:var(--dim);margin-top:2px;line-height:1.35}
+  .box .s code{font:9.5px var(--mono);color:#9aa6b8}
+  .renderer{border-color:rgba(122,162,247,.32);background:linear-gradient(180deg,rgba(122,162,247,.055),rgba(13,17,23,.9))}
+  .renderer .layer-label{color:#9db9f7}
+  .preload{border-color:rgba(187,154,247,.28);background:linear-gradient(180deg,rgba(187,154,247,.05),rgba(13,17,23,.9));padding:10px 12px}
+  .preload .layer-label{color:#c9b1f5;margin:0}
+  .preload .line{display:flex;align-items:center;gap:8px;font:10px var(--mono);color:#9aa6b8}
+  .preload .line b{color:#d5c2ff;font-weight:500}
+  .main{border-color:rgba(158,206,106,.28);background:linear-gradient(180deg,rgba(158,206,106,.045),rgba(13,17,23,.9))}
+  .main .layer-label{color:#b3d693}
+  .rpc{display:flex;align-items:center;justify-content:center;height:28px;border:1px dashed rgba(158,206,106,.35);border-radius:6px;background:rgba(158,206,106,.04);font:10px var(--mono);color:#b3d693;margin-bottom:8px}
+  .disk{border-color:rgba(224,175,104,.25);background:linear-gradient(180deg,rgba(224,175,104,.04),rgba(13,17,23,.9))}
+  .disk .layer-label{color:#e5c28f}
+  .arrow{height:34px;display:flex;align-items:center;justify-content:center;position:relative}
+  .arrow:before{content:'';position:absolute;top:0;bottom:0;left:50%;width:1px;background:#2a3442}
+  .arrow:after{content:'';position:absolute;bottom:1px;left:calc(50% - 4px);border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid #3a4658}
+  .arrow span{position:relative;z-index:1;background:var(--bg);padding:0 9px;font:9.5px var(--mono);color:#6f7a8c;white-space:nowrap}
+  .future{border:1px dashed #2a3442;border-radius:10px;background:rgba(13,17,23,.55);padding:12px}
+  .future h2{font-size:10px;letter-spacing:.9px;text-transform:uppercase;color:#7f8a9c;margin:0 0 8px;font-weight:600}
+  .future .box{margin-bottom:7px;background:#0b0e13}
+  .future .box:last-child{margin-bottom:0}
+  .future .note{font-size:10px;line-height:1.5;color:var(--dim);margin-top:10px}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:12px;font-size:10px;color:var(--dim)}
+  .legend i{display:inline-block;width:7px;height:7px;border-radius:2px;margin-right:5px;vertical-align:1px}
+  .legend .l1{background:var(--blue)} .legend .l2{background:var(--purple)} .legend .l3{background:var(--green)} .legend .l4{background:var(--amber)}
+  .principle{margin-top:12px;display:flex;gap:8px;align-items:flex-start;border:1px solid #1e2530;border-radius:8px;background:#0b0e13;padding:10px 12px;font-size:10.5px;line-height:1.5;color:#8b95a7}
+  .principle b{color:#c3cbd9;font-weight:500}
+  .principle .k{color:var(--amber);font:10px var(--mono);white-space:nowrap}
+  @media (max-width:980px){ .layout{grid-template-columns:1fr} .row.five{grid-template-columns:repeat(3,1fr)} .row.four{grid-template-columns:repeat(2,1fr)} }
+  @media (max-width:620px){ .row.three,.row.five,.row.four{grid-template-columns:1fr} header .badge{display:none} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">n</div>
+    <div>
+      <h1>Nest — архитектура MVP</h1>
+      <p>Electron · React · node-pty · SQLite · git CLI · Windows-first</p>
+    </div>
+    <div class="badge">Electron chosen · Tauri later</div>
+  </header>
+
+  <div class="layout">
+    <div class="diagram">
+
+      <section class="layer renderer">
+        <div class="layer-label">Renderer <span class="tag">React · sandboxed</span></div>
+        <div class="row three">
+          <div class="box">
+            <div class="t">Sidebar</div>
+            <div class="s">Projects → main / Tasks → Sessions<br><code>Running</code> across projects</div>
+          </div>
+          <div class="box">
+            <div class="t">Terminal</div>
+            <div class="s">xterm.js · tabs per session<br>no custom chat layer</div>
+          </div>
+          <div class="box">
+            <div class="t">Right panel</div>
+            <div class="s">Git · Diff + comments · Sessions<br>scoped to the active task</div>
+          </div>
+        </div>
+        <div class="legend">
+          <span><i class="l1"></i>no fs / child_process</span>
+          <span>TanStack Query + Zustand</span>
+          <span>Tailwind + Radix</span>
+        </div>
+      </section>
+
+      <div class="arrow"><span>typed IPC · contextBridge · zod</span></div>
+
+      <section class="layer preload">
+        <div class="layer-label">Preload <span class="tag">allowlist only</span></div>
+        <div class="line"><b>nest.invoke(method, input)</b><span>→ ipcRenderer.invoke</span></div>
+        <div class="line" style="margin-top:4px"><b>nest.on(event)</b><span>← main → renderer events</span></div>
+      </section>
+
+      <div class="arrow"><span>validated RPC</span></div>
+
+      <section class="layer main">
+        <div class="layer-label">Main process <span class="tag">Node · core package</span></div>
+        <div class="rpc">RPC router · method allowlist · structured errors</div>
+        <div class="row five">
+          <div class="box"><div class="t">Projects</div><div class="s">repo registry<br>base ref</div></div>
+          <div class="box"><div class="t">Tasks</div><div class="s">worktree + main checkout<br>setup / rollback</div></div>
+          <div class="box"><div class="t">Git + review</div><div class="s">status · diff · comments<br>commit · push</div></div>
+          <div class="box"><div class="t">Sessions</div><div class="s">PTY lifecycle<br>no daemon in MVP</div></div>
+          <div class="box"><div class="t">Harness</div><div class="s">CLI profiles<br>detect · resume</div></div>
+        </div>
+        <div class="row four" style="margin-top:8px">
+          <div class="box"><div class="t">Watcher</div><div class="s">@parcel/watcher<br>debounce 250 ms</div></div>
+          <div class="box"><div class="t">SQLite</div><div class="s">projects · tasks · comments<br>node:sqlite · WAL</div></div>
+          <div class="box"><div class="t">Session store</div><div class="s">raw log + snapshot<br>scrollback</div></div>
+          <div class="box"><div class="t">HostAdapter</div><div class="s">LocalHost now<br>SSH later</div></div>
+        </div>
+      </section>
+
+      <div class="arrow"><span>exec · spawn · read · watch</span></div>
+
+      <section class="layer disk">
+        <div class="layer-label">Machine <span class="tag">files & processes</span></div>
+        <div class="row four">
+          <div class="box"><div class="t">worktrees + main</div><div class="s"><code>~/Nest/worktrees/…</code><br>+ project checkout</div></div>
+          <div class="box"><div class="t">harness processes</div><div class="s"><code>claude · codex · dsh</code><br>in ConPTY</div></div>
+          <div class="box"><div class="t">session logs</div><div class="s"><code>*.log</code> + <code>*.snapshot</code><br>7-day retention</div></div>
+          <div class="box"><div class="t">nest.db</div><div class="s">projects · tasks<br>sessions · settings</div></div>
+        </div>
+      </section>
+
+      <div class="principle">
+        <span class="k">Principle</span>
+        <div><b>UI is replaceable; the core is not.</b> Core lives in a plain Node package behind one RPC contract. Moving it into a daemon or an SSH host later must not change the three-column UI.</div>
+      </div>
+    </div>
+
+    <aside class="future">
+      <h2>Future, not MVP</h2>
+      <div class="box"><div class="t">nestd</div><div class="s">same core in a separate process; sessions survive UI restart</div></div>
+      <div class="box"><div class="t">PR / checks</div><div class="s">GitHub/GitLab; later, not MVP</div></div>
+      <div class="box"><div class="t">Split panes</div><div class="s">terminal + diff side by side</div></div>
+      <div class="box"><div class="t">Tauri 2 spike</div><div class="s">separate experiment; Node core → Rust or sidecar</div></div>
+      <div class="box"><div class="t">Remote / mobile</div><div class="s">long box; no scenario, not planned</div></div>
+      <div class="note">The RPC boundary and <code style="font:9.5px var(--mono);color:#9aa6b8">HostAdapter</code> exist from day one, so these are additions — not rewrites.</div>
+    </aside>
+  </div>
+</div>
+</body>
+</html>
