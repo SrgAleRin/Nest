@@ -211,17 +211,19 @@ export function App() {
   );
 
   const startSession = useCallback(
-    async (harnessId: string) => {
-      if (!selectedTaskId) return;
+    async (harnessId: string, taskId?: string) => {
+      const targetTaskId = taskId ?? selectedTaskId;
+      if (!targetTaskId) return;
       setBusy(true);
       try {
         const session = await client.invoke('sessions.start', {
-          taskId: selectedTaskId,
+          taskId: targetTaskId,
           harnessId,
           cols: 120,
           rows: 30,
         });
         setSessions((prev) => upsert(prev, session));
+        setSelectedTaskId(targetTaskId);
         setSelectedSessionId(session.id);
       } catch (error) {
         notify('error', errorMessage(error));
@@ -230,6 +232,13 @@ export function App() {
       }
     },
     [client, notify, selectedTaskId],
+  );
+
+  const restartSession = useCallback(
+    (session: Session) => {
+      void startSession(session.harnessId, session.taskId);
+    },
+    [startSession],
   );
 
   const stopSession = useCallback(
@@ -336,6 +345,7 @@ export function App() {
           busy={busy}
           onSelectSession={setSelectedSessionId}
           onStart={(harnessId) => void startSession(harnessId)}
+          onRestart={restartSession}
           onError={reportError}
         />
 
@@ -349,6 +359,7 @@ export function App() {
           onNotify={notify}
           onSelectSession={selectSession}
           onStopSession={(sessionId) => void stopSession(sessionId)}
+          onRestartSession={restartSession}
         />
       </main>
 

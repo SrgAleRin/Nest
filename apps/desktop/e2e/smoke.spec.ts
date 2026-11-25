@@ -111,7 +111,24 @@ test('runs the fake harness, persists scrollback and recovers after restart', as
 
   await page.locator('.session-row').first().click();
   await expect(page.locator('.terminal-exit')).toContainText('exited', { timeout: 30_000 });
-  await expect(page.locator('.xterm-rows')).toContainText('hello-e2e', { timeout: 30_000 });
+  await expect(page.locator('.terminal-view.active .xterm-rows')).toContainText('hello-e2e', {
+    timeout: 30_000,
+  });
+
+  // The old PTY is dead. Restart must start a fresh session with the same harness
+  // and the new terminal must accept input.
+  await page.locator('.terminal-exit .mini-btn').click();
+  await expect(page.locator('.terminal-tab')).toHaveCount(2, { timeout: 30_000 });
+  await expect(page.locator('.terminal-view.active .xterm-rows')).toContainText('FakeHarness', {
+    timeout: 30_000,
+  });
+
+  await page.locator('.terminal-view.active .xterm-helper-textarea').focus();
+  await page.keyboard.type('echo restarted');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.terminal-view.active .xterm-rows')).toContainText('restarted', {
+    timeout: 30_000,
+  });
 
   await app.close();
 });

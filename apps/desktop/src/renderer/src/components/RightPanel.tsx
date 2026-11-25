@@ -16,6 +16,7 @@ interface RightPanelProps {
   onNotify: (level: 'info' | 'warn' | 'error', message: string) => void;
   onSelectSession: (sessionId: string) => void;
   onStopSession: (sessionId: string) => void;
+  onRestartSession: (session: Session) => void;
 }
 
 export function RightPanel(props: RightPanelProps) {
@@ -71,6 +72,7 @@ export function RightPanel(props: RightPanelProps) {
             selectedSessionId={props.selectedSessionId}
             onSelect={props.onSelectSession}
             onStop={props.onStopSession}
+            onRestart={props.onRestartSession}
           />
         ) : null}
       </div>

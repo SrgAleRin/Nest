@@ -8,6 +8,7 @@ interface SessionsPanelProps {
   selectedSessionId: string | null;
   onSelect: (sessionId: string) => void;
   onStop: (sessionId: string) => void;
+  onRestart: (session: Session) => void;
 }
 
 export function SessionsPanel({
@@ -15,6 +16,7 @@ export function SessionsPanel({
   selectedSessionId,
   onSelect,
   onStop,
+  onRestart,
 }: SessionsPanelProps) {
   if (sessions.length === 0) {
     return (
@@ -54,7 +56,11 @@ export function SessionsPanel({
                   <StopIcon size={11} />
                   Stop
                 </button>
-              ) : null}
+              ) : (
+                <button className="mini-btn" onClick={() => onRestart(session)}>
+                  Restart
+                </button>
+              )}
             </div>
           </div>
         );

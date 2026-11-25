@@ -16,6 +16,7 @@ interface TerminalPaneProps {
   busy: boolean;
   onSelectSession: (sessionId: string) => void;
   onStart: (harnessId: string) => void;
+  onRestart: (session: Session) => void;
   onError: (message: string) => void;
 }
 
@@ -85,6 +86,7 @@ export function TerminalPane(props: TerminalPaneProps) {
             session={session}
             active={session.id === activeSession?.id}
             onError={props.onError}
+            onRestart={props.onRestart}
           />
         ))}
       </div>
@@ -141,17 +143,20 @@ function TerminalView({
   session,
   active,
   onError,
+  onRestart,
 }: {
   client: NestClient;
   session: Session;
   active: boolean;
   onError: (message: string) => void;
+  onRestart: (session: Session) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const applyFitRef = useRef<() => void>(() => {});
   const lastSizeRef = useRef<{ cols: number; rows: number } | null>(null);
+  const warnedRef = useRef(false);
   const statusRef = useRef(session.status);
   statusRef.current = session.status;
   const onErrorRef = useRef(onError);
@@ -193,7 +198,15 @@ function TerminalView({
 
     const offData = onSessionData(session.id, (data) => term.write(data));
     const input = term.onData((data) => {
-      if (statusRef.current === 'exited' || statusRef.current === 'failed') return;
+      if (statusRef.current === 'exited' || statusRef.current === 'failed') {
+        if (!warnedRef.current) {
+          warnedRef.current = true;
+          onErrorRef.current(
+            'This session ended when Nest closed. Scrollback is read-only — press Restart to start a new session with the same harness.',
+          );
+        }
+        return;
+      }
       void client
         .invoke('sessions.write', { sessionId: session.id, data })
         .catch((error) => onErrorRef.current(`Terminal input: ${errorMessage(error)}`));
@@ -263,9 +276,14 @@ function TerminalView({
     <div className={`terminal-view ${active ? 'active' : ''}`}>
       <div className="terminal-host" ref={hostRef} />
       {session.status === 'exited' || session.status === 'failed' ? (
-        <div className="terminal-exit">
-          session {session.status}
-          {session.exitCode === null ? '' : ` · exit ${session.exitCode}`}
+        <div className={`terminal-exit ${session.status}`}>
+          <span>
+            session {session.status}
+            {session.exitCode === null ? '' : ` · exit ${session.exitCode}`}
+          </span>
+          <button className="mini-btn" onClick={() => onRestart(session)}>
+            Restart
+          </button>
         </div>
       ) : null}
     </div>
