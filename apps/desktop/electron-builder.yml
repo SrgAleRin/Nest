@@ -5,6 +5,11 @@ productName: Nest
 # would require Visual Studio on every build machine.
 npmRebuild: false
 artifactName: ${productName}-Setup-${version}.${ext}
+# electron-builder writes resources/app-update.yml from this config. The runtime
+# still calls setFeedURL, but electron-updater needs the file to download.
+publish:
+  provider: generic
+  url: https://github.com/SrgAleRin/Nest/releases/latest/download/
 directories:
   output: release
   buildResources: build

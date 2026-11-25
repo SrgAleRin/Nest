@@ -1,6 +1,6 @@
 {
   "name": "@nest/desktop",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Nest desktop application",
   "main": "./out/main/index.js",
@@ -13,8 +13,8 @@
     "test:e2e": "pnpm build && playwright test",
     "db:reset": "tsx scripts/db-reset.ts",
     "seed": "tsx scripts/seed.ts",
-    "package": "pnpm build && electron-builder --dir",
-    "dist": "pnpm build && electron-builder && node ../../scripts/make-latest-yml.mjs"
+    "package": "pnpm build && electron-builder --dir --publish never",
+    "dist": "pnpm build && electron-builder --publish never && node ../../scripts/make-latest-yml.mjs"
   },
   "dependencies": {
     "@nest/core": "workspace:*",

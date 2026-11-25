@@ -145,7 +145,7 @@ export function createMockClient(): NestClient {
 
   const updateStatus = (): UpdateStatus => ({
     state: 'disabled',
-    currentVersion: '0.1.1',
+    currentVersion: '0.1.2',
     enabled: false,
     feedUrl: settings.updateFeedUrl || DEFAULT_UPDATE_FEED_URL,
     availableVersion: null,
@@ -292,7 +292,7 @@ export function createMockClient(): NestClient {
   let clipboardText = '';
 
   const info: AppInfo = {
-    version: '0.1.1-mock',
+    version: '0.1.2-mock',
     electron: 'mock',
     platform: 'browser',
     profile: 'mock',
