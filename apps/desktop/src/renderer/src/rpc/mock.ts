@@ -85,9 +85,11 @@ export function createMockClient(): NestClient {
       taskId: 'task-checkout',
       filePath: 'src/App.tsx',
       line: 12,
+      endLine: 13,
       side: 'new',
       body: 'This effect subscribes twice in StrictMode. Unsubscribe on cleanup.',
       status: 'open',
+      stale: false,
       createdAt: now,
       updatedAt: now,
     },
@@ -403,14 +405,17 @@ export function createMockClient(): NestClient {
       case 'comments.list':
         return comments;
       case 'comments.create': {
+        const line = Number(params.line);
         const comment: ReviewComment = {
           id: `comment-${comments.length + 1}`,
           taskId: String(params.taskId),
           filePath: String(params.filePath),
-          line: Number(params.line),
+          line,
+          endLine: Math.max(line, Number(params.endLine ?? line)),
           side: params.side === 'old' ? 'old' : 'new',
           body: String(params.body),
           status: 'open',
+          stale: false,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };

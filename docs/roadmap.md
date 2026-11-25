@@ -166,13 +166,13 @@ Shared dirs (`node_modules`) остаются в P1.
 
 **Exit criteria:** 5 параллельных сессий, переключение между ними < 100 мс, память < 500 МБ, после рестарта scrollback на месте, процессы не висят.
 
-### Phase 4 — git, diff и комментарии (1–2 недели)
+### Phase 4 — git, diff и комментарии (сделано)
 
 Сделано в foundation: status/diff/stage/commit/push, inline-комментарии, отправка в сессию, Sessions-панель.
 
 Сделано в Phase 4 (первый заход): watcher файлов и git-каталога (`@parcel/watcher`, debounce 350 мс, `git:changed` на задачу), numstat в списке изменённых файлов (`+N −M`, включая untracked), виртуализированный diff (в DOM только окно строк, липкий заголовок файла) и подсветка Shiki с ленивыми грамматиками.
 
-Осталось: range-комментарии и re-anchor (P1).
+Затем: range-комментарии (Shift+клик по `+` расширяет диапазон) и re-anchor — якорь хранится как текст блока, при изменении файла комментарий переезжает следом, а при исчезновении текста помечается stale и показывается в начале файла.
 
 - [x] `git status` с watcher;
 - [x] список файлов, numstat;
@@ -181,6 +181,7 @@ Shared dirs (`node_modules`) остаются в P1.
 - [x] commit/push;
 - [x] branch/ahead/behind;
 - [x] комментарии к строкам diff: создание, inline, resolve, удаление;
+- [x] range-комментарии и re-anchor при изменении diff;
 - [x] отправка комментариев в активную сессию (bracketed paste + fallback);
 - [x] Sessions-панель;
 - [x] одинаковый git/diff для worktree и main checkout, с бейджем `main`.
@@ -217,7 +218,6 @@ Shared dirs (`node_modules`) остаются в P1.
 
 - системные уведомления + бейдж;
 - command palette;
-- комментарии к диапазону строк (range) и re-anchor при изменении diff;
 - shared dirs (`node_modules`) через junction/symlink;
 - архив задач и очистка старых worktree;
 - настройки темы и шрифта терминала.

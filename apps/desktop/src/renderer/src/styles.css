@@ -1223,6 +1223,11 @@ code,
   opacity: 1;
 }
 
+.diff-line.diff-line-selected {
+  background: rgba(122, 162, 247, 0.16);
+  box-shadow: inset 2px 0 0 var(--blue);
+}
+
 .diff-empty {
   padding: 8px 10px;
   color: var(--dim);
@@ -1321,6 +1326,17 @@ code,
 .comment-composer-head {
   color: var(--muted);
   font: 9.5px var(--mono);
+}
+
+.comment-composer-hint {
+  color: var(--dim);
+  font: 9px var(--mono);
+}
+
+.comment-stale {
+  margin-bottom: 3px;
+  color: var(--amber);
+  font: 10px var(--mono);
 }
 
 .comment-composer textarea {

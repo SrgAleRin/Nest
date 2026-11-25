@@ -89,9 +89,13 @@ export const ReviewCommentSchema = z.object({
   taskId: z.string().min(1),
   filePath: z.string().min(1),
   line: z.number().int().positive(),
+  /** Last line of a multi-line comment; equals `line` for single-line notes. */
+  endLine: z.number().int().positive(),
   side: CommentSideSchema,
   body: z.string(),
   status: CommentStatusSchema,
+  /** The anchored text was removed or replaced; stored line numbers are a hint. */
+  stale: z.boolean(),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
 });

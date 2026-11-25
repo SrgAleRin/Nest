@@ -100,6 +100,7 @@ export const rpcMethods = {
       taskId: id,
       filePath: z.string().min(1),
       line: z.number().int().positive(),
+      endLine: z.number().int().positive().optional(),
       side: z.enum(['old', 'new']),
       body: z.string().trim().min(1).max(10000),
     }),

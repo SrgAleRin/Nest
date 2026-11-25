@@ -6,9 +6,10 @@ import { expect, test } from '@playwright/test';
 import { _electron as electron, type ElectronApplication } from 'playwright';
 
 /**
- * The diff viewer virtualizes rows and highlights syntax. A file rewritten from
- * top to bottom produces a diff of roughly 1600 lines, which is far more than
- * the DOM should ever contain at once.
+ * The diff viewer virtualizes rows, highlights syntax, supports multi-line
+ * comments and re-anchors them when the file changes underneath. `big.ts` is
+ * rewritten top to bottom (1600 diff lines); `a-small.ts` holds the comment and
+ * is edited while the app is running, so the watcher has to refresh it.
  */
 const appDir = path.resolve(__dirname, '..');
 const FILE_LINES = 800;
@@ -21,7 +22,7 @@ function git(args: string[], cwd: string): void {
   execFileSync('git', args, { cwd, stdio: 'ignore', windowsHide: true });
 }
 
-function fileBody(marker: number): string {
+function bigBody(marker: number): string {
   const lines: string[] = [];
   for (let index = 1; index <= FILE_LINES; index += 1) {
     const name = `item${String(index).padStart(4, '0')}`;
@@ -30,18 +31,24 @@ function fileBody(marker: number): string {
   return `${lines.join('\n')}\n`;
 }
 
+function writeSmall(lines: string[]): void {
+  writeFileSync(path.join(repoPath, 'a-small.ts'), `${lines.join('\n')}\n`, 'utf8');
+}
+
 test.beforeAll(() => {
   tempRoot = mkdtempSync(path.join(os.tmpdir(), 'nest-diff-'));
   repoPath = path.join(tempRoot, 'diff-repo');
   mkdirSync(repoPath, { recursive: true });
   git(['init', '-b', 'main'], repoPath);
-  writeFileSync(path.join(repoPath, 'big.ts'), fileBody(1), 'utf8');
+  writeFileSync(path.join(repoPath, 'big.ts'), bigBody(1), 'utf8');
+  writeSmall(['one', 'two', 'three', 'four']);
   git(['add', '.'], repoPath);
   git(
     ['-c', 'user.name=Nest', '-c', 'user.email=nest@example.com', 'commit', '-m', 'init'],
     repoPath,
   );
-  writeFileSync(path.join(repoPath, 'big.ts'), fileBody(2), 'utf8');
+  writeFileSync(path.join(repoPath, 'big.ts'), bigBody(2), 'utf8');
+  writeSmall(['one', 'TWO', 'three', 'four']);
 });
 
 test.afterAll(async () => {
@@ -78,37 +85,53 @@ test('virtualizes a large diff, keeps comments working and highlights syntax', a
   await page.reload();
   await page.waitForSelector('.app', { timeout: 60_000 });
   await page.getByRole('tab', { name: 'Diff' }).click();
-  await expect(page.locator('.diff-file-head .diff-path')).toHaveText('big.ts');
+  await expect(page.locator('.diff-file-head .diff-path').first()).toHaveText('a-small.ts');
 
   // 1600 diff lines must not become 1600 DOM rows.
   await expect(page.locator('.diff-line').first()).toBeVisible({ timeout: 30_000 });
-  const rowHeight = await page
+  const listHeight = await page
     .locator('.diff-rows')
     .evaluate((element) => element.getBoundingClientRect().height);
-  expect(rowHeight).toBeGreaterThan(10_000);
+  expect(listHeight).toBeGreaterThan(10_000);
   expect(await page.locator('.diff-line').count()).toBeLessThan(250);
 
-  // Comments still attach to a virtualized line.
-  const firstLine = page.locator('.diff-line').first();
-  await firstLine.hover();
-  await firstLine.locator('.diff-comment-btn').click();
-  await expect(page.locator('.comment-composer textarea')).toBeVisible();
-  await page.locator('.comment-composer textarea').fill('virtualized comment');
-  await page.getByRole('button', { name: 'Add comment' }).click();
-  await expect(page.locator('.comment-thread')).toContainText('virtualized comment');
+  // A range comment: + on the added line, then Shift+click + on the next one.
+  const addedLine = page.locator('.diff-line.diff-add').first();
+  await addedLine.hover();
+  await addedLine.locator('.diff-comment-btn').click();
+  const contextLine = page.locator('.diff-line').filter({ hasText: 'three' }).first();
+  await contextLine.hover();
+  await contextLine.locator('.diff-comment-btn').click({ modifiers: ['Shift'] });
+  await expect(page.locator('.comment-composer-head')).toContainText('a-small.ts:2-3');
 
-  // Syntax highlighting arrives asynchronously; plain text must already be there.
+  await page.locator('.comment-composer textarea').fill('range note');
+  await page.getByRole('button', { name: 'Add comment' }).click();
+  await expect(page.locator('.comment-anchor')).toHaveText('a-small.ts:2-3');
+  await expect(page.locator('.comment-thread')).toContainText('range note');
+
+  // Syntax highlighting arrives asynchronously.
   await expect(page.locator('.diff-text span[style*="color"]').first()).toBeVisible({
     timeout: 30_000,
   });
-  const tokens = await page.locator('.diff-text span[style*="color"]').count();
-  expect(tokens).toBeGreaterThan(10);
+  expect(await page.locator('.diff-text span[style*="color"]').count()).toBeGreaterThan(10);
+
+  // Inserting a line moves the anchored block: the comment follows it.
+  writeSmall(['zero', 'one', 'TWO', 'three', 'four']);
+  await expect(page.locator('.comment-anchor')).toHaveText('a-small.ts:3-4', {
+    timeout: 20_000,
+  });
+
+  // Replacing the anchored text makes the comment stale, shown at the file top.
+  writeSmall(['zero', 'one', 'CHANGED', 'three', 'four']);
+  await expect(page.locator('.comment-stale')).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('.comment-thread')).toContainText('range note');
 
   // Scrolling to the end mounts the last lines and shows the sticky file header.
   await page.locator('.diff-scroll').evaluate((element) => {
     element.scrollTop = element.scrollHeight;
   });
-  const lastLine = page.locator('.diff-text', { hasText: 'item0800 = 2' });
-  await expect(lastLine).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('.diff-text', { hasText: 'item0800 = 2' })).toBeVisible({
+    timeout: 20_000,
+  });
   await expect(page.locator('.diff-file-head-sticky')).toContainText('big.ts');
 });

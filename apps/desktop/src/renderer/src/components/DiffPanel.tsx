@@ -34,13 +34,16 @@ interface DiffPanelProps {
 
 interface ComposerState {
   filePath: string;
+  /** First line of the range; equals endLine for a single-line comment. */
   line: number;
+  endLine: number;
   side: CommentSide;
 }
 
 type DiffRow =
   | { kind: 'file'; key: string; file: DiffFile }
   | { kind: 'empty'; key: string; file: DiffFile }
+  | { kind: 'stale-file'; key: string; filePath: string }
   | { kind: 'hunk'; key: string; hunk: DiffHunk }
   | {
       kind: 'line';
@@ -163,7 +166,7 @@ export function DiffPanel({
   useEffect(() => {
     if (!composer) return;
     const index = rows.findIndex((row) => row.kind === 'composer');
-    if (index >= 0) virtualizer.scrollToIndex(index, { align: 'center' });
+    if (index >= 0) virtualizer.scrollToIndex(index);
   }, [composer, rows, virtualizer]);
 
   const virtualItems = virtualizer.getVirtualItems();
@@ -179,12 +182,22 @@ export function DiffPanel({
     return null;
   }, [virtualItems, rows]);
 
-  function openComposer(file: DiffFile, line: DiffLine): void {
+  function openComposer(file: DiffFile, line: DiffLine, extend: boolean): void {
     const side: CommentSide = line.type === 'del' ? 'old' : 'new';
     const number = side === 'old' ? line.oldLine : line.newLine;
     if (!number) return;
-    setComposer({ filePath: file.path, line: number, side });
-    setDraft('');
+    setComposer((current) => {
+      // Shift+click on another line grows the draft range on the same side.
+      if (extend && current && current.filePath === file.path && current.side === side) {
+        return {
+          ...current,
+          line: Math.min(current.line, number),
+          endLine: Math.max(current.endLine, number),
+        };
+      }
+      return { filePath: file.path, line: number, endLine: number, side };
+    });
+    if (!extend) setDraft('');
   }
 
   async function addComment(): Promise<void> {
@@ -195,6 +208,7 @@ export function DiffPanel({
         taskId: task.id,
         filePath: composer.filePath,
         line: composer.line,
+        endLine: composer.endLine,
         side: composer.side,
         body: draft.trim(),
       });
@@ -270,12 +284,31 @@ export function DiffPanel({
         return <DiffFileHeader file={row.file} />;
       case 'empty':
         return <div className="diff-empty">Binary file or no textual hunks</div>;
+      case 'stale-file':
+        return (
+          <header className="diff-file-head">
+            <span className="git-letter tone-deleted">?</span>
+            <span className="diff-path" title={row.filePath}>
+              {row.filePath}
+            </span>
+            <span className="diff-stat">outdated</span>
+          </header>
+        );
       case 'hunk':
         return <div className="diff-hunk-head">{row.hunk.header}</div>;
       case 'line': {
         const tokens = highlights.get(row.hunk)?.lines[row.lineIndex] ?? null;
+        const selected =
+          composer !== null &&
+          composer.filePath === row.file.path &&
+          composer.side === row.side &&
+          row.anchor !== null &&
+          row.anchor >= composer.line &&
+          row.anchor <= composer.endLine;
         return (
-          <div className={`diff-line diff-${row.line.type}`}>
+          <div
+            className={`diff-line diff-${row.line.type} ${selected ? 'diff-line-selected' : ''}`}
+          >
             <span className="diff-num old">{row.line.oldLine ?? ''}</span>
             <span className="diff-num new">{row.line.newLine ?? ''}</span>
             <span className="diff-sign">
@@ -293,8 +326,8 @@ export function DiffPanel({
             {row.anchor !== null ? (
               <button
                 className="diff-comment-btn"
-                title={`Comment on ${row.side} line ${row.anchor}`}
-                onClick={() => openComposer(row.file, row.line)}
+                title={`Comment on ${row.side} line ${row.anchor} (Shift+click to extend a range)`}
+                onClick={(event) => openComposer(row.file, row.line, event.shiftKey)}
               >
                 +
               </button>
@@ -321,7 +354,7 @@ export function DiffPanel({
         return (
           <div className="comment-composer">
             <div className="comment-composer-head">
-              {row.composer.filePath}:{row.composer.line}{' '}
+              {row.composer.filePath}:{formatRange(row.composer)}{' '}
               <span className="muted">({row.composer.side} line)</span>
             </div>
             <textarea
@@ -338,6 +371,9 @@ export function DiffPanel({
                 if (event.key === 'Escape') setComposer(null);
               }}
             />
+            <div className="comment-composer-hint">
+              Shift+click another + to extend the range; Esc cancels.
+            </div>
             <div className="comment-composer-actions">
               <Button
                 size="sm"
@@ -444,9 +480,14 @@ function CommentThread({
       <div className="comment-head">
         <span className={`comment-status ${comment.status}`}>{comment.status}</span>
         <span className="comment-anchor">
-          {comment.filePath}:{comment.line}
+          {comment.filePath}:{formatRange(comment)}
         </span>
       </div>
+      {comment.stale ? (
+        <div className="comment-stale">
+          The anchored line was removed or changed; this note may no longer apply.
+        </div>
+      ) : null}
       <div className="comment-body">{comment.body}</div>
       <div className="comment-actions">
         <button
@@ -479,7 +520,14 @@ function buildRows(
   if (!diff) return [];
 
   const byAnchor = new Map<string, ReviewComment[]>();
+  const staleByFile = new Map<string, ReviewComment[]>();
   for (const comment of comments) {
+    if (comment.stale) {
+      const stale = staleByFile.get(comment.filePath);
+      if (stale) stale.push(comment);
+      else staleByFile.set(comment.filePath, [comment]);
+      continue;
+    }
     const key = anchorKey(comment.filePath, comment.side, comment.line);
     const list = byAnchor.get(key);
     if (list) list.push(comment);
@@ -489,6 +537,14 @@ function buildRows(
   const rows: DiffRow[] = [];
   diff.files.forEach((file, fileIndex) => {
     rows.push({ kind: 'file', key: `file:${fileIndex}`, file });
+
+    // Comments whose anchor text disappeared are shown at the top of their
+    // file, because there is no line left to attach them to.
+    for (const comment of staleByFile.get(file.path) ?? []) {
+      rows.push({ kind: 'comment', key: `stale:${comment.id}`, comment });
+    }
+    staleByFile.delete(file.path);
+
     if (file.hunks.length === 0) {
       rows.push({ kind: 'empty', key: `empty:${fileIndex}`, file });
       return;
@@ -523,7 +579,7 @@ function buildRows(
           composer &&
           composer.filePath === file.path &&
           composer.side === side &&
-          composer.line === anchor
+          composer.endLine === anchor
         ) {
           rows.push({
             kind: 'composer',
@@ -535,6 +591,15 @@ function buildRows(
     });
   });
 
+  // Outdated comments on files that are no longer in the diff still stay
+  // visible, under a synthetic header.
+  for (const [filePath, list] of staleByFile) {
+    rows.push({ kind: 'stale-file', key: `stale-file:${filePath}`, filePath });
+    for (const comment of list) {
+      rows.push({ kind: 'comment', key: `stale:${comment.id}`, comment });
+    }
+  }
+
   return rows;
 }
 
@@ -542,9 +607,15 @@ function anchorKey(filePath: string, side: CommentSide, line: number): string {
   return `${filePath}\u0000${side}\u0000${line}`;
 }
 
+function formatRange(value: { line: number; endLine: number }): string {
+  return value.endLine > value.line ? `${value.line}-${value.endLine}` : `${value.line}`;
+}
+
 function estimateRowSize(row: DiffRow): number {
   switch (row.kind) {
     case 'file':
+      return 36;
+    case 'stale-file':
       return 36;
     case 'hunk':
       return 22;

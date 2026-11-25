@@ -55,6 +55,8 @@ export interface CommentRow {
   task_id: string;
   file_path: string;
   line: number;
+  end_line: number | null;
+  anchor_text: string | null;
   side: CommentSide;
   body: string;
   status: CommentStatus;
@@ -105,14 +107,17 @@ export function toSession(row: SessionRow): Session {
 }
 
 export function toComment(row: CommentRow): ReviewComment {
+  const line = Number(row.line);
   return {
     id: row.id,
     taskId: row.task_id,
     filePath: row.file_path,
-    line: Number(row.line),
+    line,
+    endLine: row.end_line === null ? line : Number(row.end_line),
     side: row.side,
     body: row.body,
     status: row.status,
+    stale: false,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

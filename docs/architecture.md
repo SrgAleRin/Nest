@@ -516,16 +516,23 @@ PR и checks в MVP нет. Если появятся позже, это отд�
 
 Поля:
 
-- `task_id`, `file_path`, `side` (`old`/`new`), `line`;
-- `body`, `status` (`open`/`sent`/`resolved`);
-- `session_id` (в какую сессию отправили), `sent_at`.
+- `task_id`, `file_path`, `side` (`old`/`new`), `line`, `end_line` (`end_line = line` для одной строки);
+- `anchor_text` — текст прокомментированного блока (строки с обрезанными хвостовыми пробелами, склеенные через `\n`);
+- `body`, `status` (`open`/`resolved`).
 
 UI:
 
-- клик по номеру строки открывает поповер;
-- комментарий рендерится inline под строкой;
-- можно редактировать, resolve, удалить;
-- один или несколько комментариев можно отправить в активную сессию.
+- `+` на строке открывает композер; Shift+клик по `+` другой строки той же стороны расширяет диапазон, выбранные строки подсвечиваются;
+- комментарий рендерится inline под последней строкой диапазона; в заголовке `file:line-endLine`;
+- можно resolve/reopen, удалить, отправить в активную сессию;
+- если якорь не найден, комментарий помечается stale и показывается в начале файла (или под синтетической шапкой, если файла уже нет в диффе).
+
+Re-anchor:
+
+1. При создании core читает содержимое нужной стороны (`new` — файл в workspace, `old` — `git show HEAD:<path>`) и сохраняет `anchor_text` блока.
+2. `comments.list` перед возвратом сверяет якорь с текущим содержимым: если текст на прежней строке не совпадает, он ищется по всему файлу.
+3. Единственное или ближайшее к прежней позиции совпадение — это новая строка; core обновляет `line`/`end_line` в БД, `updated_at` не трогает.
+4. Совпадений нет — комментарий возвращается со `stale: true`, номера остаются как подсказка; если текст вернётся, stale снимется сам.
 
 Отправка:
 
@@ -533,17 +540,12 @@ UI:
 2. Сформатировать текст:
 
 ```
-Review comments from Nest:
+Review comment — src/checkout/total.ts:20-23 (new)
 
-src/checkout/total.ts:20 (new)
 Should we also cover the negative quantity case here?
-
-src/checkout/CartSummary.tsx:14 (new)
-...
 ```
 
 3. Записать в PTY через `sessions.write`.
-4. Пометить комментарии `sent`, сохранить `session_id` и `sent_at`.
 
 Многострочная вставка:
 
@@ -553,10 +555,9 @@ src/checkout/CartSummary.tsx:14 (new)
 
 Ограничения MVP:
 
-- комментарии только к одной строке (range — P1);
 - без GitHub/GitLab sync;
 - без тредов и упоминаний;
-- при изменении diff комментарий остаётся привязанным к file+line; если строка уехала — показываем предупреждение (re-anchor — P1).
+- re-anchor ищет точный текст: переписанная строка делает комментарий stale (предупреждение, без «умного» сопоставления по смыслу).
 
 ### 7.6 Diff viewer
 
@@ -706,6 +707,8 @@ CREATE TABLE review_comments (
   file_path   TEXT NOT NULL,
   side        TEXT NOT NULL CHECK (side IN ('old', 'new')),
   line        INTEGER NOT NULL,
+  end_line    INTEGER,
+  anchor_text TEXT,
   body        TEXT NOT NULL,
   status      TEXT NOT NULL DEFAULT 'open'
               CHECK (status IN ('open', 'sent', 'resolved')),

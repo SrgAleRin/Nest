@@ -41,6 +41,11 @@ describe('baseline migration', () => {
     ).map((row) => row.name);
     expect(taskColumns).toContain('setup_error');
 
+    const commentColumns = (
+      db.prepare('PRAGMA table_info(review_comments)').all() as Array<{ name: string }>
+    ).map((row) => row.name);
+    expect(commentColumns).toEqual(expect.arrayContaining(['end_line', 'anchor_text']));
+
     const applied = db.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get() as {
       count: number | bigint;
     };

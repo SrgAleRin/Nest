@@ -97,4 +97,15 @@ export const migrations: Migration[] = [
         ADD COLUMN setup_error TEXT;
     `,
   },
+  {
+    id: 5,
+    name: 'comment_ranges',
+    sql: `
+      ALTER TABLE review_comments
+        ADD COLUMN end_line INTEGER;
+
+      ALTER TABLE review_comments
+        ADD COLUMN anchor_text TEXT;
+    `,
+  },
 ];
