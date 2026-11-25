@@ -209,6 +209,8 @@ export function createMockClient(): NestClient {
     for (const handler of handlers) handler(event);
   };
 
+  let clipboardText = '';
+
   const info: AppInfo = {
     version: '0.1.0-mock',
     electron: 'mock',
@@ -224,6 +226,11 @@ export function createMockClient(): NestClient {
       case 'app.info':
         return info;
       case 'app.openExternal':
+        return undefined;
+      case 'clipboard.read':
+        return { text: clipboardText };
+      case 'clipboard.write':
+        clipboardText = String(params.text ?? '');
         return undefined;
       case 'harness.list':
         return harnesses;

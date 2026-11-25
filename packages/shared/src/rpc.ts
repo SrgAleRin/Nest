@@ -31,6 +31,9 @@ export const rpcMethods = {
     result: z.void(),
   },
 
+  'clipboard.read': { params: empty, result: z.object({ text: z.string() }) },
+  'clipboard.write': { params: z.object({ text: z.string() }), result: z.void() },
+
   'dialog.pickDirectory': { params: empty, result: z.string().nullable() },
 
   'projects.list': { params: empty, result: z.array(ProjectSchema) },

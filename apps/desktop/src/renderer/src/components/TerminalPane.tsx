@@ -283,9 +283,41 @@ function TerminalView({
       }),
     );
 
+    const copySelection = (): void => {
+      const text = term.getSelection();
+      if (!text) return;
+      void client
+        .invoke('clipboard.write', { text })
+        .catch((error) => onErrorRef.current(`Copy: ${errorMessage(error)}`));
+    };
+
+    const pasteClipboard = (): void => {
+      void client
+        .invoke('clipboard.read', {})
+        .then(({ text }) => {
+          if (text) term.paste(text);
+        })
+        .catch((error) => onErrorRef.current(`Paste: ${errorMessage(error)}`));
+    };
+
     term.attachCustomKeyEventHandler((event) => {
       if (event.type !== 'keydown') return true;
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+      const mod = event.ctrlKey || event.metaKey;
+      const key = event.key.toLowerCase();
+      if (mod && event.shiftKey && key === 'c') {
+        copySelection();
+        return false;
+      }
+      if (mod && event.shiftKey && key === 'v') {
+        pasteClipboard();
+        return false;
+      }
+      // Ctrl+C is SIGINT unless the user selected text first.
+      if (mod && !event.shiftKey && key === 'c' && term.hasSelection()) {
+        copySelection();
+        return false;
+      }
+      if (mod && key === 'f') {
         setFindOpen(true);
         return false;
       }

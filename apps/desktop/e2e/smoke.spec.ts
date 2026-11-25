@@ -98,6 +98,26 @@ test('runs the fake harness, persists scrollback and recovers after restart', as
   await page.keyboard.press('Escape');
   await expect(page.locator('.terminal-find')).toHaveCount(0);
 
+  // Ctrl+Shift+V pastes the system clipboard into the PTY.
+  await app.evaluate(({ clipboard }) => clipboard.writeText('echo pasted-e2e'));
+  await page.locator('.xterm-helper-textarea').focus();
+  await page.keyboard.press('Control+Shift+v');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.xterm-rows')).toContainText('pasted-e2e', { timeout: 30_000 });
+
+  // Selecting text and pressing Ctrl+Shift+C copies it to the system clipboard.
+  const screenBox = await page.locator('.xterm-screen').boundingBox();
+  if (!screenBox) throw new Error('terminal screen is not rendered');
+  await app.evaluate(({ clipboard }) => clipboard.writeText(''));
+  await page.mouse.move(screenBox.x + 10, screenBox.y + 8);
+  await page.mouse.down();
+  await page.mouse.move(screenBox.x + 220, screenBox.y + 8, { steps: 8 });
+  await page.mouse.up();
+  await page.keyboard.press('Control+Shift+c');
+  await expect
+    .poll(() => app.evaluate(({ clipboard }) => clipboard.readText()))
+    .not.toBe('');
+
   // A status change (running -> idle) must not remount the terminal: remounting
   // disposes xterm and replays scrollback, which looks like flashing in TUIs.
   const terminal = await page.locator('.xterm').elementHandle();

@@ -1,4 +1,4 @@
-import { BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron';
 import {
   rpcMethods,
   type AppInfo,
@@ -33,6 +33,11 @@ export function registerIpc(context: IpcContext): void {
         throw new NestError('unsupported_url', `Refusing to open ${protocol} links`);
       }
       await shell.openExternal(url);
+    },
+    'clipboard.read': async () => ({ text: await clipboard.readText() }),
+
+    'clipboard.write': async ({ text }) => {
+      await clipboard.writeText(text);
     },
 
     'dialog.pickDirectory': async () => {
