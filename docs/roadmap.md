@@ -149,21 +149,20 @@ Discovery по harness:
 
 Shared dirs (`node_modules`) остаются в P1.
 
-### Phase 3 — сессии и терминал (1 неделя)
+### Phase 3 — сессии и терминал (сделано)
 
 Сделано в foundation: профили, start/stop/resume, табы, resize, scrollback, статусы, завершение PTY, точный resume по session id.
 
-Сделано в Phase 3: поиск по терминалу (`Ctrl/Cmd+F`, подсветка всех совпадений, счётчик, Enter/Shift+Enter), кликабельные ссылки через allowlist `app.openExternal`, copy/paste через системный clipboard (`Ctrl/Cmd+Shift+C/V`, `Ctrl+C` копирует только при выделении).
+Добавлено в Phase 3: поиск по терминалу (`Ctrl/Cmd+F`, подсветка всех совпадений, счётчик, Enter/Shift+Enter), кликабельные ссылки через allowlist `app.openExternal`, copy/paste через системный clipboard (`Ctrl/Cmd+Shift+C/V`, `Ctrl+C` копирует только при выделении), лимит 8 смонтированных xterm с вытеснением по LRU и восстановлением из scrollback.
 
-Осталось: лимит смонтированных xterm.
-
-- реестр harness-профилей: Claude Code, Codex, DeepSeek Harness, OpenCode, pi, Copilot, custom;
-- запуск/остановка/рестарт сессии;
-- табы сессий, переключение задач без убийства PTY;
-- resize, copy/paste, search, links;
-- scrollback snapshot;
-- статусы running/idle/exited/failed;
-- завершение всех PTY при выходе из приложения (без daemon).
+- [x] реестр harness-профилей: Claude Code, Codex, DeepSeek Harness, OpenCode, pi, Copilot, custom;
+- [x] запуск/остановка/рестарт сессии;
+- [x] табы сессий, переключение задач без убийства PTY;
+- [x] resize, copy/paste, search, links;
+- [x] scrollback snapshot;
+- [x] статусы running/idle/exited/failed;
+- [x] завершение всех PTY при выходе из приложения (без daemon);
+- [x] лимит смонтированных xterm (8, LRU).
 
 **Exit criteria:** 5 параллельных сессий, переключение между ними < 100 мс, память < 500 МБ, после рестарта scrollback на месте, процессы не висят.
 

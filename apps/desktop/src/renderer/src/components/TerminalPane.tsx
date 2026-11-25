@@ -18,6 +18,12 @@ const SEARCH_DECORATIONS = {
   activeMatchColorOverviewRuler: '#e0af68',
 } as const;
 
+/**
+ * Mounted xterm instances. A PTY keeps running regardless; evicted terminals
+ * are disposed and replayed from scrollback when the tab is selected again.
+ */
+const MOUNT_LIMIT = 8;
+
 interface TerminalPaneProps {
   client: NestClient;
   task: Task | null;
@@ -36,6 +42,25 @@ interface TerminalPaneProps {
 export function TerminalPane(props: TerminalPaneProps) {
   const { task, sessions, selectedSessionId } = props;
   const activeSession = sessions.find((session) => session.id === selectedSessionId) ?? null;
+  const [mounted, setMounted] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!selectedSessionId) return;
+    setMounted((prev) => {
+      const next = [selectedSessionId, ...prev.filter((id) => id !== selectedSessionId)];
+      return next.slice(0, MOUNT_LIMIT);
+    });
+  }, [selectedSessionId]);
+
+  useEffect(() => {
+    const existing = new Set(sessions.map((session) => session.id));
+    setMounted((prev) => {
+      const next = prev.filter((id) => existing.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [sessions]);
+
+  const mountedSessions = sessions.filter((session) => mounted.includes(session.id));
 
   return (
     <section className="center">
@@ -92,7 +117,7 @@ export function TerminalPane(props: TerminalPaneProps) {
           />
         ) : null}
 
-        {sessions.map((session) => (
+        {mountedSessions.map((session) => (
           <TerminalView
             key={session.id}
             client={props.client}

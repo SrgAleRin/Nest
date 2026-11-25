@@ -127,7 +127,7 @@ Tauri 2 не входит в MVP, но оставлен как future experiment
 Foundation собран; точный resume по session id, fallback на последнюю беседу и авто-возобновление работают. NSIS-установщик собирается, упакованная и установленная сборка проходят локальный смоук. Разработка идёт одним потоком, без dev worktree и параллельных веток. Дальше по порядку:
 
 1. Поставить локальный тег `foundation-v0.1` как базовую точку.
-2. Phase 3: search и links в терминале, copy/paste shortcuts, лимит смонтированных xterm. Phase 2 закрыта: fetch, setup script с `.env`, dirty-check, выбор location, прогресс создания и running-секция работают.
+2. Phase 4: `@parcel/watcher` для git status, numstat, подсветка/virtualized diff, range-комментарии (P1). Phase 3 закрыта: поиск, ссылки, copy/paste и лимит 8 терминалов работают.
 3. Прогнать установщик на чистой Windows без Node.js, когда будет машина.
 4. Smoke **Codex** в самом Nest — после MVP, по договорённости. OpenCode уже проверен: id захватывается, после рестарта продолжается та же беседа.
 
