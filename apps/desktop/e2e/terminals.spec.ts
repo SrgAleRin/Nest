@@ -52,6 +52,8 @@ test('keeps at most eight terminals mounted and replays scrollback for the rest'
       NEST_WORKTREES_ROOT: path.join(tempRoot, 'worktrees'),
       NEST_FAKE_SESSION_DIR: path.join(tempRoot, 'fake-sessions'),
       NEST_DISABLE_SINGLE_INSTANCE: '1',
+      // Without this the window hides to the tray and app.close() never exits.
+      NEST_DISABLE_TRAY: '1',
     },
   });
 
