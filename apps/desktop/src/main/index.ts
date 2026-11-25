@@ -1,10 +1,13 @@
-import { app, BrowserWindow, Menu, shell } from 'electron';
+import { app, BrowserWindow, Menu, nativeImage, shell, Tray } from 'electron';
 import path from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { createCore, type Core } from '@nest/core';
 import type { AppInfo, NestEvent } from '@nest/shared';
 import { registerIpc } from './ipc';
 import { resolveProfileName } from './profile';
+
+const TRAY_ICON_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAaUlEQVR4nGNggIKqRd//0xMzIAN6W47iiIGyHO6IQecABjRA1bjGYt6oAwafAwY8EQ5aB3Bw8aHgUQcMuAMI4VEHDH8HUCuRjjpg1AFDxwG0woOvQTLqgAF3wIAnQro7gBrBTJXoGSjLASwWjLvvyC/qAAAAAElFTkSuQmCC';
 
 const profile = resolveProfileName(process.env.NEST_PROFILE);
 app.setName('Nest');
@@ -27,8 +30,10 @@ const fakeHarnessScript = app.isPackaged
   : path.resolve(app.getAppPath(), '../../scripts/fake-harness.mjs');
 
 let mainWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
 let core: Core | null = null;
 let shuttingDown = false;
+let quitting = false;
 
 function broadcast(event: NestEvent): void {
   for (const window of BrowserWindow.getAllWindows()) {
@@ -59,6 +64,15 @@ function createWindow(): void {
     mainWindow?.show();
   });
 
+  mainWindow.on('close', (event) => {
+    // Closing the window keeps Nest and its PTYs alive in the tray. The tray
+    // menu (or a second launch) brings the same window back with the same
+    // terminals; only explicit Quit stops the sessions.
+    if (quitting || !tray) return;
+    event.preventDefault();
+    mainWindow?.hide();
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -73,6 +87,37 @@ function createWindow(): void {
     void mainWindow.loadURL(devUrl);
   } else {
     void mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
+  }
+}
+
+function showWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function createTray(): void {
+  if (process.env.NEST_DISABLE_TRAY === '1') return;
+  try {
+    tray = new Tray(nativeImage.createFromDataURL(`data:image/png;base64,${TRAY_ICON_BASE64}`));
+    tray.setToolTip('Nest');
+    tray.setContextMenu(
+      Menu.buildFromTemplate([
+        { label: 'Open Nest', click: () => showWindow() },
+        { type: 'separator' },
+        { label: 'Quit Nest', click: () => app.quit() },
+      ]),
+    );
+    tray.on('click', () => showWindow());
+    tray.on('double-click', () => showWindow());
+  } catch {
+    // Without a tray the window close must quit, otherwise the app would
+    // become unreachable.
+    tray = null;
   }
 }
 
@@ -94,12 +139,7 @@ if (!allowMultipleInstances && !app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    if (!mainWindow) {
-      createWindow();
-      return;
-    }
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
+    showWindow();
   });
 
   app.whenReady().then(() => {
@@ -115,17 +155,22 @@ if (!allowMultipleInstances && !app.requestSingleInstanceLock()) {
 
     registerIpc({ core, info, getWindow: () => mainWindow });
     createWindow();
+    createTray();
 
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+      showWindow();
     });
   });
 
   app.on('window-all-closed', () => {
-    app.quit();
+    // Stay alive in the tray so running harness sessions survive a window
+    // close. app.quit() from the tray still exits normally.
   });
 
   app.on('before-quit', () => {
+    quitting = true;
+    tray?.destroy();
+    tray = null;
     if (shuttingDown) return;
     shuttingDown = true;
     core?.close();

@@ -88,6 +88,42 @@ test('runs the fake harness, persists scrollback and recovers after restart', as
   expect(sameTerminal).toBe(true);
   await expect(page.locator('.xterm-rows')).toContainText('hello-e2e');
 
+  // Closing the window hides it to the tray. The PTY keeps running; showing
+  // the same window again must resume the exact terminal without a restart.
+  await app.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0]?.close();
+  });
+  await expect
+    .poll(() =>
+      app.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows().map((window) => ({
+          visible: window.isVisible(),
+          destroyed: window.isDestroyed(),
+        })),
+      ),
+    )
+    .toEqual([{ visible: false, destroyed: false }]);
+
+  const hidden = await page.evaluate(async () => {
+    const list = await window.nest!.invoke('sessions.list', {});
+    if (!list.ok) throw new Error(list.error.message);
+    return list.data;
+  });
+  expect(hidden).toHaveLength(1);
+  expect(['running', 'idle']).toContain(hidden[0]?.status ?? '');
+
+  await app.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0];
+    window?.show();
+    window?.focus();
+  });
+  await page.locator('.terminal-view.active .xterm-helper-textarea').focus();
+  await page.keyboard.type('echo after-hide');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.terminal-view.active .xterm-rows')).toContainText('after-hide', {
+    timeout: 30_000,
+  });
+
   const before = await page.evaluate(async () => {
     const list = await window.nest!.invoke('sessions.list', {});
     if (!list.ok) throw new Error(list.error.message);
