@@ -91,6 +91,18 @@ $bytes = [IO.File]::ReadAllBytes("C:\keys\nest.pfx")
 Get-AuthenticodeSignature .\apps\desktop\release\Nest-Setup-0.1.1.exe | Format-List Status,SignerCertificate
 ```
 
+### Где взять сертификат
+
+- **SignPath Foundation** — бесплатная подпись для open-source. Подходит для Nest: MIT, публичный репозиторий, CI на GitHub Actions. Сертификат выпущен на SignPath Foundation, подпись выполняется через их HSM; издатель в Windows — SignPath Foundation. Условия: OSI-лицензия без проприетарных компонентов, уже опубликованный релиз, code signing policy и privacy policy на главной странице, MFA и роли approver/reviewer. Заявка: [signpath.org/apply](https://signpath.org/apply), условия: [signpath.org/terms](https://signpath.org/terms).
+- **Azure Artifact Signing** (бывший Trusted Signing) — около $9.99/мес, без USB-токена, интегрируется с GitHub Actions. Доступен организациям в США, Канаде, ЕС и Великобритании; индивидуальным разработчикам — только в США и Канаде. Для России недоступен. [Документация](https://learn.microsoft.com/azure/artifact-signing/).
+- **OV-сертификат** — $150–300/год у DigiCert, Sectigo, GlobalSign, SSL.com или Certum. Приватный ключ обязан храниться на HSM или USB-токене (требование CA/Browser Forum с 2023 года). CA проверяет юридическое лицо или индивидуального предпринимателя и может не работать с вашей юрисдикцией — уточняйте до оплаты.
+- **EV-сертификат** — $400+/год. С 2024 года EV больше не обходит SmartScreen автоматически: репутация набирается так же, как у OV, поэтому переплачивать за него только ради предупреждений нет смысла.
+- **Self-signed** — только для локальной разработки и enterprise-развёртывания с доверенным корнем. Для публичной раздачи не подходит: SmartScreen покажет блокировку, как у неподписанного файла.
+
+Официальное сравнение вариантов и поведение SmartScreen: [Code signing options for Windows app developers](https://learn.microsoft.com/windows/apps/package-and-deploy/code-signing-options).
+
+Для Nest практичный порядок такой: сначала **SignPath Foundation**, если проект уже опубликован и подходит под условия; иначе **OV-сертификат** от CA, который принимает вашу юрисдикцию. EV не нужен.
+
 ## 4. Проверка установщика
 
 Тихая установка в отдельный каталог (per-user, без admin):
