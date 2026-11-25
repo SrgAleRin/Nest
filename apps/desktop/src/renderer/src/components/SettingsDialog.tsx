@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type {
-  AppSettings,
-  HarnessId,
-  HarnessProfile,
-  NestClient,
-  UpdateStatus,
+import {
+  DEFAULT_UPDATE_FEED_URL,
+  type AppSettings,
+  type HarnessId,
+  type HarnessProfile,
+  type NestClient,
+  type UpdateStatus,
 } from '@nest/shared';
 import { Button } from '@nest/ui';
 import { CloseIcon } from './Icons';
@@ -261,14 +262,14 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
                 <input
                   value={updateFeedUrl}
                   onChange={(event) => setUpdateFeedUrl(event.target.value)}
-                  placeholder="https://updates.example.com/nest/"
+                  placeholder={DEFAULT_UPDATE_FEED_URL}
                   maxLength={2000}
                   spellCheck={false}
                 />
                 <small className="field-hint">
                   A static directory serving electron-updater&apos;s <code>latest.yml</code>.
-                  Packaged builds check on launch and every six hours; <code>NEST_UPDATE_URL</code>{' '}
-                  overrides this value. Leave empty to disable updates.
+                  Packaged builds use the built-in GitHub Releases feed when this is empty and check
+                  on launch and every six hours. <code>NEST_UPDATE_URL</code> overrides both.
                 </small>
               </label>
             </div>

@@ -1,5 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import { parseUpdateFeedUrl } from './updateFeed';
+import { DEFAULT_UPDATE_FEED_URL } from '@nest/shared';
+import { parseUpdateFeedUrl, resolveUpdateFeedUrl } from './updateFeed';
+
+describe('resolveUpdateFeedUrl', () => {
+  it('prefers the environment override', () => {
+    expect(
+      resolveUpdateFeedUrl('https://env.example/nest/', 'https://settings.example/nest/'),
+    ).toBe('https://env.example/nest/');
+  });
+
+  it('uses a configured feed when the environment is empty', () => {
+    expect(resolveUpdateFeedUrl(undefined, 'https://settings.example/nest/')).toBe(
+      'https://settings.example/nest/',
+    );
+    expect(resolveUpdateFeedUrl('  ', '  ')).toBe(DEFAULT_UPDATE_FEED_URL);
+  });
+
+  it('falls back to the built-in GitHub Releases feed', () => {
+    expect(resolveUpdateFeedUrl(undefined, '')).toBe(DEFAULT_UPDATE_FEED_URL);
+    expect(parseUpdateFeedUrl(DEFAULT_UPDATE_FEED_URL).hostname).toBe('github.com');
+  });
+});
 
 describe('parseUpdateFeedUrl', () => {
   it('accepts HTTPS feeds', () => {

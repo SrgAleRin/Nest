@@ -1,3 +1,4 @@
+import { DEFAULT_UPDATE_FEED_URL } from '@nest/shared';
 import type {
   AppInfo,
   AppSettings,
@@ -144,9 +145,9 @@ export function createMockClient(): NestClient {
 
   const updateStatus = (): UpdateStatus => ({
     state: 'disabled',
-    currentVersion: '0.1.0',
+    currentVersion: '0.1.1',
     enabled: false,
-    feedUrl: settings.updateFeedUrl || null,
+    feedUrl: settings.updateFeedUrl || DEFAULT_UPDATE_FEED_URL,
     availableVersion: null,
     percent: null,
     message: 'Updates are available in packaged builds only.',
@@ -291,7 +292,7 @@ export function createMockClient(): NestClient {
   let clipboardText = '';
 
   const info: AppInfo = {
-    version: '0.1.0-mock',
+    version: '0.1.1-mock',
     electron: 'mock',
     platform: 'browser',
     profile: 'mock',

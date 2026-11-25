@@ -2,16 +2,16 @@ import { app } from 'electron';
 import { autoUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater';
 import type { AppSettings, NestEvent, UpdateStatus } from '@nest/shared';
 import { NestError } from '@nest/core';
-import { parseUpdateFeedUrl } from './updateFeed';
+import { parseUpdateFeedUrl, resolveUpdateFeedUrl } from './updateFeed';
 
 /** Let the window paint before the first background check. */
 const STARTUP_DELAY_MS = 20_000;
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 /**
- * electron-updater wrapper. The generic feed URL lives in settings so a build
- * can be pointed at any static directory serving `latest.yml`; the environment
- * variable `NEST_UPDATE_URL` overrides it for release experiments.
+ * electron-updater wrapper. A built-in GitHub Releases feed is used by default;
+ * a URL saved in Settings or the NEST_UPDATE_URL environment variable overrides
+ * it for local experiments and custom hosting.
  *
  * Updates only run in packaged builds. Development, e2e and the packaged smoke
  * test stay on the local build (`NEST_DISABLE_UPDATES=1`).
@@ -205,13 +205,13 @@ export class UpdateService {
   }
 
   private resolveFeedUrl(): string {
-    const fromEnv = process.env.NEST_UPDATE_URL?.trim();
-    if (fromEnv) return fromEnv;
+    let fromSettings = '';
     try {
-      return this.getSettings().updateFeedUrl.trim();
+      fromSettings = this.getSettings().updateFeedUrl;
     } catch {
-      return '';
+      // A failed settings read must not disable the built-in feed.
     }
+    return resolveUpdateFeedUrl(process.env.NEST_UPDATE_URL, fromSettings);
   }
 
   private disabledReason(): string | null {

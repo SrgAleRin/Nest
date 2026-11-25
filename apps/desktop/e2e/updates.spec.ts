@@ -1,4 +1,4 @@
-import { createReadStream, existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -18,6 +18,7 @@ declare global {
  * `latest.yml`: no installer is downloaded and no build is mutated.
  */
 const appDir = path.resolve(__dirname, '..');
+const appVersion = JSON.parse(readFileSync(path.join(appDir, 'package.json'), 'utf8')).version;
 const unpackedExe = path.join(appDir, 'release', 'win-unpacked', 'Nest.exe');
 const packagedExe = process.env.NEST_E2E_EXE ?? unpackedExe;
 // Point the test at a real `pnpm dist` output to serve its latest.yml.
@@ -25,12 +26,12 @@ const feedDir = process.env.NEST_UPDATE_FEED_DIR
   ? path.resolve(process.env.NEST_UPDATE_FEED_DIR)
   : '';
 
-const LATEST_YML = `version: 0.1.0
+const LATEST_YML = `version: ${appVersion}
 files:
-  - url: Nest-Setup-0.1.0.exe
+  - url: Nest-Setup-${appVersion}.exe
     sha512: 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000==
     size: 1024
-path: Nest-Setup-0.1.0.exe
+path: Nest-Setup-${appVersion}.exe
 sha512: 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000==
 releaseDate: '2026-11-25T00:00:00.000Z'
 `;
@@ -111,7 +112,7 @@ test('packaged app checks a generic feed and reports up to date', async () => {
   await page.getByRole('button', { name: 'Check now' }).click();
   await expect(page.locator('.update-state')).toHaveText('Up to date', { timeout: 60_000 });
   await expect(page.locator('.update-message')).toHaveText('Nest is up to date.');
-  await expect(page.locator('.update-meta')).toContainText('version 0.1.0');
+  await expect(page.locator('.update-meta')).toContainText(`version ${appVersion}`);
 
   const install = await page.evaluate(() => window.nest!.invoke('updates.install', {}));
   expect(install.ok).toBe(false);

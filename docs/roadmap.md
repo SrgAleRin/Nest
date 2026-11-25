@@ -79,13 +79,12 @@ Phase 1 Foundation ──► тег foundation-v0.1 ──► Phase 2 задач
 - [x] CI-конфиг для Windows: проверки на push/PR и сборка релиза по тегу;
 - [x] `pnpm dist` и NSIS-установщик (локально: тихая установка, запуск, PTY, БД);
 - [x] первый прогон `ci.yml` и `release.yml` на GitHub (v0.1.0: зелёные, релиз опубликован);
-- [ ] подпись Windows через SignPath Foundation (заявка подготовлена, нужен аккаунт и одобрение);
 - [ ] smoke реального harness (Claude Code / Codex) на машине коллег;
 - [ ] установщик на чистой Windows без Node.js.
 
 ### Сборка и упакованный смоук (сделано)
 
-`pnpm dist` собирает `apps/desktop/release/win-unpacked`, `Nest-Setup-0.1.0.exe` (NSIS x64, без подписи), `.blockmap` и `latest.yml`. Проверено локально:
+`pnpm dist` собирает `apps/desktop/release/win-unpacked`, `Nest-Setup-0.1.0.exe` (NSIS x64), `.blockmap` и `latest.yml`. Проверено локально:
 
 1. asar содержит `out/**` и workspace-пакеты; `node-pty` распакован в `app.asar.unpacked`, `fake-harness.mjs` лежит в `resources/`.
 2. `e2e/packaged.spec.ts` запускает `win-unpacked\Nest.exe` (или установленную копию через `NEST_E2E_EXE`) и проверяет старт окна, `projects.add`, PTY из ресурсного `fake-harness.mjs`, ввод и создание `nest.db`; без собранного релиза шаг пропускается.
@@ -205,7 +204,7 @@ Shared dirs (`node_modules`) остаются в P1.
 
 Полировка состояний сделана: boot-скелетон повторяет трёхколоночный layout, первичная ошибка — `FatalScreen` с повтором, панели Git/Diff используют `panelPhase` и inline `ErrorState`, добавлен `ErrorBoundary`, скелетоны настроек и пустой старт-экран при выключенных harness. Проверка: unit на `panelPhase`, e2e `resilience.spec.ts` (ошибка → retry → восстановление) и скриншоты boot/error/settings.
 
-Поставка: NSIS собирается с иконкой и стабильным именем `Nest-Setup-<version>.exe`, `scripts/make-latest-yml.mjs` пишет `latest.yml`, автообновление использует generic-feed из Settings (`updateFeedUrl`) или `NEST_UPDATE_URL` и проверяется упакованным `e2e/updates.spec.ts` против локального feed. CI на Windows гоняет проверки на push/PR, а тег `v*` собирает установщик, прогоняет packaged-смоук и создаёт GitHub Release; подпись включается секретами `CSC_LINK` / `CSC_KEY_PASSWORD`. Прогон `v0.1.0` в GitHub Actions прошёл: `ci` и `release` зелёные, релиз опубликован и содержит `.exe`, `.blockmap` и `latest.yml`; публичный feed проверен `electron-updater`. Установщик проверен тихой установкой, запуском установленной копии, ярлыками и удалением на этой машине; чек-лист чистой Windows без Node.js остаётся открытым, см. `docs/release.md`.
+Поставка: NSIS собирается с иконкой и стабильным именем `Nest-Setup-<version>.exe`, `scripts/make-latest-yml.mjs` пишет `latest.yml`, автообновление использует встроенный GitHub Releases feed, `updateFeedUrl` или `NEST_UPDATE_URL` и проверяется упакованным `e2e/updates.spec.ts` против локального feed. CI на Windows гоняет проверки на push/PR, а тег `v*` собирает установщик, прогоняет packaged-смоук и создаёт GitHub Release. Прогон `v0.1.0` в GitHub Actions прошёл: `ci` и `release` зелёные, релиз опубликован и содержит `.exe`, `.blockmap` и `latest.yml`; публичный feed проверен `electron-updater`. Установщик проверен тихой установкой, запуском установленной копии, ярлыками и удалением на этой машине; чек-лист чистой Windows без Node.js остаётся открытым, см. `docs/release.md`.
 
 Оценка для одного потока: foundation уже собран, осталось три-четыре недели последовательной работы.
 
@@ -276,7 +275,7 @@ Shared dirs (`node_modules`) остаются в P1.
 
 ## 6. Definition of Done для MVP
 
-- установщик подписан и ставится на чистую Windows без Node.js;
+- установщик ставится на чистую Windows без Node.js;
 - 3 проекта, 10 задач, 10 сессий — без деградации;
 - main checkout открывается без копирования и проходит цикл diff → commit;
 - комментарий к строке diff сохраняется после рестарта и отправляется в `FakeHarness`;

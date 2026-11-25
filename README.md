@@ -33,7 +33,7 @@ Nest — настольное приложение для параллельно
 - **Git for Windows** — `git` должен быть в `PATH`;
 - хотя бы один установленный CLI-агент. Например, `claude`, `codex`, `opencode` или `copilot`. Агенты устанавливаются отдельно и могут сами требовать Node.js.
 
-> Установщик пока не подписан сертификатом. При первом запуске SmartScreen может показать предупреждение: **Подробнее → Выполнить в любом случае**. Скачивайте Nest только со страницы Releases этого репозитория.
+> Если Windows покажет предупреждение SmartScreen, проверьте, что файл скачан со страницы Releases этого репозитория, и выберите **Подробнее → Выполнить в любом случае**.
 
 ## Первый запуск
 
@@ -98,13 +98,15 @@ Nest не встраивает агентов в себя — он запуск�
 
 ## Обновления
 
-Nest проверяет обновления в фоне, если в **Settings → Updates** указан адрес feed. Для этого репозитория укажите:
+Nest проверяет обновления автоматически через GitHub Releases. Встроенный адрес feed:
 
 ```text
 https://github.com/SrgAleRin/Nest/releases/latest/download/
 ```
 
-Проверка выполняется через 20 секунд после старта и затем каждые 6 часов. Обновление скачивается автоматически; установить его можно кнопкой **Install and restart** или при следующем выходе. Без feed проверки отключены.
+Его можно переопределить в **Settings → Updates**, если используется свой сервер обновлений.
+
+Проверка выполняется через 20 секунд после старта и затем каждые 6 часов. Обновление скачивается автоматически; установить его можно кнопкой **Install and restart** или при следующем выходе.
 
 ## Данные и приватность
 
@@ -120,7 +122,7 @@ Nest хранит проекты, задачи, настройки, коммен
 
 ## Если что-то не работает
 
-**SmartScreen предупреждает.** Установщик не подписан; проверьте, что скачали его со страницы Releases, и выберите **Подробнее → Выполнить в любом случае**.
+**SmartScreen предупреждает.** Проверьте, что скачали Nest со страницы Releases этого репозитория, и выберите **Подробнее → Выполнить в любом случае**.
 
 **Агент не найден.** Убедитесь, что команда есть в `PATH` (`where claude`), затем откройте **Settings** заново. Для нестандартного пути используйте **Custom command**.
 
@@ -130,17 +132,7 @@ Nest хранит проекты, задачи, настройки, коммен
 
 **Сессия не продолжилась.** Не все CLI поддерживают продолжение. Для завершённых сессий есть кнопка **Resume**; если CLI умеет продолжать последнюю беседу, Nest использует её, иначе запустите новую сессию.
 
-**Обновления не проверяются.** Проверьте адрес feed в **Settings → Updates**. В dev-сборке автообновление отключено.
-
-## Code signing policy
-
-Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).
-
-- Committers and reviewers: [Serge Baburin (@SrgAleRin)](https://github.com/SrgAleRin)
-- Approvers: [Serge Baburin (@SrgAleRin)](https://github.com/SrgAleRin)
-- Privacy policy: [docs/privacy.md](docs/privacy.md)
-
-Release artifacts are built from this repository by GitHub Actions, and every signing request is approved manually.
+**Обновления не проверяются.** Убедитесь, что в **Settings → Updates** не указан неверный адрес. В dev-сборке автообновление отключено.
 
 ## Разработка
 
@@ -156,7 +148,7 @@ pnpm test:e2e
 pnpm dist        # NSIS-установщик и latest.yml
 ```
 
-Архитектура, контракты и решения — в [docs/architecture.md](docs/architecture.md). Сборка релиза, подпись и публикация — в [docs/release.md](docs/release.md). План и известные ограничения — в [docs/roadmap.md](docs/roadmap.md).
+Архитектура, контракты и решения — в [docs/architecture.md](docs/architecture.md). Сборка и публикация — в [docs/release.md](docs/release.md). План и известные ограничения — в [docs/roadmap.md](docs/roadmap.md).
 
 ## Лицензия
 

@@ -7,8 +7,7 @@
 - Windows 10/11 x64;
 - Node.js 24 и pnpm 12.18 (`corepack enable` или установленный pnpm);
 - git в `PATH`;
-- Visual Studio **не** нужен: `node-pty` ставится из prebuilds, в конфиге `npmRebuild: false`;
-- для подписи — сертификат в `CSC_LINK` / `CSC_KEY_PASSWORD` (или Azure Trusted Signing). Без сертификата установщик собирается, но SmartScreen покажет предупреждение.
+- Visual Studio **не** нужен: `node-pty` ставится из prebuilds, в конфиге `npmRebuild: false`.
 
 ## 2. Сборка
 
@@ -45,21 +44,7 @@ win-unpacked/
 - репозиторий на GitHub и remote `origin`; Actions включены (по умолчанию);
 - workflow слушает ветку `main`;
 - по желанию: branch protection на `main` с обязательным job `windows` из `ci` и tag protection для `v*`, чтобы релизный тег мог поставить только владелец;
-- **публичный репозиторий**, если feed должен жить на GitHub Releases: ассеты приватного релиза отдаются только с токеном, которого у установленного Nest нет. Для приватного репозитория соберите артефакты в CI и выложите три файла на свой HTTPS-хостинг;
-- секреты **Settings → Secrets and variables → Actions** (необязательно, но нужно для подписи):
-  - `CSC_LINK` — base64 от `.pfx`-сертификата;
-  - `CSC_KEY_PASSWORD` — пароль сертификата.
-
-Без секретов установщик собирается неподписанным: SmartScreen покажет предупреждение, автообновление при этом работает.
-
-`CSC_LINK` можно получить так:
-
-```powershell
-$bytes = [IO.File]::ReadAllBytes("C:\keys\nest.pfx")
-[Convert]::ToBase64String($bytes) | Set-Clipboard
-```
-
-Вставьте значение в секрет `CSC_LINK`, пароль — в `CSC_KEY_PASSWORD`. Альтернатива для публичного релиза — Azure Trusted Signing; тогда в workflow добавляется шаг логина и `win.azureSignOptions` в `electron-builder.yml`.
+- **публичный репозиторий**, если feed должен жить на GitHub Releases: ассеты приватного релиза отдаются только с токеном, которого у установленного Nest нет. Для приватного репозитория соберите артефакты в CI и выложите три файла на свой HTTPS-хостинг.
 
 ### Выпуск версии
 
@@ -75,40 +60,16 @@ $bytes = [IO.File]::ReadAllBytes("C:\keys\nest.pfx")
 
 3. Дождитесь job `release`. Установщик, `.blockmap` и `latest.yml` появятся в артефактах и в **черновике** Release.
 4. Откройте черновик, проверьте ассеты и нажмите **Publish release**. Пока релиз черновик, `releases/latest/download` указывает на предыдущую версию — обновление не уйдёт раньше времени.
-5. Feed URL для Settings → Updates:
-
-   ```text
-   https://github.com/<owner>/<repo>/releases/latest/download/
-   ```
-
-   Слеш в конце обязателен для читаемости, хотя `electron-updater` нормализует URL сам. Для приватного хостинга используйте свой HTTPS-каталог с теми же тремя файлами.
+5. Feed URL уже встроен в приложение: `https://github.com/SrgAleRin/Nest/releases/latest/download/`. В **Settings → Updates** можно указать другой адрес; `NEST_UPDATE_URL` перекрывает и его. Для приватного хостинга используйте свой HTTPS-каталог с теми же тремя файлами.
 
 Ручной запуск `release.yml` (`workflow_dispatch`) собирает и проверяет установщик, но не создаёт релиз — удобно для репетиции на ветке.
-
-Подпись проверяется на установщике:
-
-```powershell
-Get-AuthenticodeSignature .\apps\desktop\release\Nest-Setup-0.1.1.exe | Format-List Status,SignerCertificate
-```
-
-### Где взять сертификат
-
-- **SignPath Foundation** — бесплатная подпись для open-source. Подходит для Nest: MIT, публичный репозиторий, CI на GitHub Actions. Сертификат выпущен на SignPath Foundation, подпись выполняется через их HSM; издатель в Windows — SignPath Foundation. Условия: OSI-лицензия без проприетарных компонентов, уже опубликованный релиз, code signing policy и privacy policy на главной странице, MFA и роли approver/reviewer. Заявка: [signpath.org/apply](https://signpath.org/apply), условия: [signpath.org/terms](https://signpath.org/terms).
-- **Azure Artifact Signing** (бывший Trusted Signing) — около $9.99/мес, без USB-токена, интегрируется с GitHub Actions. Доступен организациям в США, Канаде, ЕС и Великобритании; индивидуальным разработчикам — только в США и Канаде. Для России недоступен. [Документация](https://learn.microsoft.com/azure/artifact-signing/).
-- **OV-сертификат** — $150–300/год у DigiCert, Sectigo, GlobalSign, SSL.com или Certum. Приватный ключ обязан храниться на HSM или USB-токене (требование CA/Browser Forum с 2023 года). CA проверяет юридическое лицо или индивидуального предпринимателя и может не работать с вашей юрисдикцией — уточняйте до оплаты. Сертификат должен цепочкой вести к Microsoft Trusted Root Program; УЦ вне этой программы, включая большинство российских, SmartScreen не доверяет.
-- **EV-сертификат** — $400+/год. С 2024 года EV больше не обходит SmartScreen автоматически: репутация набирается так же, как у OV, поэтому переплачивать за него только ради предупреждений нет смысла.
-- **Self-signed** — только для локальной разработки и enterprise-развёртывания с доверенным корнем. Для публичной раздачи не подходит: SmartScreen покажет блокировку, как у неподписанного файла.
-
-Официальное сравнение вариантов и поведение SmartScreen: [Code signing options for Windows app developers](https://learn.microsoft.com/windows/apps/package-and-deploy/code-signing-options).
-
-Для Nest практичный порядок такой: сначала **SignPath Foundation**, если проект уже опубликован и подходит под условия; иначе **OV-сертификат** от CA, который принимает вашу юрисдикцию. EV не нужен.
 
 ## 4. Проверка установщика
 
 Тихая установка в отдельный каталог (per-user, без admin):
 
 ```powershell
-$installer = "$PWD\apps\desktop\release\Nest-Setup-0.1.0.exe"
+$installer = "$PWD\apps\desktop\release\Nest-Setup-0.1.1.exe"
 $dir = "$env:TEMP\nest-install-check"
 Start-Process $installer -ArgumentList '/S', "/D=$dir" -Wait
 ```
@@ -145,13 +106,13 @@ https://updates.example.com/nest/
 
 `latest.yml` уже создан `pnpm dist`; он содержит версию, имя установщика, sha512 и размер. `.blockmap` нужен для дифференциальной загрузки. Старые установщики можно хранить для откатов, но `latest.yml` всегда указывает на актуальный.
 
-URL указывается в **Settings → Updates → Update feed** и хранится в SQLite. `NEST_UPDATE_URL` перекрывает настройку — удобно для локальной проверки. После сохранения URL проверка запускается сразу; дальше — через 20 секунд после старта и раз в 6 часов.
+Встроенный feed — `https://github.com/SrgAleRin/Nest/releases/latest/download/`. Он используется, пока в **Settings → Updates → Update feed** не указан другой адрес. `NEST_UPDATE_URL` перекрывает и настройку, и встроенный адрес — удобно для локальной проверки. После сохранения URL проверка запускается сразу; дальше — через 20 секунд после старта и раз в 6 часов.
 
 Публичный feed должен быть **HTTPS**: обновление выполняет код, поэтому HTTP разрешён только для `localhost`/`127.0.0.1` при локальной проверке.
 
 ### Локальная проверка обновления
 
-1. Соберите версию `0.1.0`, установите её.
+1. Соберите версию `0.1.1`, установите её.
 2. Поднимите статический сервер над каталогом с `latest.yml`, например `npx serve apps/desktop/release` (или любой HTTP-сервер).
 3. Запустите установленный Nest с `NEST_UPDATE_URL=http://127.0.0.1:3000/`.
 4. Откройте Settings → Updates → **Check now**. Для той же версии статус будет `Nest is up to date.`
@@ -170,7 +131,6 @@ pnpm --filter @nest/desktop exec playwright test e2e/updates.spec.ts
 ### Ограничения
 
 - установка обновления завершает PTY-сессии: `quitAndInstall` перезапускает Nest;
-- сборки без подписи Windows может пометить SmartScreen; для публичного релиза настройте подпись;
 - автообновление не работает в dev-сборке (`app.isPackaged === false`); `NEST_DISABLE_UPDATES=1` отключает его принудительно.
 
 ## 6. Чистая Windows

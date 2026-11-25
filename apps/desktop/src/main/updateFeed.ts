@@ -1,4 +1,14 @@
+import { DEFAULT_UPDATE_FEED_URL } from '@nest/shared';
+
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+
+/**
+ * The built-in GitHub Releases feed keeps auto-update useful without manual
+ * settings; a saved URL or NEST_UPDATE_URL overrides it.
+ */
+export function resolveUpdateFeedUrl(envValue: string | undefined, settingsValue: string): string {
+  return envValue?.trim() || settingsValue.trim() || DEFAULT_UPDATE_FEED_URL;
+}
 
 /**
  * Updates execute the downloaded installer, so the feed must be HTTPS. Plain

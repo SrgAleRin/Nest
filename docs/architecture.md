@@ -859,7 +859,7 @@ nest/
 - текст комментариев рендерится как plain text, без HTML/Markdown-инъекций;
 - CSP: `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'`;
 - внешние ссылки — только через `shell.openExternal` после подтверждения;
-- автообновление — HTTPS + подпись;
+- автообновление — HTTPS;
 - секреты не храним; env наследуем от пользователя, токены harness — их дело;
 - логи не содержат env и токены.
 
@@ -943,7 +943,6 @@ Windows-first:
 - `node:sqlite` — встроен в Node 24, отдельной native-сборки нет;
 - `pnpm dist` собирает NSIS x64 и `latest.yml`; `apps/desktop/e2e/packaged.spec.ts` проверяет упакованную и установленную сборку (asar, распакованный `node-pty`, ресурсный `fake-harness.mjs`, PTY, БД);
 - CI: Windows обязателен; `.github/workflows/ci.yml` гоняет проверки на push/PR, `.github/workflows/release.yml` по тегу `v*` собирает установщик и создаёт черновик GitHub Release;
-- code signing: Windows (Azure Trusted Signing / SignPath), macOS notarization; текущие сборки не подписаны;
 - auto-update: `electron-updater` + generic feed (см. ниже);
 - crash reporting — opt-in, локальные логи по умолчанию.
 
@@ -955,8 +954,7 @@ Windows-first:
 - контракт: `updates.status` / `updates.check` / `updates.install` и событие `updates:status`; renderer показывает статус в Settings и бейдж «Update ready» в статусбаре;
 - при сохранении нового feed URL `settings.update` сразу запускает проверку, не дожидаясь таймера;
 - `pnpm dist` после `electron-builder` вызывает `scripts/make-latest-yml.mjs`, который считает sha512/size установщика и пишет `latest.yml`; `.blockmap` создаёт electron-builder для дифференциальных обновлений;
-- `quitAndInstall` перезапускает Nest и тем самым завершает PTY-сессии — это ожидаемо при установке обновления;
-- без code signing Windows покажет предупреждение SmartScreen; обновление всё равно скачивается, но публичный релиз требует подписи.
+- `quitAndInstall` перезапускает Nest и тем самым завершает PTY-сессии — это ожидаемо при установке обновления.
 
 ## 15. Долгий ящик: daemon и remote
 

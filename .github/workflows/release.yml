@@ -67,15 +67,8 @@ jobs:
       # The full e2e suite (including PTY and watcher timing) runs in ci.yml on
       # every push. Re-running it here duplicated a flaky, timing-sensitive job;
       # the release gate is the packaged smoke test below.
-      #
-      # CSC_LINK / CSC_KEY_PASSWORD are optional. When both secrets are absent
-      # electron-builder produces an unsigned installer; when present it signs
-      # Nest.exe and the NSIS package before latest.yml is generated.
       - name: Build installer and latest.yml
         run: pnpm dist
-        env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
 
       - name: Verify release artifacts
         shell: pwsh
