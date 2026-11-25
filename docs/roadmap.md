@@ -170,13 +170,13 @@ Shared dirs (`node_modules`) остаются в P1.
 
 Сделано в foundation: status/diff/stage/commit/push, inline-комментарии, отправка в сессию, Sessions-панель.
 
-Сделано в Phase 4 (первый заход): watcher файлов и git-каталога (`@parcel/watcher`, debounce 350 мс, `git:changed` на задачу), numstat в списке изменённых файлов (`+N −M`, включая untracked).
+Сделано в Phase 4 (первый заход): watcher файлов и git-каталога (`@parcel/watcher`, debounce 350 мс, `git:changed` на задачу), numstat в списке изменённых файлов (`+N −M`, включая untracked), виртуализированный diff (в DOM только окно строк, липкий заголовок файла) и подсветка Shiki с ленивыми грамматиками.
 
-Осталось: подсветка/виртуализация diff, range-комментарии и re-anchor (P1).
+Осталось: range-комментарии и re-anchor (P1).
 
 - [x] `git status` с watcher;
 - [x] список файлов, numstat;
-- [ ] unified diff с подсветкой;
+- [x] unified diff с подсветкой;
 - [x] stage/unstage;
 - [x] commit/push;
 - [x] branch/ahead/behind;

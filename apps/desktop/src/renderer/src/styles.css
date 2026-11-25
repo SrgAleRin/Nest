@@ -1063,31 +1063,64 @@ code,
 /* ---------- diff ---------- */
 
 .diff-panel {
-  padding: 10px 0;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .diff-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 10px 6px;
+  padding: 10px 10px 6px;
 }
 
-.diff-file {
-  margin-top: 2px;
-  border-top: 1px solid var(--border-soft);
+.diff-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.diff-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.diff-rows {
+  position: relative;
+  width: 100%;
+}
+
+.diff-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
 }
 
 .diff-file-head {
-  position: sticky;
-  top: -10px;
-  z-index: 2;
   display: flex;
   align-items: center;
   gap: 7px;
   padding: 7px 10px;
+  border-top: 1px solid var(--border-soft);
   background: #0b0e13;
   font: 11px var(--mono);
+}
+
+.diff-file-head-sticky {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  border-bottom: 1px solid var(--border-soft);
+  background: rgba(11, 14, 19, 0.96);
+  backdrop-filter: blur(4px);
+  pointer-events: none;
 }
 
 .diff-path {

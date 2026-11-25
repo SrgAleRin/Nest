@@ -1,7 +1,9 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import type {
   CommentSide,
   DiffFile,
+  DiffHunk,
   DiffLine,
   GitDiff,
   NestClient,
@@ -12,6 +14,14 @@ import type {
 import { Button, EmptyState, Spinner } from '@nest/ui';
 import { CheckIcon, SendIcon, TrashIcon } from './Icons';
 import { errorMessage } from '../utils';
+import { highlightHunk, tokenStyle, type HunkHighlight } from '../highlight';
+
+/**
+ * Highlighting a whole diff is wasted work for generated files with tens of
+ * thousands of lines, so large diffs stay plain text.
+ */
+const MAX_HIGHLIGHT_FILE_LINES = 4000;
+const MAX_HIGHLIGHT_TOTAL_LINES = 20_000;
 
 interface DiffPanelProps {
   client: NestClient;
@@ -28,6 +38,25 @@ interface ComposerState {
   side: CommentSide;
 }
 
+type DiffRow =
+  | { kind: 'file'; key: string; file: DiffFile }
+  | { kind: 'empty'; key: string; file: DiffFile }
+  | { kind: 'hunk'; key: string; hunk: DiffHunk }
+  | {
+      kind: 'line';
+      key: string;
+      file: DiffFile;
+      hunk: DiffHunk;
+      line: DiffLine;
+      lineIndex: number;
+      side: CommentSide;
+      /** Line number of the anchor side, null for hunk meta lines. */
+      anchor: number | null;
+      comments: ReviewComment[];
+    }
+  | { kind: 'comment'; key: string; comment: ReviewComment }
+  | { kind: 'composer'; key: string; composer: ComposerState };
+
 export function DiffPanel({
   client,
   task,
@@ -38,10 +67,12 @@ export function DiffPanel({
 }: DiffPanelProps) {
   const [diff, setDiff] = useState<GitDiff | null>(null);
   const [comments, setComments] = useState<ReviewComment[]>([]);
+  const [highlights, setHighlights] = useState<Map<DiffHunk, HunkHighlight>>(new Map());
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [composer, setComposer] = useState<ComposerState | null>(null);
   const [draft, setDraft] = useState('');
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const activeSession = useMemo(() => {
     const running = sessions.filter(
@@ -74,6 +105,79 @@ export function DiffPanel({
   useEffect(() => {
     void load();
   }, [load, refreshKey]);
+
+  // Switching tasks starts at the top of the new diff.
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: 0 });
+  }, [task?.id]);
+
+  useEffect(() => {
+    if (!diff) {
+      setHighlights(new Map());
+      return;
+    }
+
+    let cancelled = false;
+    const hunks: Array<{ file: DiffFile; hunk: DiffHunk }> = [];
+    let budget = MAX_HIGHLIGHT_TOTAL_LINES;
+    for (const file of diff.files) {
+      const lines = file.hunks.reduce((total, hunk) => total + hunk.lines.length, 0);
+      if (lines === 0 || lines > MAX_HIGHLIGHT_FILE_LINES || lines > budget) continue;
+      budget -= lines;
+      for (const hunk of file.hunks) hunks.push({ file, hunk });
+    }
+
+    void Promise.all(
+      hunks.map(async ({ file, hunk }) => ({
+        hunk,
+        result: await highlightHunk(hunk, file.path),
+      })),
+    ).then((results) => {
+      if (cancelled) return;
+      const next = new Map<DiffHunk, HunkHighlight>();
+      for (const { hunk, result } of results) {
+        if (result) next.set(hunk, result);
+      }
+      setHighlights(next);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [diff]);
+
+  const rows = useMemo(() => buildRows(diff, comments, composer), [diff, comments, composer]);
+
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (index) => {
+      const row = rows[index];
+      return row ? estimateRowSize(row) : 0;
+    },
+    getItemKey: (index) => rows[index]?.key ?? index,
+    overscan: 10,
+  });
+
+  // The composer row can be added below the viewport; bring it into view.
+  useEffect(() => {
+    if (!composer) return;
+    const index = rows.findIndex((row) => row.kind === 'composer');
+    if (index >= 0) virtualizer.scrollToIndex(index, { align: 'center' });
+  }, [composer, rows, virtualizer]);
+
+  const virtualItems = virtualizer.getVirtualItems();
+
+  // Which file the viewport currently sits in, for the sticky header overlay.
+  const stickyFile = useMemo(() => {
+    const first = virtualItems[0];
+    if (!first) return null;
+    for (let index = first.index; index >= 0; index -= 1) {
+      const row = rows[index];
+      if (row?.kind === 'file') return index === first.index ? null : row.file;
+    }
+    return null;
+  }, [virtualItems, rows]);
 
   function openComposer(file: DiffFile, line: DiffLine): void {
     const side: CommentSide = line.type === 'del' ? 'old' : 'new';
@@ -160,12 +264,106 @@ export function DiffPanel({
     }
   }
 
+  function renderRow(row: DiffRow) {
+    switch (row.kind) {
+      case 'file':
+        return <DiffFileHeader file={row.file} />;
+      case 'empty':
+        return <div className="diff-empty">Binary file or no textual hunks</div>;
+      case 'hunk':
+        return <div className="diff-hunk-head">{row.hunk.header}</div>;
+      case 'line': {
+        const tokens = highlights.get(row.hunk)?.lines[row.lineIndex] ?? null;
+        return (
+          <div className={`diff-line diff-${row.line.type}`}>
+            <span className="diff-num old">{row.line.oldLine ?? ''}</span>
+            <span className="diff-num new">{row.line.newLine ?? ''}</span>
+            <span className="diff-sign">
+              {row.line.type === 'add' ? '+' : row.line.type === 'del' ? '-' : ' '}
+            </span>
+            <span className="diff-text">
+              {tokens
+                ? tokens.map((token, index) => (
+                    <span key={index} style={tokenStyle(token)}>
+                      {token.content}
+                    </span>
+                  ))
+                : row.line.text || ' '}
+            </span>
+            {row.anchor !== null ? (
+              <button
+                className="diff-comment-btn"
+                title={`Comment on ${row.side} line ${row.anchor}`}
+                onClick={() => openComposer(row.file, row.line)}
+              >
+                +
+              </button>
+            ) : null}
+          </div>
+        );
+      }
+      case 'comment':
+        return (
+          <CommentThread
+            comment={row.comment}
+            activeSession={activeSession}
+            busy={busy}
+            onSend={() => void sendComment(row.comment)}
+            onResolve={() =>
+              void updateComment(row.comment, {
+                status: row.comment.status === 'resolved' ? 'open' : 'resolved',
+              })
+            }
+            onDelete={() => void removeComment(row.comment)}
+          />
+        );
+      case 'composer':
+        return (
+          <div className="comment-composer">
+            <div className="comment-composer-head">
+              {row.composer.filePath}:{row.composer.line}{' '}
+              <span className="muted">({row.composer.side} line)</span>
+            </div>
+            <textarea
+              autoFocus
+              rows={3}
+              value={draft}
+              placeholder="Leave a review note…"
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                  event.preventDefault();
+                  void addComment();
+                }
+                if (event.key === 'Escape') setComposer(null);
+              }}
+            />
+            <div className="comment-composer-actions">
+              <Button
+                size="sm"
+                variant="primary"
+                disabled={busy || !draft.trim()}
+                onClick={() => void addComment()}
+              >
+                Add comment
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setComposer(null)}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        );
+      default:
+        return null;
+    }
+  }
+
   if (!task) {
     return <EmptyState title="No workspace selected">Select a task to review its diff.</EmptyState>;
   }
 
   return (
-    <div className="panel-scroll diff-panel">
+    <div className="diff-panel">
       <div className="diff-head">
         <span className="section-label">
           Diff {diff ? `· ${diff.files.length} file${diff.files.length === 1 ? '' : 's'}` : ''}
@@ -181,126 +379,48 @@ export function DiffPanel({
         </div>
       ) : null}
 
-      {diff && diff.files.length === 0 ? (
-        <div className="panel-empty">No changes to review</div>
-      ) : null}
-
-      {diff?.files.map((file) => (
-        <section className="diff-file" key={`${file.path}-${file.staged}`}>
-          <header className="diff-file-head">
-            <span className={`git-letter ${diffTone(file)}`}>{diffLetter(file)}</span>
-            <span className="diff-path" title={file.path}>
-              {file.path}
-            </span>
-            <span className="diff-stat">
-              <em>+{file.additions}</em> <del>-{file.deletions}</del>
-            </span>
-          </header>
-
-          {file.hunks.length === 0 ? (
-            <div className="diff-empty">Binary file or no textual hunks</div>
+      <div className="diff-body">
+        <div className="diff-scroll" ref={scrollRef}>
+          {diff && diff.files.length === 0 ? (
+            <div className="panel-empty">No changes to review</div>
           ) : null}
 
-          {file.hunks.map((hunk, hunkIndex) => (
-            <div className="diff-hunk" key={`${file.path}-${hunkIndex}`}>
-              <div className="diff-hunk-head">{hunk.header}</div>
-              {hunk.lines.map((line, lineIndex) => {
-                const side: CommentSide = line.type === 'del' ? 'old' : 'new';
-                const anchor = side === 'old' ? line.oldLine : line.newLine;
-                const lineComments =
-                  anchor === null
-                    ? []
-                    : comments.filter(
-                        (comment) =>
-                          comment.filePath === file.path &&
-                          comment.side === side &&
-                          comment.line === anchor,
-                      );
-                const composerHere =
-                  composer !== null &&
-                  composer.filePath === file.path &&
-                  composer.side === side &&
-                  composer.line === anchor;
+          <div className="diff-rows" style={{ height: virtualizer.getTotalSize() }}>
+            {virtualItems.map((item) => {
+              const row = rows[item.index];
+              if (!row) return null;
+              return (
+                <div
+                  key={item.key}
+                  data-index={item.index}
+                  ref={virtualizer.measureElement}
+                  className="diff-row"
+                  style={{ transform: `translateY(${item.start}px)` }}
+                >
+                  {renderRow(row)}
+                </div>
+              );
+            })}
+          </div>
+        </div>
 
-                return (
-                  <Fragment key={`${file.path}-${hunkIndex}-${lineIndex}`}>
-                    <div className={`diff-line diff-${line.type}`}>
-                      <span className="diff-num old">{line.oldLine ?? ''}</span>
-                      <span className="diff-num new">{line.newLine ?? ''}</span>
-                      <span className="diff-sign">
-                        {line.type === 'add' ? '+' : line.type === 'del' ? '-' : ' '}
-                      </span>
-                      <span className="diff-text">{line.text || ' '}</span>
-                      {anchor !== null ? (
-                        <button
-                          className="diff-comment-btn"
-                          title={`Comment on ${side} line ${anchor}`}
-                          onClick={() => openComposer(file, line)}
-                        >
-                          +
-                        </button>
-                      ) : null}
-                    </div>
-
-                    {lineComments.map((comment) => (
-                      <CommentThread
-                        key={comment.id}
-                        comment={comment}
-                        activeSession={activeSession}
-                        busy={busy}
-                        onSend={() => void sendComment(comment)}
-                        onResolve={() =>
-                          void updateComment(comment, {
-                            status: comment.status === 'resolved' ? 'open' : 'resolved',
-                          })
-                        }
-                        onDelete={() => void removeComment(comment)}
-                      />
-                    ))}
-
-                    {composerHere ? (
-                      <div className="comment-composer">
-                        <div className="comment-composer-head">
-                          {file.path}:{composer.line}{' '}
-                          <span className="muted">({composer.side} line)</span>
-                        </div>
-                        <textarea
-                          autoFocus
-                          rows={3}
-                          value={draft}
-                          placeholder="Leave a review note…"
-                          onChange={(event) => setDraft(event.target.value)}
-                          onKeyDown={(event) => {
-                            if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
-                              event.preventDefault();
-                              void addComment();
-                            }
-                            if (event.key === 'Escape') setComposer(null);
-                          }}
-                        />
-                        <div className="comment-composer-actions">
-                          <Button
-                            size="sm"
-                            variant="primary"
-                            disabled={busy || !draft.trim()}
-                            onClick={() => void addComment()}
-                          >
-                            Add comment
-                          </Button>
-                          <Button size="sm" variant="ghost" onClick={() => setComposer(null)}>
-                            Cancel
-                          </Button>
-                        </div>
-                      </div>
-                    ) : null}
-                  </Fragment>
-                );
-              })}
-            </div>
-          ))}
-        </section>
-      ))}
+        {stickyFile ? <DiffFileHeader file={stickyFile} sticky /> : null}
+      </div>
     </div>
+  );
+}
+
+function DiffFileHeader({ file, sticky = false }: { file: DiffFile; sticky?: boolean }) {
+  return (
+    <header className={`diff-file-head ${sticky ? 'diff-file-head-sticky' : ''}`}>
+      <span className={`git-letter ${diffTone(file)}`}>{diffLetter(file)}</span>
+      <span className="diff-path" title={file.path}>
+        {file.path}
+      </span>
+      <span className="diff-stat">
+        <em>+{file.additions}</em> <del>-{file.deletions}</del>
+      </span>
+    </header>
   );
 }
 
@@ -349,6 +469,96 @@ function CommentThread({
       </div>
     </div>
   );
+}
+
+function buildRows(
+  diff: GitDiff | null,
+  comments: ReviewComment[],
+  composer: ComposerState | null,
+): DiffRow[] {
+  if (!diff) return [];
+
+  const byAnchor = new Map<string, ReviewComment[]>();
+  for (const comment of comments) {
+    const key = anchorKey(comment.filePath, comment.side, comment.line);
+    const list = byAnchor.get(key);
+    if (list) list.push(comment);
+    else byAnchor.set(key, [comment]);
+  }
+
+  const rows: DiffRow[] = [];
+  diff.files.forEach((file, fileIndex) => {
+    rows.push({ kind: 'file', key: `file:${fileIndex}`, file });
+    if (file.hunks.length === 0) {
+      rows.push({ kind: 'empty', key: `empty:${fileIndex}`, file });
+      return;
+    }
+
+    file.hunks.forEach((hunk, hunkIndex) => {
+      rows.push({ kind: 'hunk', key: `hunk:${fileIndex}:${hunkIndex}`, hunk });
+
+      hunk.lines.forEach((line, lineIndex) => {
+        const side: CommentSide = line.type === 'del' ? 'old' : 'new';
+        const anchor = side === 'old' ? line.oldLine : line.newLine;
+        const lineComments =
+          anchor === null ? [] : (byAnchor.get(anchorKey(file.path, side, anchor)) ?? []);
+
+        rows.push({
+          kind: 'line',
+          key: `line:${fileIndex}:${hunkIndex}:${lineIndex}`,
+          file,
+          hunk,
+          line,
+          lineIndex,
+          side,
+          anchor,
+          comments: lineComments,
+        });
+
+        for (const comment of lineComments) {
+          rows.push({ kind: 'comment', key: `comment:${comment.id}`, comment });
+        }
+
+        if (
+          composer &&
+          composer.filePath === file.path &&
+          composer.side === side &&
+          composer.line === anchor
+        ) {
+          rows.push({
+            kind: 'composer',
+            key: `composer:${fileIndex}:${hunkIndex}:${lineIndex}`,
+            composer,
+          });
+        }
+      });
+    });
+  });
+
+  return rows;
+}
+
+function anchorKey(filePath: string, side: CommentSide, line: number): string {
+  return `${filePath}\u0000${side}\u0000${line}`;
+}
+
+function estimateRowSize(row: DiffRow): number {
+  switch (row.kind) {
+    case 'file':
+      return 36;
+    case 'hunk':
+      return 22;
+    case 'empty':
+      return 30;
+    case 'line':
+      return 18;
+    case 'comment':
+      return 96;
+    case 'composer':
+      return 128;
+    default:
+      return 24;
+  }
 }
 
 function diffLetter(file: DiffFile): string {
