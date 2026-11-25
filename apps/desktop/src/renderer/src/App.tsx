@@ -43,6 +43,11 @@ export function App() {
     [],
   );
 
+  const reportError = useCallback(
+    (message: string) => notify('error', message),
+    [notify],
+  );
+
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
   const selectedProject =
     projects.find((project) => project.id === selectedTask?.projectId) ?? null;
@@ -331,7 +336,7 @@ export function App() {
           busy={busy}
           onSelectSession={setSelectedSessionId}
           onStart={(harnessId) => void startSession(harnessId)}
-          onError={(message) => notify('error', message)}
+          onError={reportError}
         />
 
         <RightPanel

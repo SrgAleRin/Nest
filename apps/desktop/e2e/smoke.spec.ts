@@ -77,6 +77,16 @@ test('runs the fake harness, persists scrollback and recovers after restart', as
   await page.keyboard.press('Enter');
   await expect(page.locator('.xterm-rows')).toContainText('hello-e2e', { timeout: 30_000 });
 
+  // A status change (running -> idle) must not remount the terminal: remounting
+  // disposes xterm and replays scrollback, which looks like flashing in TUIs.
+  const terminal = await page.locator('.xterm').elementHandle();
+  await page.waitForTimeout(2_500);
+  const sameTerminal = await terminal?.evaluate(
+    (node) => node === document.querySelector('.xterm'),
+  );
+  expect(sameTerminal).toBe(true);
+  await expect(page.locator('.xterm-rows')).toContainText('hello-e2e');
+
   const before = await page.evaluate(async () => {
     const list = await window.nest!.invoke('sessions.list', {});
     if (!list.ok) throw new Error(list.error.message);

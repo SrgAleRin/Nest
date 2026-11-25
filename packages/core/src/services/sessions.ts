@@ -14,7 +14,7 @@ import { toSession, type SessionRow } from './rows.js';
 import type { TaskService } from './tasks.js';
 
 const MAX_SCROLLBACK = 4 * 1024 * 1024;
-const IDLE_AFTER_MS = 700;
+const IDLE_AFTER_MS = 2000;
 
 interface Runtime {
   pty: IPty;

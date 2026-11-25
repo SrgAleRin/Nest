@@ -150,8 +150,12 @@ function TerminalView({
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  const applyFitRef = useRef<() => void>(() => {});
+  const lastSizeRef = useRef<{ cols: number; rows: number } | null>(null);
   const statusRef = useRef(session.status);
   statusRef.current = session.status;
+  const onErrorRef = useRef(onError);
+  onErrorRef.current = onError;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -192,7 +196,7 @@ function TerminalView({
       if (statusRef.current === 'exited' || statusRef.current === 'failed') return;
       void client
         .invoke('sessions.write', { sessionId: session.id, data })
-        .catch((error) => onError(`Terminal input: ${errorMessage(error)}`));
+        .catch((error) => onErrorRef.current(`Terminal input: ${errorMessage(error)}`));
     });
 
     void client
@@ -200,57 +204,60 @@ function TerminalView({
       .then(({ data }) => {
         if (data) term.write(data);
       })
-      .catch((error) => onError(errorMessage(error)));
+      .catch((error) => onErrorRef.current(errorMessage(error)));
 
-    const fitAndResize = () => {
+    const sendResize = (cols: number, rows: number) => {
+      if (cols <= 0 || rows <= 0) return;
+      const last = lastSizeRef.current;
+      if (last?.cols === cols && last.rows === rows) return;
+      lastSizeRef.current = { cols, rows };
+      void client
+        .invoke('sessions.resize', { sessionId: session.id, cols, rows })
+        .catch(() => {});
+    };
+
+    const applyFit = () => {
       try {
         fit.fit();
-        if (term.cols > 0 && term.rows > 0) {
-          void client
-            .invoke('sessions.resize', {
-              sessionId: session.id,
-              cols: term.cols,
-              rows: term.rows,
-            })
-            .catch(() => {});
-        }
+        sendResize(term.cols, term.rows);
       } catch {
         // element is hidden or not measured yet
       }
     };
+    applyFitRef.current = applyFit;
 
-    const observer = new ResizeObserver(() => fitAndResize());
+    let frame = 0;
+    const scheduleFit = () => {
+      if (frame !== 0) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        applyFit();
+      });
+    };
+
+    const observer = new ResizeObserver(scheduleFit);
     observer.observe(host);
-    const frame = requestAnimationFrame(fitAndResize);
+    const initialFrame = requestAnimationFrame(applyFit);
 
     return () => {
-      cancelAnimationFrame(frame);
+      cancelAnimationFrame(initialFrame);
+      if (frame !== 0) cancelAnimationFrame(frame);
       observer.disconnect();
       offData();
       input.dispose();
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
+      applyFitRef.current = () => {};
+      lastSizeRef.current = null;
     };
-  }, [client, session.id, onError]);
+  }, [client, session.id]);
 
   useEffect(() => {
     if (!active) return;
-    const term = termRef.current;
-    const fit = fitRef.current;
-    if (!term || !fit) return;
-    try {
-      fit.fit();
-      term.focus();
-      if (term.cols > 0 && term.rows > 0) {
-        void client
-          .invoke('sessions.resize', { sessionId: session.id, cols: term.cols, rows: term.rows })
-          .catch(() => {});
-      }
-    } catch {
-      // ignore measurement races
-    }
-  }, [active, client, session.id]);
+    termRef.current?.focus();
+    applyFitRef.current();
+  }, [active]);
 
   return (
     <div className={`terminal-view ${active ? 'active' : ''}`}>
