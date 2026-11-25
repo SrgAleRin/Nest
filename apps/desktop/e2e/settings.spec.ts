@@ -91,11 +91,15 @@ test('saves harness settings and keeps a disabled harness resumable', async () =
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await expect(page.locator('.settings-modal')).toBeVisible();
     expect(await page.locator('.settings-row').count()).toBeGreaterThanOrEqual(7);
+    await expect(page.locator('.update-state')).toHaveText('Updates disabled');
+    const customField = page.locator('.field').filter({ hasText: 'Custom command' });
+    const feedField = page.locator('.field').filter({ hasText: 'Update feed' });
 
     const fakeRow = page.locator('.settings-row').filter({ hasText: 'Fake harness' });
     await expect(fakeRow.locator('input')).toBeChecked();
     await fakeRow.locator('input').uncheck();
-    await page.locator('.settings-modal .field input').fill('node');
+    await customField.locator('input').fill('node');
+    await feedField.locator('input').fill('https://updates.example.com/nest/');
     await page.getByRole('button', { name: 'Save', exact: true }).click();
 
     await expect(page.locator('.settings-modal')).toHaveCount(0);
@@ -136,12 +140,18 @@ test('saves harness settings and keeps a disabled harness resumable', async () =
       if (!response.ok) throw new Error(response.error.message);
       return response.data;
     });
-    expect(stored).toEqual({ disabledHarnesses: ['fake'], customCommand: 'node' });
+    expect(stored).toEqual({
+      disabledHarnesses: ['fake'],
+      customCommand: 'node',
+      updateFeedUrl: 'https://updates.example.com/nest/',
+    });
 
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await expect(page.locator('.settings-modal')).toBeVisible();
     await expect(fakeRow.locator('input')).not.toBeChecked();
-    await expect(page.locator('.settings-modal .field input')).toHaveValue('node');
+    await expect(customField.locator('input')).toHaveValue('node');
+    await expect(feedField.locator('input')).toHaveValue('https://updates.example.com/nest/');
+    await expect(page.locator('.update-meta')).toContainText('feed configured');
   } finally {
     await app.close();
   }

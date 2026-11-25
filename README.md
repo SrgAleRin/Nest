@@ -2,7 +2,7 @@
 
 Лёгкий desktop-воркспейс для параллельной работы с CLI-агентами. Аналог Orca по сути, но без ботов, браузера, плагинов и нативного чата.
 
-**Статус:** foundation v0.1 собран, Phase 4 закрыта, Phase 5 начата. Работают: три колонки, проекты и main checkout, worktree-задачи, PTY + xterm, SQLite, git/diff/комментарии с живым обновлением статуса, numstat и виртуализированным diff с подсветкой, range-комментарии с re-anchor, resume завершённой сессии в той же вкладке с точным `harness_session_id`, настройки harness (custom-команда и вкл/выкл профилей), системные уведомления и unread-бейджи, command palette (`Ctrl+Shift+P`), скелетоны загрузки и inline-ошибки с повтором, `FakeHarness` и e2e. OpenCode проверен вручную, Codex/Claude smoke — после MVP. Собирается NSIS-установщик; упакованная и установленная сборка проходят автоматический смоук локально, проверка на чистой Windows ещё впереди.
+**Статус:** foundation v0.1 собран, Phase 4 закрыта, Phase 5 идёт. Работают: три колонки, проекты и main checkout, worktree-задачи, PTY + xterm, SQLite, git/diff/комментарии с живым обновлением статуса, numstat и виртуализированным diff с подсветкой, range-комментарии с re-anchor, resume завершённой сессии в той же вкладке с точным `harness_session_id`, настройки harness (custom-команда и вкл/выкл профилей), системные уведомления и unread-бейджи, command palette (`Ctrl+Shift+P`), скелетоны загрузки и inline-ошибки с повтором, автообновление через generic-feed, `FakeHarness` и e2e. OpenCode проверен вручную, Codex/Claude smoke — после MVP. Собирается NSIS-установщик с иконкой и `latest.yml`; упакованная и установленная сборка проходят автоматический смоук локально, проверка на чистой Windows ещё впереди.
 
 ```
 Project (git repo)
@@ -48,12 +48,16 @@ pnpm lint
 pnpm test        # unit + PTY integration
 pnpm build
 pnpm test:e2e    # FakeHarness: старт, ввод, рестарт, scrollback
-pnpm dist        # NSIS-установщик в apps/desktop/release
+pnpm dist        # NSIS-установщик + latest.yml в apps/desktop/release
 ```
 
 `FakeHarness` запускается через `node`, поэтому в dev-окружении Node должен быть в `PATH`. Реальные harness-профили ищутся по `where`/`which` и показываются в UI как доступные или отсутствующие.
 
-`pnpm test:e2e` дополнительно прогоняет `e2e/packaged.spec.ts`, если уже собран `apps/desktop/release/win-unpacked`: установленное приложение должно стартовать, поднять PTY из `resources/fake-harness.mjs` и создать БД. Без собранного релиза шаг пропускается. Тот же смоук можно направить на установленную копию через `NEST_E2E_EXE`.
+`pnpm test:e2e` дополнительно прогоняет `e2e/packaged.spec.ts`, если уже собран `apps/desktop/release/win-unpacked`: установленное приложение должно стартовать, поднять PTY из `resources/fake-harness.mjs` и создать БД. Без собранного релиза шаг пропускается. Тот же смоук можно направить на установленную копию через `NEST_E2E_EXE`, а `e2e/updates.spec.ts` — на локальный feed через `NEST_UPDATE_FEED_DIR`.
+
+### Обновления
+
+`pnpm dist` кладёт рядом с установщиком `Nest-Setup-<version>.exe.blockmap` и `latest.yml`. Выложите эти файлы в статический каталог и укажите его URL в **Settings → Updates** (или задайте `NEST_UPDATE_URL`). Упакованная сборка проверяет feed через 20 секунд после старта и каждые 6 часов, скачивает обновление и ставит его при перезапуске. В dev-сборке и при `NEST_DISABLE_UPDATES=1` проверки выключены. Полный runbook, включая подпись и чек-лист чистой Windows, — в [docs/release.md](docs/release.md).
 
 ## Структура
 
@@ -127,7 +131,7 @@ Tauri 2 не входит в MVP, но оставлен как future experiment
 Foundation собран, тег `foundation-v0.1` поставлен; точный resume по session id, fallback на последнюю беседу и авто-возобновление работают. NSIS-установщик собирается, упакованная и установленная сборка проходят локальный смоук. Разработка идёт одним потоком, без dev worktree и параллельных веток. Дальше по порядку:
 
 1. Phase 4 закрыта: watcher, numstat, виртуализация и подсветка diff, range-комментарии и re-anchor.
-2. Phase 5 идёт: настройки harness, уведомления, command palette и полировка состояний (скелетоны, пустые состояния, inline-ошибки с повтором) готовы; дальше e2e и поставка.
+2. Phase 5 идёт: настройки harness, уведомления, command palette, полировка состояний и автообновление готовы; дальше только чистая Windows и финальный smoke.
 3. Прогнать установщик на чистой Windows без Node.js, когда будет машина.
 4. Smoke **Codex** в самом Nest — после MVP, по договорённости. OpenCode уже проверен: id захватывается, после рестарта продолжается та же беседа.
 

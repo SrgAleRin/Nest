@@ -1795,6 +1795,8 @@ code,
 
 .settings-modal {
   width: 520px;
+  max-height: calc(100vh - 56px);
+  overflow: auto;
 }
 
 .settings-section {
@@ -1894,6 +1896,84 @@ code,
 
 .settings-error span {
   overflow-wrap: anywhere;
+}
+
+.update-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: #0b0f15;
+}
+
+.update-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.update-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.update-state {
+  color: var(--text);
+  font-size: 11.5px;
+}
+
+.update-state.state-disabled {
+  color: var(--dim);
+}
+
+.update-state.state-not-available,
+.update-state.state-downloaded {
+  color: var(--green);
+}
+
+.update-state.state-error {
+  color: var(--red);
+}
+
+.update-meta {
+  overflow: hidden;
+  color: var(--dim);
+  font: 9.5px var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+}
+
+.update-message {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.update-progress {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #1a2230;
+}
+
+.update-progress span {
+  display: block;
+  height: 100%;
+  background: var(--blue);
+  transition: width 0.2s ease;
 }
 
 /* ---------- command palette ---------- */
@@ -2079,6 +2159,30 @@ code,
 
 .status-item.muted {
   color: var(--dim);
+}
+
+.status-update {
+  padding: 1px 7px;
+  border: 1px solid rgba(158, 206, 106, 0.45);
+  border-radius: 999px;
+  background: rgba(158, 206, 106, 0.12);
+  color: #c4e3a4;
+  font: 9px var(--mono);
+  cursor: pointer;
+}
+
+.status-update:hover {
+  background: rgba(158, 206, 106, 0.2);
+}
+
+.status-update.error {
+  border-color: rgba(247, 118, 142, 0.45);
+  background: rgba(247, 118, 142, 0.12);
+  color: #ffc3cd;
+}
+
+.status-update.error:hover {
+  background: rgba(247, 118, 142, 0.2);
 }
 
 .boot {

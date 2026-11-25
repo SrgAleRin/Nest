@@ -10,10 +10,12 @@ import {
 } from '@nest/shared';
 import { NestError, type Core } from '@nest/core';
 import type { NotificationInput } from './notifications';
+import type { UpdateService } from './updates';
 
 export interface IpcContext {
   core: Core;
   info: () => AppInfo;
+  updates: UpdateService;
   getWindow: () => BrowserWindow | null;
   /** Called after a project/task mutation so filesystem watches can be reconciled. */
   onTasksChanged?: () => void;
@@ -148,8 +150,14 @@ export function registerIpc(context: IpcContext): void {
       const settings = core.settings.update(patch);
       // The custom command may have changed, so cached PATH lookups are stale.
       core.harnesses.invalidate();
+      // Saving a new feed applies immediately; the status arrives as an event.
+      if (patch.updateFeedUrl !== undefined) void context.updates.check();
       return settings;
     },
+
+    'updates.status': () => context.updates.getStatus(),
+    'updates.check': () => context.updates.check(),
+    'updates.install': () => context.updates.install(),
 
     'notifications.show': (input) => ({ shown: context.showNotification?.(input) ?? false }),
 

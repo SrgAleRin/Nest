@@ -4,6 +4,7 @@ productName: Nest
 # binaries for win32-x64, so packaging must not try to recompile it: that
 # would require Visual Studio on every build machine.
 npmRebuild: false
+artifactName: ${productName}-Setup-${version}.${ext}
 directories:
   output: release
   buildResources: build
@@ -26,3 +27,7 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Nest
+  uninstallDisplayName: Nest

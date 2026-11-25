@@ -61,6 +61,7 @@ test('the packaged app starts, runs a PTY and keeps its database', async () => {
       NEST_FAKE_SESSION_DIR: path.join(tempRoot, 'fake-sessions'),
       NEST_DISABLE_SINGLE_INSTANCE: '1',
       NEST_DISABLE_TRAY: '1',
+      NEST_DISABLE_UPDATES: '1',
     },
   });
 

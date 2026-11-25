@@ -84,11 +84,12 @@ Phase 1 Foundation ──► тег foundation-v0.1 ──► Phase 2 задач
 
 ### Сборка и упакованный смоук (сделано)
 
-`pnpm dist` собирает `apps/desktop/release/win-unpacked` и `Nest Setup 0.1.0.exe` (NSIS x64, без подписи). Проверено локально:
+`pnpm dist` собирает `apps/desktop/release/win-unpacked`, `Nest-Setup-0.1.0.exe` (NSIS x64, без подписи), `.blockmap` и `latest.yml`. Проверено локально:
 
 1. asar содержит `out/**` и workspace-пакеты; `node-pty` распакован в `app.asar.unpacked`, `fake-harness.mjs` лежит в `resources/`.
 2. `e2e/packaged.spec.ts` запускает `win-unpacked\Nest.exe` (или установленную копию через `NEST_E2E_EXE`) и проверяет старт окна, `projects.add`, PTY из ресурсного `fake-harness.mjs`, ввод и создание `nest.db`; без собранного релиза шаг пропускается.
-3. Тихая установка `Nest Setup 0.1.0.exe /S /D=...` проходит, установленный `Nest.exe` тоже проходит смоук.
+3. Тихая установка `Nest-Setup-0.1.0.exe /S /D=...` проходит, установленный `Nest.exe` проходит смоук, `Uninstall Nest.exe /S` удаляет каталог; ярлыки появляются в Start Menu и на рабочем столе и удаляются.
+4. `e2e/updates.spec.ts` против локального generic-feed подтверждает `Nest is up to date` и отказ устанавливать недокачанное обновление; insecure HTTP-feed отклоняется.
 
 `npmRebuild: false` в [electron-builder.yml](../apps/desktop/electron-builder.yml): `node-pty` 1.1.0 собран на node-addon-api и поставляет prebuilds под `win32-x64`, поэтому `@electron/rebuild` не нужен и Visual Studio на сборочной машине не требуется.
 
@@ -194,14 +195,16 @@ Shared dirs (`node_modules`) остаются в P1.
 - [x] уведомления: системные тосты о завершении/падении сессии и unread-бейджи в сайдбаре, вкладках и Sessions;
 - [x] command palette: `Ctrl+Shift+P`, задачи/сессии, запуск harness, панели, настройки и git-действия;
 - [x] empty states, ошибки, скелетоны;
-- [ ] e2e-тесты (main checkout, FakeHarness, комментарии к diff);
-- [ ] сборка: Windows NSIS — обязательна, macOS dmg — вторично, Linux — best effort;
-- [ ] auto-update;
-- [ ] документация.
+- [x] e2e-тесты (main checkout, FakeHarness, комментарии к diff);
+- [x] сборка: Windows NSIS — обязательна, macOS dmg — вторично, Linux — best effort;
+- [x] auto-update;
+- [x] документация.
 
 **Exit criteria:** установщик на чистой Windows-машине, первый запуск без Node.js, обновление работает; main checkout и хотя бы 2 harness проходят smoke-тест.
 
 Полировка состояний сделана: boot-скелетон повторяет трёхколоночный layout, первичная ошибка — `FatalScreen` с повтором, панели Git/Diff используют `panelPhase` и inline `ErrorState`, добавлен `ErrorBoundary`, скелетоны настроек и пустой старт-экран при выключенных harness. Проверка: unit на `panelPhase`, e2e `resilience.spec.ts` (ошибка → retry → восстановление) и скриншоты boot/error/settings.
+
+Поставка: NSIS собирается с иконкой и стабильным именем `Nest-Setup-<version>.exe`, `scripts/make-latest-yml.mjs` пишет `latest.yml`, автообновление использует generic-feed из Settings (`updateFeedUrl`) или `NEST_UPDATE_URL` и проверяется упакованным `e2e/updates.spec.ts` против локального feed. Установщик проверен тихой установкой, запуском установленной копии, ярлыками и удалением на этой машине; чек-лист чистой Windows без Node.js остаётся открытым, см. `docs/release.md`.
 
 Оценка для одного потока: foundation уже собран, осталось три-четыре недели последовательной работы.
 

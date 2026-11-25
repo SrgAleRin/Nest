@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { Session, Task } from './schemas.js';
+import type { Session, Task, UpdateStatus } from './schemas.js';
 import {
   AppSettingsPatchSchema,
   AppSettingsSchema,
@@ -8,6 +8,7 @@ import {
   ReviewCommentSchema,
   SessionSchema,
   TaskSchema,
+  UpdateStatusSchema,
 } from './schemas.js';
 import { GitDiffSchema, GitStatusSchema } from './git.js';
 
@@ -162,6 +163,10 @@ export const rpcMethods = {
   'settings.get': { params: empty, result: AppSettingsSchema },
   'settings.update': { params: AppSettingsPatchSchema, result: AppSettingsSchema },
 
+  'updates.status': { params: empty, result: UpdateStatusSchema },
+  'updates.check': { params: empty, result: UpdateStatusSchema },
+  'updates.install': { params: empty, result: z.void() },
+
   'notifications.show': {
     params: z.object({
       title: z.string().min(1).max(200),
@@ -202,7 +207,8 @@ export type NestEvent =
   | { type: 'task:progress'; projectId: string; step: TaskProgressStep }
   | { type: 'git:changed'; taskId: string }
   | { type: 'notification'; level: 'info' | 'warn' | 'error'; message: string }
-  | { type: 'notification:activated'; sessionId?: string };
+  | { type: 'notification:activated'; sessionId?: string }
+  | { type: 'updates:status'; status: UpdateStatus };
 
 export interface NestClient {
   invoke<M extends RpcMethod>(method: M, params: RpcParams<M>): Promise<RpcResult<M>>;

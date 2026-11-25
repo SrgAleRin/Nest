@@ -13,6 +13,7 @@ import type {
   RpcResult,
   Session,
   Task,
+  UpdateStatus,
 } from '@nest/shared';
 
 const now = '2026-11-20T10:00:00.000Z';
@@ -135,7 +136,22 @@ export function createMockClient(): NestClient {
     },
   ];
 
-  let settings: AppSettings = { disabledHarnesses: [], customCommand: '' };
+  let settings: AppSettings = {
+    disabledHarnesses: [],
+    customCommand: '',
+    updateFeedUrl: '',
+  };
+
+  const updateStatus = (): UpdateStatus => ({
+    state: 'disabled',
+    currentVersion: '0.1.0',
+    enabled: false,
+    feedUrl: settings.updateFeedUrl || null,
+    availableVersion: null,
+    percent: null,
+    message: 'Updates are available in packaged builds only.',
+    checkedAt: null,
+  });
 
   const profiles = (includeDisabled: boolean): HarnessProfile[] => {
     const all: HarnessProfile[] = settings.customCommand
@@ -309,9 +325,18 @@ export function createMockClient(): NestClient {
             typeof params.customCommand === 'string'
               ? params.customCommand.trim()
               : settings.customCommand,
+          updateFeedUrl:
+            typeof params.updateFeedUrl === 'string'
+              ? params.updateFeedUrl.trim()
+              : settings.updateFeedUrl,
         };
         return settings;
       }
+      case 'updates.status':
+      case 'updates.check':
+        return updateStatus();
+      case 'updates.install':
+        throw new Error('No downloaded update is ready to install');
       case 'notifications.show':
         return { shown: false };
       case 'notifications.badge':

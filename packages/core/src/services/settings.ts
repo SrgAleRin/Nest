@@ -7,6 +7,7 @@ const SETTINGS_KEY = 'app';
 export const DEFAULT_SETTINGS: AppSettings = {
   disabledHarnesses: [],
   customCommand: '',
+  updateFeedUrl: '',
 };
 
 /**
@@ -56,5 +57,6 @@ function normalize(settings: AppSettings): AppSettings {
   return {
     customCommand: settings.customCommand.trim(),
     disabledHarnesses: [...new Set(settings.disabledHarnesses)],
+    updateFeedUrl: settings.updateFeedUrl.trim(),
   };
 }

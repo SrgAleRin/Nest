@@ -8,6 +8,7 @@ import type {
   SessionStatus,
   Task,
   TaskProgressStep,
+  UpdateStatus,
 } from '@nest/shared';
 import { Badge, Button, IconButton } from '@nest/ui';
 import { BootSkeleton, FatalScreen } from './components/Boot';
@@ -59,6 +60,7 @@ export function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [rightTab, setRightTab] = useState<RightTab>('git');
   const [unread, setUnread] = useState<Record<string, number>>({});
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [activateSessionId, setActivateSessionId] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
 
@@ -172,6 +174,13 @@ export function App() {
   }, [loadInitial]);
 
   useEffect(() => {
+    void client
+      .invoke('updates.status', {})
+      .then(setUpdateStatus)
+      .catch(() => {});
+  }, [client]);
+
+  useEffect(() => {
     return client.on((event) => {
       switch (event.type) {
         case 'session:data':
@@ -228,6 +237,9 @@ export function App() {
           return;
         case 'notification:activated':
           if (event.sessionId) setActivateSessionId(event.sessionId);
+          return;
+        case 'updates:status':
+          setUpdateStatus(event.status);
           return;
         default:
           return;
@@ -627,6 +639,20 @@ export function App() {
     kind: 'action',
     run: () => setSettingsOpen(true),
   });
+  if (updateStatus?.state === 'downloaded') {
+    paletteCommands.push({
+      id: 'app:update',
+      title: `Install Nest ${updateStatus.availableVersion ?? ''} and restart`,
+      detail: 'downloaded update',
+      keywords: 'upgrade update restart',
+      kind: 'action',
+      run: () => {
+        void client.invoke('updates.install', {}).catch((error) => {
+          notify('error', errorMessage(error));
+        });
+      },
+    });
+  }
   for (const [tab, label] of [
     ['git', 'Git'],
     ['diff', 'Diff'],
@@ -783,6 +809,28 @@ export function App() {
           {selectedSessions.length}
         </span>
         <span className="status-spacer" />
+        {updateStatus?.state === 'downloaded' ? (
+          <span className="status-item">
+            <button
+              className="status-update"
+              onClick={() => setSettingsOpen(true)}
+              title={updateStatus.message ?? 'Update ready'}
+            >
+              Update {updateStatus.availableVersion ?? ''} ready
+            </button>
+          </span>
+        ) : null}
+        {updateStatus?.state === 'error' ? (
+          <span className="status-item">
+            <button
+              className="status-update error"
+              onClick={() => setSettingsOpen(true)}
+              title={updateStatus.message ?? 'Update check failed'}
+            >
+              Update check failed
+            </button>
+          </span>
+        ) : null}
         <span className="status-item">
           <IconButton label="Settings" className="tiny" onClick={() => setSettingsOpen(true)}>
             <GearIcon size={12} />

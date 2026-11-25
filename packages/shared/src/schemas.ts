@@ -62,11 +62,43 @@ export const AppSettingsSchema = z.object({
   disabledHarnesses: z.array(HarnessIdSchema),
   /** Executable on PATH or a full path, started without arguments. */
   customCommand: z.string().max(2000),
+  /** Generic update feed (electron-updater latest.yml); empty disables checks. */
+  updateFeedUrl: z.string().max(2000).default(''),
 });
 export type AppSettings = z.infer<typeof AppSettingsSchema>;
 
-export const AppSettingsPatchSchema = AppSettingsSchema.partial();
+export const AppSettingsPatchSchema = z.object({
+  disabledHarnesses: z.array(HarnessIdSchema).optional(),
+  customCommand: z.string().max(2000).optional(),
+  updateFeedUrl: z.string().max(2000).optional(),
+});
 export type AppSettingsPatch = z.infer<typeof AppSettingsPatchSchema>;
+
+export const UpdateStateSchema = z.enum([
+  'idle',
+  'disabled',
+  'checking',
+  'available',
+  'not-available',
+  'downloading',
+  'downloaded',
+  'error',
+]);
+export type UpdateState = z.infer<typeof UpdateStateSchema>;
+
+export const UpdateStatusSchema = z.object({
+  state: UpdateStateSchema,
+  currentVersion: z.string(),
+  /** False in development or when NEST_DISABLE_UPDATES=1. */
+  enabled: z.boolean(),
+  feedUrl: z.string().nullable(),
+  availableVersion: z.string().nullable(),
+  /** Download progress, 0..100, only while downloading. */
+  percent: z.number().min(0).max(100).nullable(),
+  message: z.string().nullable(),
+  checkedAt: z.string().nullable(),
+});
+export type UpdateStatus = z.infer<typeof UpdateStatusSchema>;
 
 export const SessionStatusSchema = z.enum(['starting', 'running', 'idle', 'exited', 'failed']);
 export type SessionStatus = z.infer<typeof SessionStatusSchema>;

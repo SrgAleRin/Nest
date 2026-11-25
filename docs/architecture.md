@@ -884,7 +884,8 @@ nest/
 - state machine сессии;
 - path validation;
 - RPC-схемы;
-- форматирование комментариев и anchor file/side/line.
+- форматирование комментариев и anchor file/side/line;
+- `panelPhase`, политика уведомлений/unread, ранжирование команд палитры, допустимость update-feed (HTTPS или loopback HTTP).
 
 **Integration**
 
@@ -905,7 +906,12 @@ nest/
 - оставить комментарий к строке, отправить в `FakeHarness`, увидеть prompt;
 - commit;
 - переключить задачу, вернуться, увидеть scrollback;
-- закрыть приложение, открыть снова, увидеть задачу и scrollback, но не живой процесс.
+- закрыть приложение, открыть снова, увидеть задачу и scrollback, но не живой процесс;
+- настройки harness: отключить профиль, сохранить, убедиться, что он скрыт из старта, но resume работает;
+- уведомления: завершение сессии без фокуса даёт unread и системный тост (в e2e тосты отключены, проверяется unread и клик);
+- палитра: поиск, стрелки, запуск harness и переключение панели;
+- ошибки панелей: скрытый `.git` → inline `ErrorState`, retry после восстановления;
+- упакованное приложение: generic-feed с `latest.yml` → `Nest is up to date`; insecure HTTP-feed отклоняется.
 
 **Harness-совместимость**
 
@@ -935,11 +941,22 @@ Windows-first:
 - `electron-builder` для всех платформ;
 - `node-pty` — native module; prebuilds для Electron win32-x64 уже входят в пакет, `@electron/rebuild` нужен только при смене ABI/архитектуры, поэтому в конфиге стоит `npmRebuild: false` и Visual Studio на сборочной машине не требуется;
 - `node:sqlite` — встроен в Node 24, отдельной native-сборки нет;
-- `pnpm dist` собирает NSIS x64; `apps/desktop/e2e/packaged.spec.ts` проверяет упакованную и установленную сборку (asar, распакованный `node-pty`, ресурсный `fake-harness.mjs`, PTY, БД);
+- `pnpm dist` собирает NSIS x64 и `latest.yml`; `apps/desktop/e2e/packaged.spec.ts` проверяет упакованную и установленную сборку (asar, распакованный `node-pty`, ресурсный `fake-harness.mjs`, PTY, БД);
 - CI: Windows обязателен, macOS/Ubuntu — по возможности;
-- code signing: Windows (Azure Trusted Signing / SignPath), macOS notarization;
-- auto-update: `electron-updater` + GitHub Releases;
+- code signing: Windows (Azure Trusted Signing / SignPath), macOS notarization; текущие сборки не подписаны;
+- auto-update: `electron-updater` + generic feed (см. ниже);
 - crash reporting — opt-in, локальные логи по умолчанию.
+
+### 14.1 Auto-update
+
+Обновления работают только в упакованной сборке (`app.isPackaged`), в dev и e2e — отключены (`NEST_DISABLE_UPDATES=1` для принудительного отключения). Источник — статический каталог с `latest.yml` и установщиком (generic provider), URL задаётся в Settings → Updates и хранится в `app_settings.updateFeedUrl`; `NEST_UPDATE_URL` перекрывает настройку для экспериментов. Публичный feed обязан быть HTTPS — обновление исполняет скачанный установщик; HTTP допускается только для loopback при локальной проверке.
+
+- main: `UpdateService` в `apps/desktop/src/main/updates.ts`; первый check через 20 с после старта, дальше раз в 6 часов; `autoDownload = true`, `autoInstallOnAppQuit = true`;
+- контракт: `updates.status` / `updates.check` / `updates.install` и событие `updates:status`; renderer показывает статус в Settings и бейдж «Update ready» в статусбаре;
+- при сохранении нового feed URL `settings.update` сразу запускает проверку, не дожидаясь таймера;
+- `pnpm dist` после `electron-builder` вызывает `scripts/make-latest-yml.mjs`, который считает sha512/size установщика и пишет `latest.yml`; `.blockmap` создаёт electron-builder для дифференциальных обновлений;
+- `quitAndInstall` перезапускает Nest и тем самым завершает PTY-сессии — это ожидаемо при установке обновления;
+- без code signing Windows покажет предупреждение SmartScreen; обновление всё равно скачивается, но публичный релиз требует подписи.
 
 ## 15. Долгий ящик: daemon и remote
 

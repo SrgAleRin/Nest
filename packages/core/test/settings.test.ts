@@ -45,6 +45,12 @@ describe('settings service', () => {
       'claude',
       'codex',
     ]);
+    expect(
+      settings.update({ updateFeedUrl: '  https://updates.example.com/nest/  ' }).updateFeedUrl,
+    ).toBe('https://updates.example.com/nest/');
+    expect(settings.update({ customCommand: 'agent-2' }).updateFeedUrl).toBe(
+      'https://updates.example.com/nest/',
+    );
     db.close();
   });
 
@@ -57,11 +63,26 @@ describe('settings service', () => {
     expect(second.settings.get()).toEqual({
       disabledHarnesses: ['fake'],
       customCommand: 'agent',
+      updateFeedUrl: '',
     });
 
     second.db.prepare('UPDATE settings SET value = ? WHERE key = ?').run('{not json', 'app');
     expect(second.settings.get()).toEqual(DEFAULT_SETTINGS);
     second.db.close();
+  });
+
+  it('fills the update feed default for rows written by older builds', () => {
+    const { db, settings } = openSettings('legacy.db');
+    db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run(
+      'app',
+      JSON.stringify({ disabledHarnesses: ['fake'], customCommand: 'agent' }),
+    );
+    expect(settings.get()).toEqual({
+      disabledHarnesses: ['fake'],
+      customCommand: 'agent',
+      updateFeedUrl: '',
+    });
+    db.close();
   });
 
   it('rejects unknown harness ids', () => {

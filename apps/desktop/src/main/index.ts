@@ -6,6 +6,7 @@ import type { AppInfo, NestEvent } from '@nest/shared';
 import { registerIpc } from './ipc';
 import { setAppBadge, showNotification } from './notifications';
 import { resolveProfileName } from './profile';
+import { UpdateService } from './updates';
 import { WorkspaceWatcher } from './watcher';
 
 const TRAY_ICON_BASE64 =
@@ -38,6 +39,7 @@ let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let core: Core | null = null;
 let watcher: WorkspaceWatcher | null = null;
+let updates: UpdateService | null = null;
 let shuttingDown = false;
 let quitting = false;
 
@@ -162,9 +164,13 @@ if (!allowMultipleInstances && !app.requestSingleInstanceLock()) {
     watcher = new WorkspaceWatcher(broadcast);
     void watcher.sync(core.tasks.list());
 
+    const updateService = new UpdateService(() => core!.settings.get(), broadcast);
+    updates = updateService;
+
     registerIpc({
       core,
       info,
+      updates: updateService,
       getWindow: () => mainWindow,
       onTasksChanged: () => {
         if (core && watcher) void watcher.sync(core.tasks.list());
@@ -185,6 +191,7 @@ if (!allowMultipleInstances && !app.requestSingleInstanceLock()) {
     });
     createWindow();
     createTray();
+    updates?.start();
 
     app.on('activate', () => {
       showWindow();
@@ -202,6 +209,8 @@ if (!allowMultipleInstances && !app.requestSingleInstanceLock()) {
     tray = null;
     if (shuttingDown) return;
     shuttingDown = true;
+    updates?.stop();
+    updates = null;
     void watcher?.close();
     watcher = null;
     core?.close();
