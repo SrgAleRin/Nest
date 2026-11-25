@@ -190,14 +190,14 @@ Shared dirs (`node_modules`) остаются в P1.
 
 ### Phase 5 — интеграция, полировка и поставка (1–2 недели)
 
-- уведомления;
-- command palette;
-- empty states, ошибки, скелетоны;
-- настройки harness;
-- e2e-тесты (main checkout, FakeHarness, комментарии к diff);
-- сборка: Windows NSIS — обязательна, macOS dmg — вторично, Linux — best effort;
-- auto-update;
-- документация.
+- [x] настройки harness: custom-команда и вкл/выкл встроенных профилей (⚙ в статусбаре, SQLite);
+- [ ] уведомления;
+- [ ] command palette;
+- [ ] empty states, ошибки, скелетоны;
+- [ ] e2e-тесты (main checkout, FakeHarness, комментарии к diff);
+- [ ] сборка: Windows NSIS — обязательна, macOS dmg — вторично, Linux — best effort;
+- [ ] auto-update;
+- [ ] документация.
 
 **Exit criteria:** установщик на чистой Windows-машине, первый запуск без Node.js, обновление работает; main checkout и хотя бы 2 harness проходят smoke-тест.
 

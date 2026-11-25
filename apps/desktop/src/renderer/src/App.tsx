@@ -1,8 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { AppInfo, HarnessProfile, Project, Session, Task, TaskProgressStep } from '@nest/shared';
-import { Badge, Button, Spinner } from '@nest/ui';
+import type {
+  AppInfo,
+  AppSettings,
+  HarnessProfile,
+  Project,
+  Session,
+  Task,
+  TaskProgressStep,
+} from '@nest/shared';
+import { Badge, Button, IconButton, Spinner } from '@nest/ui';
+import { GearIcon } from './components/Icons';
 import { NewTaskDialog, type NewTaskSubmission } from './components/NewTaskDialog';
 import { RightPanel } from './components/RightPanel';
+import { SettingsDialog } from './components/SettingsDialog';
 import { Sidebar } from './components/Sidebar';
 import { TerminalPane } from './components/TerminalPane';
 import { createClient } from './rpc/client';
@@ -28,6 +38,7 @@ export function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [harnesses, setHarnesses] = useState<HarnessProfile[]>([]);
+  const [settings, setSettings] = useState<AppSettings | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [newTaskProjectId, setNewTaskProjectId] = useState<string | null>(null);
@@ -38,19 +49,14 @@ export function App() {
     step: TaskProgressStep;
   } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
 
-  const notify = useCallback(
-    (level: 'info' | 'warn' | 'error', message: string) => {
-      setToast({ id: Date.now(), level, message });
-    },
-    [],
-  );
+  const notify = useCallback((level: 'info' | 'warn' | 'error', message: string) => {
+    setToast({ id: Date.now(), level, message });
+  }, []);
 
-  const reportError = useCallback(
-    (message: string) => notify('error', message),
-    [notify],
-  );
+  const reportError = useCallback((message: string) => notify('error', message), [notify]);
 
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
   const gitVersion = selectedTaskId ? (gitVersions[selectedTaskId] ?? 0) : 0;
@@ -61,6 +67,15 @@ export function App() {
     [sessions, selectedTaskId],
   );
   const newTaskProject = projects.find((project) => project.id === newTaskProjectId) ?? null;
+  // Full harness list drives resume support, while disabled profiles stay out
+  // of the start pickers. Both come from the same cached registry.
+  const visibleHarnesses = useMemo(
+    () =>
+      settings
+        ? harnesses.filter((harness) => !settings.disabledHarnesses.includes(harness.id))
+        : harnesses,
+    [harnesses, settings],
+  );
   const resumableHarnesses = useMemo(
     () =>
       new Set(
@@ -89,9 +104,10 @@ export function App() {
     let cancelled = false;
     void (async () => {
       try {
-        const [nextInfo, nextHarnesses] = await Promise.all([
+        const [nextInfo, nextHarnesses, nextSettings] = await Promise.all([
           client.invoke('app.info', {}),
-          client.invoke('harness.list', {}),
+          client.invoke('harness.list', { includeDisabled: true }),
+          client.invoke('settings.get', {}),
         ]);
         const [nextProjects, nextTasks, nextSessions] = await Promise.all([
           client.invoke('projects.list', {}),
@@ -101,6 +117,7 @@ export function App() {
         if (cancelled) return;
         setInfo(nextInfo);
         setHarnesses(nextHarnesses);
+        setSettings(nextSettings);
         setProjects(nextProjects);
         setTasks(nextTasks);
         setSessions(nextSessions);
@@ -211,9 +228,7 @@ export function App() {
           projectId: newTaskProjectId,
           title: submission.title ?? '',
           ...(submission.baseBranch ? { baseBranch: submission.baseBranch } : {}),
-          ...(submission.setupScript !== undefined
-            ? { setupScript: submission.setupScript }
-            : {}),
+          ...(submission.setupScript !== undefined ? { setupScript: submission.setupScript } : {}),
         });
         setTasks((prev) => upsert(prev, task));
         setProjects((prev) =>
@@ -359,6 +374,14 @@ export function App() {
     [sessions],
   );
 
+  const refreshHarnesses = useCallback(async () => {
+    try {
+      setHarnesses(await client.invoke('harness.list', { includeDisabled: true }));
+    } catch (error) {
+      notify('error', errorMessage(error));
+    }
+  }, [client, notify]);
+
   const bumpGit = useCallback(() => {
     if (!selectedTaskId) return;
     setGitVersions((prev) => ({
@@ -445,7 +468,7 @@ export function App() {
           task={selectedTask}
           sessions={selectedSessions}
           selectedSessionId={selectedSessionId}
-          harnesses={harnesses}
+          harnesses={visibleHarnesses}
           busy={busy}
           onSelectSession={setSelectedSessionId}
           onStart={(harnessId) => void startSession(harnessId)}
@@ -485,10 +508,15 @@ export function App() {
           {selectedSessions.length}
         </span>
         <span className="status-spacer" />
+        <span className="status-item">
+          <IconButton label="Settings" className="tiny" onClick={() => setSettingsOpen(true)}>
+            <GearIcon size={12} />
+          </IconButton>
+        </span>
         {info ? (
           <span className="status-item muted">
-            Electron {info.electron} · {info.profile ? `profile ${info.profile}` : 'default profile'} ·
-            v{info.version}
+            Electron {info.electron} ·{' '}
+            {info.profile ? `profile ${info.profile}` : 'default profile'} · v{info.version}
           </span>
         ) : null}
       </footer>
@@ -498,12 +526,23 @@ export function App() {
           project={newTaskProject}
           busy={busy}
           step={
-            taskProgress && taskProgress.projectId === newTaskProject.id
-              ? taskProgress.step
-              : null
+            taskProgress && taskProgress.projectId === newTaskProject.id ? taskProgress.step : null
           }
           onClose={() => setNewTaskProjectId(null)}
           onSubmit={(submission) => void createTask(submission)}
+        />
+      ) : null}
+
+      {settingsOpen ? (
+        <SettingsDialog
+          client={client}
+          onClose={() => setSettingsOpen(false)}
+          onSaved={(nextSettings) => {
+            setSettings(nextSettings);
+            setSettingsOpen(false);
+            notify('info', 'Settings saved');
+            void refreshHarnesses();
+          }}
         />
       ) : null}
 

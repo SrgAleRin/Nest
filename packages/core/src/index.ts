@@ -7,6 +7,7 @@ import { CommentsService } from './services/comments.js';
 import { GitService } from './services/git.js';
 import { ProjectService } from './services/projects.js';
 import { SessionService } from './services/sessions.js';
+import { SettingsService } from './services/settings.js';
 import { TaskService } from './services/tasks.js';
 
 export interface CoreOptions {
@@ -24,6 +25,7 @@ export interface Core {
   git: GitService;
   sessions: SessionService;
   comments: CommentsService;
+  settings: SettingsService;
   harnesses: HarnessRegistry;
   close(): void;
 }
@@ -42,9 +44,11 @@ export function createCore(options: CoreOptions): Core {
     }
   };
 
+  const settings = new SettingsService(db);
   const harnesses = new HarnessRegistry({
     fakeHarnessScript: options.fakeHarnessScript,
     customCommand: options.customCommand,
+    getSettings: () => settings.get(),
   });
   const projects = new ProjectService(db);
   const tasks = new TaskService(db, projects, options.worktreesRoot, emit);
@@ -64,6 +68,7 @@ export function createCore(options: CoreOptions): Core {
     git,
     sessions,
     comments,
+    settings,
     harnesses,
     close: () => {
       sessions.shutdownAll();
@@ -76,4 +81,5 @@ export { NestError } from './errors.js';
 export type { Db } from './db/database.js';
 export { migrate, openDatabase } from './db/database.js';
 export { migrations } from './db/migrations.js';
+export { DEFAULT_SETTINGS, SettingsService } from './services/settings.js';
 export { parseUnifiedDiff, buildUntrackedDiff } from './git/diff.js';

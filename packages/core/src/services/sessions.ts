@@ -76,15 +76,17 @@ export class SessionService {
 
   get(sessionId: string): Session {
     const row = this.db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId) as
-      | SessionRow
-      | undefined;
+      SessionRow | undefined;
     if (!row) throw new NestError('session_not_found', `Session ${sessionId} was not found`);
     return toSession(row);
   }
 
   activeForTask(taskId: string): Session | null {
     for (const [id, runtime] of this.runtimes) {
-      if (runtime.taskId === taskId && (runtime.status === 'running' || runtime.status === 'idle')) {
+      if (
+        runtime.taskId === taskId &&
+        (runtime.status === 'running' || runtime.status === 'idle')
+      ) {
         return this.get(id);
       }
     }
@@ -142,7 +144,9 @@ export class SessionService {
       throw new NestError('session_running', 'Session is already running');
     }
 
-    const harness = this.harnesses.get(session.harnessId);
+    // A profile disabled in Settings only disappears from the start pickers:
+    // resuming a conversation that already exists must keep working.
+    const harness = this.harnesses.get(session.harnessId, { allowDisabled: true });
     const exactArgs = session.harnessSessionId
       ? this.harnesses.exactResumeArgs(session.harnessId, session.harnessSessionId)
       : null;
@@ -366,9 +370,8 @@ export class SessionService {
   scrollback(sessionId: string): string {
     const runtime = this.runtimes.get(sessionId);
     if (runtime) return runtime.buffer;
-    const row = this.db
-      .prepare('SELECT scrollback FROM sessions WHERE id = ?')
-      .get(sessionId) as { scrollback: string } | undefined;
+    const row = this.db.prepare('SELECT scrollback FROM sessions WHERE id = ?').get(sessionId) as
+      { scrollback: string } | undefined;
     return row?.scrollback ?? '';
   }
 
@@ -541,8 +544,7 @@ export class SessionService {
 
   private emitSession(sessionId: string): void {
     const row = this.db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId) as
-      | SessionRow
-      | undefined;
+      SessionRow | undefined;
     if (row) this.emit({ type: 'session:status', session: toSession(row) });
   }
 }

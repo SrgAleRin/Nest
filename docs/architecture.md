@@ -121,6 +121,7 @@ Nest — это на 70% терминал и процессы, а не ренд�
 | `git` | status, diff, stage, commit, push, worktree list; для checkout — корень проекта |
 | `comments` | review comments: CRUD, anchor task/file/line, отправка в сессию |
 | `sessions` | запуск PTY, lifecycle, статусы, scrollback; без daemon в MVP |
+| `settings` | настройки приложения: отключённые harness-профили, custom-команда |
 | `harness` | реестр профилей, detect installed, resume |
 | `hosts` | `HostAdapter`; сейчас только `LocalHost` |
 | `rpc` | регистрация методов, валидация, ошибки |
@@ -157,6 +158,8 @@ Nest — это на 70% терминал и процессы, а не ренд�
 ## 5. RPC-контракт
 
 Один типизированный канал. Все входы валидируются zod, все ошибки — структурированные.
+
+Набросок ниже фиксирует форму контракта; актуальный список методов и схем — `packages/shared/src/rpc.ts`.
 
 ```ts
 // packages/shared/src/rpc.ts
@@ -255,6 +258,15 @@ export const rpcContract = {
   }), output: z.object({ sent: z.number(), sessionId: z.string() }) },
 };
 ```
+
+Настройки приложения (фактические методы):
+
+```ts
+'harness.list':    { input: z.object({ includeDisabled: z.boolean().optional() }), output: z.array(HarnessProfileSchema) },
+'settings.get':    { input: z.void(), output: AppSettingsSchema },
+'settings.update': { input: AppSettingsSchema.partial(), output: AppSettingsSchema },
+```
+
 
 События main → renderer:
 
@@ -574,34 +586,44 @@ Diff приходит от core уже разобранным на файлы, �
 
 ### 8.1 Реестр
 
+`HarnessRegistry` (`packages/core/src/harness/registry.ts`) — статический список профилей плюс custom-профиль из настроек. Renderer и core видят один и тот же профиль:
+
 ```ts
 export interface HarnessProfile {
-  id: string;
-  name: string;
+  id: HarnessId; // claude | codex | dsh | opencode | pi | copilot | fake | custom
+  label: string;
+  description: string;
   command: string;
   args: string[];
-  env?: Record<string, string>;
-  icon: string;
-  resume?: (session: Session) => string[];
-  statusHooks?: 'claude' | 'codex' | 'generic';
+  resumeArgs: string[];
+  available: boolean; // команда найдена на PATH или файл существует
+  source: 'builtin' | 'custom';
 }
 ```
 
 Встроенные:
 
-| id | command | resume | примечание |
-|---|---|---|---|
-| `claude` | `claude` | `claude --resume <id>` / `--continue` | discovery best effort; ручного теста нет |
-| `codex` | `codex` | `codex resume <id>` / `resume --last` | smoke после MVP |
-| `dsh` | `dsh` | `dsh tui --resume <session>` (нужен id) | discovery неизвестен |
-| `opencode` | `opencode` | `opencode --session <id>` / `--continue` | exact resume проверен вручную |
-| `pi` | `pi` | `pi --session-id <id>` / `--continue` | базовый PTY-профиль |
-| `copilot` | `copilot` | `copilot --resume <id>` / `--continue` | GitHub Copilot CLI |
-| `shell` | `$SHELL` / `pwsh` | — | blank terminal |
+| id | command | resume |
+|---|---|---|
+| `claude` | `claude` | `--resume <id>` / `--continue` |
+| `codex` | `codex` | `resume <id>` / `resume --last` |
+| `dsh` | `dsh` | не подключён |
+| `opencode` | `opencode` | `--session <id>` / `--continue` |
+| `pi` | `pi` | `--session-id <id>` / `--continue` |
+| `copilot` | `copilot` | `--resume <id>` / `--continue` |
+| `fake` | `node scripts/fake-harness.mjs` | `--session-id <id>` / `--continue` |
 
-Claude Code не требует отдельной API-интеграции: базовый запуск — обычный PTY. Всё, что зависит от версии CLI (resume, hooks, точный `needs_input`), делаем best-effort и проверяем на сообществе. Если `claude` не установлен, профиль просто помечается `not found`; приложение не падает.
+Доступность (`where.exe` / `which`) кешируется на процесс; `harnesses.invalidate()` сбрасывает кеш после смены custom-команды. Неустановленный профиль показывается в настройках как `not found` и не даёт себя запустить, но приложение не падает. Discovery conversation id — `harness/discovery.ts`; для `dsh` он пока не реализован.
 
-Custom-профиль добавляется в настройках: имя, команда, аргументы, env, иконка. Это единственный способ запустить произвольную команду.
+Custom-команда задаётся в настройках (⚙ в статусбаре), а не отдельным списком профилей: одно поле — имя на PATH или полный путь. Аргументов нет, resume не поддерживается; пустое поле убирает профиль из реестра. Env `NEST_CUSTOM_COMMAND` остаётся dev-fallback, если в настройках пусто.
+
+Настройки — одна JSON-строка в таблице `settings` (ключ `app`):
+
+```ts
+{ disabledHarnesses: HarnessId[], customCommand: string }
+```
+
+`disabledHarnesses` скрывает профили из `Start harness…` и стартового экрана; `harness.list` с `includeDisabled: true` возвращает их для диалога настроек. Запуск новой сессии с выключенным профилем даёт `harness_disabled`, но `sessions.resume` продолжает уже существующую беседу (`get(id, { allowDisabled: true })`): выключение — это про выбор в UI, а не про отзыв доступа к разговору.
 
 ### 8.2 Определение статуса
 
@@ -728,6 +750,8 @@ CREATE TABLE settings (
 ```
 
 `slug = '@main'` зарезервирован за main checkout; пользовательские задачи не могут его использовать. `workspace_path` для checkout равен пути проекта, для worktree — пути worktree. `review_comments` удаляются каскадом вместе с task.
+
+`settings` — пары ключ/значение. Сейчас единственный ключ `app` хранит JSON `{ disabledHarnesses, customCommand }`, который валидируется `AppSettingsSchema` с дефолтами: новые поля не требуют миграции, а битая строка откатывается к дефолтам.
 
 Миграции: `PRAGMA user_version`, SQL-файлы в `packages/core/src/db/migrations`. Перед миграцией — копия БД.
 

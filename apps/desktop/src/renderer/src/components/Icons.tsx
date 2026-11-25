@@ -124,3 +124,12 @@ export function ChevronIcon({ size = 14 }: IconProps) {
     </svg>
   );
 }
+
+export function GearIcon({ size = 14 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <circle cx="8" cy="8" r="2.2" />
+      <path d="M8 2.2v1.4M8 12.4v1.4M2.2 8h1.4M12.4 8h1.4M3.9 3.9l1 1M11.1 11.1l1 1M12.1 3.9l-1 1M4.9 11.1l-1 1" />
+    </svg>
+  );
+}

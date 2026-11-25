@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import type { Session, Task } from './schemas.js';
 import {
+  AppSettingsPatchSchema,
+  AppSettingsSchema,
   HarnessProfileSchema,
   ProjectSchema,
   ReviewCommentSchema,
@@ -152,7 +154,13 @@ export const rpcMethods = {
     result: z.object({ data: z.string() }),
   },
 
-  'harness.list': { params: empty, result: z.array(HarnessProfileSchema) },
+  'harness.list': {
+    params: z.object({ includeDisabled: z.boolean().optional() }),
+    result: z.array(HarnessProfileSchema),
+  },
+
+  'settings.get': { params: empty, result: AppSettingsSchema },
+  'settings.update': { params: AppSettingsPatchSchema, result: AppSettingsSchema },
 } as const;
 
 export type RpcMethod = keyof typeof rpcMethods;

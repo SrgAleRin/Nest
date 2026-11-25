@@ -57,6 +57,17 @@ export const HarnessProfileSchema = z.object({
 });
 export type HarnessProfile = z.infer<typeof HarnessProfileSchema>;
 
+export const AppSettingsSchema = z.object({
+  /** Harness ids hidden from the start pickers; existing sessions still resume. */
+  disabledHarnesses: z.array(HarnessIdSchema),
+  /** Executable on PATH or a full path, started without arguments. */
+  customCommand: z.string().max(2000),
+});
+export type AppSettings = z.infer<typeof AppSettingsSchema>;
+
+export const AppSettingsPatchSchema = AppSettingsSchema.partial();
+export type AppSettingsPatch = z.infer<typeof AppSettingsPatchSchema>;
+
 export const SessionStatusSchema = z.enum(['starting', 'running', 'idle', 'exited', 'failed']);
 export type SessionStatus = z.infer<typeof SessionStatusSchema>;
 

@@ -1,5 +1,6 @@
 import type {
   AppInfo,
+  AppSettings,
   GitDiff,
   GitStatus,
   HarnessProfile,
@@ -21,7 +22,13 @@ const GREETING =
 
 export function createMockClient(): NestClient {
   const projects: Project[] = [
-    { id: 'project-nest', name: 'nest-demo', path: 'D:\\dev\\nest-demo', setupScript: 'pnpm install', createdAt: now },
+    {
+      id: 'project-nest',
+      name: 'nest-demo',
+      path: 'D:\\dev\\nest-demo',
+      setupScript: 'pnpm install',
+      createdAt: now,
+    },
   ];
   const tasks: Task[] = [
     {
@@ -128,6 +135,29 @@ export function createMockClient(): NestClient {
     },
   ];
 
+  let settings: AppSettings = { disabledHarnesses: [], customCommand: '' };
+
+  const profiles = (includeDisabled: boolean): HarnessProfile[] => {
+    const all: HarnessProfile[] = settings.customCommand
+      ? [
+          ...harnesses,
+          {
+            id: 'custom',
+            label: 'Custom command',
+            description: settings.customCommand,
+            command: settings.customCommand,
+            args: [],
+            resumeArgs: [],
+            available: true,
+            source: 'custom',
+          },
+        ]
+      : harnesses;
+    return includeDisabled
+      ? all
+      : all.filter((harness) => !settings.disabledHarnesses.includes(harness.id));
+  };
+
   const status: GitStatus = {
     branch: 'main',
     upstream: 'origin/main',
@@ -179,11 +209,26 @@ export function createMockClient(): NestClient {
             header: '@@ -9,7 +9,9 @@ export function App() {',
             section: 'export function App() {',
             lines: [
-              { type: 'context', oldLine: 9, newLine: 9, text: '  const client = useMemo(createClient, []);' },
+              {
+                type: 'context',
+                oldLine: 9,
+                newLine: 9,
+                text: '  const client = useMemo(createClient, []);',
+              },
               { type: 'context', oldLine: 10, newLine: 10, text: '' },
               { type: 'context', oldLine: 11, newLine: 11, text: '  useEffect(() => {' },
-              { type: 'del', oldLine: 12, newLine: null, text: '    return client.on(handleEvent);' },
-              { type: 'add', oldLine: null, newLine: 12, text: '    const unsubscribe = client.on(handleEvent);' },
+              {
+                type: 'del',
+                oldLine: 12,
+                newLine: null,
+                text: '    return client.on(handleEvent);',
+              },
+              {
+                type: 'add',
+                oldLine: null,
+                newLine: 12,
+                text: '    const unsubscribe = client.on(handleEvent);',
+              },
               { type: 'add', oldLine: null, newLine: 13, text: '    return () => unsubscribe();' },
               { type: 'context', oldLine: 13, newLine: 14, text: '  }, [client]);' },
             ],
@@ -203,8 +248,18 @@ export function createMockClient(): NestClient {
             header: '@@ -0,0 +1,2 @@',
             section: '',
             lines: [
-              { type: 'add', oldLine: null, newLine: 1, text: 'const listeners = new Map<string, Set<Listener>>();' },
-              { type: 'add', oldLine: null, newLine: 2, text: 'export function onSessionData(...)' },
+              {
+                type: 'add',
+                oldLine: null,
+                newLine: 1,
+                text: 'const listeners = new Map<string, Set<Listener>>();',
+              },
+              {
+                type: 'add',
+                oldLine: null,
+                newLine: 2,
+                text: 'export function onSessionData(...)',
+              },
             ],
           },
         ],
@@ -241,7 +296,22 @@ export function createMockClient(): NestClient {
         clipboardText = String(params.text ?? '');
         return undefined;
       case 'harness.list':
-        return harnesses;
+        return profiles(Boolean(params.includeDisabled));
+      case 'settings.get':
+        return settings;
+      case 'settings.update': {
+        const disabled = params.disabledHarnesses;
+        settings = {
+          disabledHarnesses: Array.isArray(disabled)
+            ? (disabled.map(String) as AppSettings['disabledHarnesses'])
+            : settings.disabledHarnesses,
+          customCommand:
+            typeof params.customCommand === 'string'
+              ? params.customCommand.trim()
+              : settings.customCommand,
+        };
+        return settings;
+      }
       case 'dialog.pickDirectory':
         return null;
       case 'projects.list':
@@ -284,8 +354,7 @@ export function createMockClient(): NestClient {
         return tasks;
       case 'tasks.openCheckout': {
         const checkout = tasks.find(
-          (candidate) =>
-            candidate.projectId === params.projectId && candidate.kind === 'checkout',
+          (candidate) => candidate.projectId === params.projectId && candidate.kind === 'checkout',
         );
         if (!checkout) throw new Error('checkout not found');
         return { ...checkout };
@@ -351,7 +420,10 @@ export function createMockClient(): NestClient {
       case 'sessions.write': {
         const data = String(params.data ?? '');
         const sessionId = String(params.sessionId);
-        const reply = data.includes('\r') || data.includes('\n') ? 'you said: hello\r\n\u001b[32m>\u001b[0m ' : '';
+        const reply =
+          data.includes('\r') || data.includes('\n')
+            ? 'you said: hello\r\n\u001b[32m>\u001b[0m '
+            : '';
         if (reply) {
           setTimeout(() => emit({ type: 'session:data', sessionId, data: reply }), 60);
         }
@@ -426,7 +498,8 @@ export function createMockClient(): NestClient {
         const comment = comments.find((candidate) => candidate.id === params.commentId);
         if (!comment) return undefined;
         if (typeof params.body === 'string') comment.body = params.body;
-        if (params.status === 'open' || params.status === 'resolved') comment.status = params.status;
+        if (params.status === 'open' || params.status === 'resolved')
+          comment.status = params.status;
         comment.updatedAt = new Date().toISOString();
         return { ...comment };
       }

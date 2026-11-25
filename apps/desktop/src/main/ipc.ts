@@ -136,7 +136,17 @@ export function registerIpc(context: IpcContext): void {
 
     'sessions.scrollback': ({ sessionId }) => ({ data: core.sessions.scrollback(sessionId) }),
 
-    'harness.list': () => core.harnesses.list(),
+    'harness.list': ({ includeDisabled }) =>
+      core.harnesses.list({ includeDisabled: includeDisabled ?? false }),
+
+    'settings.get': () => core.settings.get(),
+
+    'settings.update': (patch) => {
+      const settings = core.settings.update(patch);
+      // The custom command may have changed, so cached PATH lookups are stale.
+      core.harnesses.invalidate();
+      return settings;
+    },
   };
 
   ipcMain.handle(

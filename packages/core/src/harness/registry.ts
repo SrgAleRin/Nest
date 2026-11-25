@@ -1,11 +1,14 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import type { HarnessId, HarnessProfile } from '@nest/shared';
+import type { AppSettings, HarnessId, HarnessProfile } from '@nest/shared';
 import { NestError } from '../errors.js';
 
 export interface HarnessRegistryOptions {
   fakeHarnessScript: string;
+  /** Dev fallback used when the persisted custom command is empty. */
   customCommand?: string;
+  /** Read at call time so a settings change applies without a restart. */
+  getSettings?: () => Pick<AppSettings, 'disabledHarnesses' | 'customCommand'>;
 }
 
 interface Definition {
@@ -20,13 +23,18 @@ interface Definition {
 
 export class HarnessRegistry {
   private readonly cache = new Map<string, boolean>();
-  private readonly definitions: Definition[];
+  private readonly builtins: Definition[];
+  private readonly fallbackCustomCommand: string;
 
   constructor(private readonly options: HarnessRegistryOptions) {
     const fakeCommand = process.env.NEST_NODE ?? 'node';
-    const customCommand = options.customCommand ?? process.env.NEST_CUSTOM_COMMAND ?? '';
+    this.fallbackCustomCommand = (
+      options.customCommand ??
+      process.env.NEST_CUSTOM_COMMAND ??
+      ''
+    ).trim();
 
-    this.definitions = [
+    this.builtins = [
       {
         id: 'claude',
         label: 'Claude Code',
@@ -90,41 +98,43 @@ export class HarnessRegistry {
         resumeArgs: ['--continue'],
         source: 'builtin',
       },
-      {
-        id: 'custom',
-        label: 'Custom command',
-        description: 'Command from NEST_CUSTOM_COMMAND',
-        command: customCommand,
-        args: [],
-        resumeArgs: [],
-        source: 'custom',
-      },
     ];
   }
 
-  list(): HarnessProfile[] {
-    return this.definitions.map((definition) => ({
-      id: definition.id,
-      label: definition.label,
-      description: definition.description,
-      command: definition.command,
-      args: definition.args,
-      resumeArgs: definition.resumeArgs,
-      available: this.isAvailable(definition),
-      source: definition.source,
-    }));
+  /**
+   * Profiles offered by the start pickers. Disabled profiles are hidden, and
+   * the custom profile only exists while a command is configured.
+   */
+  list(options: { includeDisabled?: boolean } = {}): HarnessProfile[] {
+    const disabled = this.disabledIds();
+    return this.definitions()
+      .filter((definition) => options.includeDisabled || !disabled.has(definition.id))
+      .map((definition) => this.toProfile(definition));
   }
 
-  get(id: string): HarnessProfile {
-    const profile = this.list().find((candidate) => candidate.id === id);
-    if (!profile) throw new NestError('harness_not_found', `Unknown harness ${id}`);
-    if (!profile.available) {
+  get(id: string, options: { allowDisabled?: boolean } = {}): HarnessProfile {
+    const definition = this.definitions().find((candidate) => candidate.id === id);
+    if (!definition) throw new NestError('harness_not_found', `Unknown harness ${id}`);
+
+    if (!options.allowDisabled && this.disabledIds().has(definition.id)) {
       throw new NestError(
-        'harness_unavailable',
-        `${profile.label} is not installed or its command was not found on PATH`,
+        'harness_disabled',
+        `${definition.label} is disabled in Settings. Enable it there to start a session.`,
       );
     }
-    return profile;
+
+    if (!this.isAvailable(definition)) {
+      throw new NestError(
+        'harness_unavailable',
+        `${definition.label} is not installed or its command was not found on PATH`,
+      );
+    }
+    return this.toProfile(definition);
+  }
+
+  /** Drops cached PATH lookups, e.g. after the custom command changed. */
+  invalidate(): void {
+    this.cache.clear();
   }
 
   /**
@@ -162,6 +172,44 @@ export class HarnessRegistry {
       default:
         return false;
     }
+  }
+
+  private definitions(): Definition[] {
+    const custom = (this.currentSettings().customCommand || this.fallbackCustomCommand).trim();
+    if (!custom) return this.builtins;
+    return [
+      ...this.builtins,
+      {
+        id: 'custom',
+        label: 'Custom command',
+        description: custom,
+        command: custom,
+        args: [],
+        resumeArgs: [],
+        source: 'custom',
+      },
+    ];
+  }
+
+  private currentSettings(): Pick<AppSettings, 'disabledHarnesses' | 'customCommand'> {
+    return this.options.getSettings?.() ?? { disabledHarnesses: [], customCommand: '' };
+  }
+
+  private disabledIds(): Set<string> {
+    return new Set(this.currentSettings().disabledHarnesses);
+  }
+
+  private toProfile(definition: Definition): HarnessProfile {
+    return {
+      id: definition.id,
+      label: definition.label,
+      description: definition.description,
+      command: definition.command,
+      args: definition.args,
+      resumeArgs: definition.resumeArgs,
+      available: this.isAvailable(definition),
+      source: definition.source,
+    };
   }
 
   private isAvailable(definition: Definition): boolean {
