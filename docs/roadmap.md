@@ -18,42 +18,34 @@ MVP считается готовым, если можно:
 
 ## 1.1 Ближайший план
 
+Разработка идёт **одним потоком**: без dev worktree и параллельных workstreams. `NEST_PROFILE` остаётся утилитой для изолированной БД и чистого профиля при отладке, но второй одновременный инстанс больше не нужен.
+
 Порядок работ после текущего foundation:
 
-| # | Шаг | Зачем |
+| # | Шаг | Статус / зачем |
 |---|---|---|
-| 1 | ~~Точный resume по `harness_session_id`~~ — сделано | Resume продолжает именно эту беседу, а не последнюю в workspace |
-| 2 | Smoke OpenCode (сделан) и Codex (после MVP) | Проверить TUI, ввод, resize, exit и resume на живых CLI |
-| 3 | Установщик NSIS (собран) + запуск на чистой Windows | Проверить `node-pty` prebuilds, `node:sqlite`, asar, первый запуск |
-| 4 | Два dev-профиля одновременно | Изоляция `NEST_PROFILE`; CI отложен вместе с remote |
-| 5 | Локальный тег `foundation-v0.1` и fork point | Разрешить параллельные workstreams |
-| 6 | P1-полировка (уведомления, palette, настройки, range-комментарии) | «Удобно каждый день» |
+| 1 | ~~Точный resume по `harness_session_id`~~ | Сделано: resume продолжает именно эту беседу, а не последнюю в workspace |
+| 2 | OpenCode smoke — сделан, Codex — после MVP | Проверить TUI, ввод, resize, exit и resume на живых CLI |
+| 3 | NSIS-установщик — собран; запуск на чистой Windows — когда будет машина | Проверить `node-pty` prebuilds, `node:sqlite`, asar, первый запуск |
+| 4 | Тег `foundation-v0.1` | Базовая точка для откатов и сравнения, без fork point |
+| 5 | Phase 2 → 3 → 4 | Задачи и worktrees, терминал, git/diff/комментарии — по порядку |
+| 6 | Phase 5 | Полировка, e2e, поставка |
 
-Точный resume изменил контракты и схему БД, поэтому он сделан до fork point. CI не блокирует foundation: удалённого репозитория пока нет.
+Точный resume изменил контракты и схему БД, поэтому он сделан до тега. CI не блокирует foundation: удалённого репозитория пока нет.
 
 ## 2. План разработки
 
-Подробная механика параллельной работы — в [parallel-dev.md](parallel-dev.md). Кратко:
+Фазы идут строго последовательно, каждая заканчивается рабочим приложением:
 
 ```
-Phase 1 Foundation (sequential)
-        │
-        ▼
-   fork point: foundation-v0.1
-        │
-        ├── Core / Git
-        ├── Sessions / Harness
-        ├── UI Shell
-        ├── Review / Diff
-        └── Platform
-        │
-        ▼
-Phase 5 Integration / release
+Phase 1 Foundation ──► тег foundation-v0.1 ──► Phase 2 задачи/worktrees
+     ──► Phase 3 терминал ──► Phase 4 git/diff/комментарии
+     ──► Phase 5 полировка и поставка
 ```
 
-До fork point — один поток. После — отдельные dev worktree на каждый workstream, ежедневный rebase и регулярный merge в `main`, а не один большой merge в конце.
+Один поток выбран сознательно: контракты `packages/shared`, RPC, схема БД и layout меняются часто, а параллельные ветки на них дают конфликты дороже выигранного времени. Worktree внутри продукта (tasks) от этого не зависит — это фича Nest, а не способ его разработки.
 
-### Phase 1 — foundation, sequential (1 неделя)
+### Phase 1 — foundation (1 неделя)
 
 Отдельного spike нет: Orca уже доказала Electron + PTY + worktrees. Сразу строим вертикальный срез.
 
@@ -65,10 +57,10 @@ Phase 5 Integration / release
 - `node-pty` + `xterm.js` на одном тестовом терминале;
 - SQLite + baseline-миграция;
 - типизированный RPC + preload + `MockRpcClient` для UI;
-- `NEST_PROFILE` для изоляции dev worktree;
+- `NEST_PROFILE` для изолированной БД и чистого профиля при отладке;
 - CI на Windows: typecheck, lint, unit, build.
 
-**Exit criteria:** можно добавить 2–3 репозитория, main checkout открывается, терминал печатает, проекты переживают перезапуск, контракты заморожены, два dev worktree работают одновременно с разными профилями.
+**Exit criteria:** можно добавить 2–3 репозитория, main checkout открывается, терминал печатает, проекты переживают перезапуск, контракты заморожены.
 
 **Статус foundation-v0.1:**
 
@@ -88,7 +80,6 @@ Phase 5 Integration / release
 - [x] `pnpm dist` и NSIS-установщик (локально: тихая установка, запуск, PTY, БД);
 - [ ] первый прогон GitHub Actions на удалённом репозитории;
 - [ ] smoke реального harness (Claude Code / Codex) на машине коллег;
-- [ ] ручная проверка двух одновременно запущенных dev-профилей;
 - [ ] установщик на чистой Windows без Node.js.
 
 ### Сборка и упакованный смоук (сделано)
@@ -103,29 +94,17 @@ Phase 5 Integration / release
 
 Отдельно: оболочки на базе Electron (например, агентский harness) могут экспортировать `ELECTRON_RUN_AS_NODE=1`; тогда `Nest.exe` стартует как Node и отвергает `--remote-debugging-port`. e2e-спеки удаляют эту переменную из окружения дочернего процесса.
 
-### Fork point
+### Базовая точка foundation-v0.1
 
-После Phase 1:
+После проверки текущего состояния ставим локальный тег:
 
 ```bash
 git tag foundation-v0.1
-
-git worktree add ../nest-core     -b feat/core     main
-git worktree add ../nest-sessions -b feat/sessions main
-git worktree add ../nest-ui       -b feat/ui       main
-git worktree add ../nest-review   -b feat/review   main
-git worktree add ../nest-platform -b chore/platform main
 ```
 
-| Workstream | Основной результат |
-|---|---|
-| Core / Git | projects, main checkout, worktree lifecycle, git, comments backend |
-| Sessions / Harness | PTY, harness-профили, статусы, scrollback, FakeHarness |
-| UI Shell | layout, sidebar, New task, настройки, command palette |
-| Review / Diff | Git-панель, diff viewer, inline-комментарии, send to session |
-| Platform | CI, NSIS/dmg, auto-update, dev-профили |
+Это просто зафиксированная базовая точка: к ней можно откатиться и с ней сравнивать изменения. Fork point, dev worktree и отдельные ветки на workstreams не нужны — дальше работа идёт в `master` одним потоком.
 
-Phase 2–4 — это milestones, а не отдельные ветки. Их закрывают параллельные workstreams; один workstream может трогать несколько фаз. Правила merge, contract changes, миграции и изоляция профилей — в [parallel-dev.md](parallel-dev.md).
+Порядок фаз после тега: Phase 2 → Phase 3 → Phase 4 → Phase 5, каждая до рабочего состояния.
 
 ### Точный resume по session id (сделано)
 
@@ -153,7 +132,7 @@ Discovery по harness:
 
 Проверка: 9 unit-тестов на выбор id по cwd/mtime, core-интеграция и e2e на `FakeHarness`, ручной smoke OpenCode (id захвачен, после рестарта продолжена та же беседа). Codex smoke отложен до после MVP.
 
-### Phase 2 — задачи и worktrees (parallel, 1 неделя)
+### Phase 2 — задачи и worktrees (1 неделя)
 
 Частично сделано в foundation: `worktree add/remove`, main checkout, New task.
 
@@ -168,7 +147,7 @@ Discovery по harness:
 
 **Exit criteria:** задача создаётся за < 10 секунд на среднем репо, main checkout открывается мгновенно, ошибки показываются с retry.
 
-### Phase 3 — сессии и терминал (parallel, 1 неделя)
+### Phase 3 — сессии и терминал (1 неделя)
 
 Сделано в foundation: профили, start/stop/resume, табы, resize, scrollback, статусы, завершение PTY.
 
@@ -184,7 +163,7 @@ Discovery по harness:
 
 **Exit criteria:** 5 параллельных сессий, переключение между ними < 100 мс, память < 500 МБ, после рестарта scrollback на месте, процессы не висят.
 
-### Phase 4 — git, diff и комментарии (parallel, 1–2 недели)
+### Phase 4 — git, diff и комментарии (1–2 недели)
 
 Сделано в foundation: status/diff/stage/commit/push, inline-комментарии, отправка в сессию, Sessions-панель.
 
@@ -216,15 +195,16 @@ Discovery по harness:
 
 **Exit criteria:** установщик на чистой Windows-машине, первый запуск без Node.js, обновление работает; main checkout и хотя бы 2 harness проходят smoke-тест.
 
-Оценка по команде:
+Оценка для одного потока: foundation уже собран, осталось три-четыре недели последовательной работы.
 
-| Команда | Календарь | Как распределять |
-|---|---|---|
-| 3 разработчика | **5–6 недель** | 1 неделя foundation, 3 недели parallel, 1–2 недели integration |
-| 2 разработчика | **5–6 недель** | Core+Sessions и UI+Review; Platform по очереди |
-| 1 разработчик | **6–7 недель** | 1–2 dev worktree на независимые задачи, без иллюзии полного параллелизма |
+| Фаза | Оценка |
+|---|---|
+| Phase 2 — задачи и worktrees | ~1 неделя |
+| Phase 3 — сессии и терминал | ~1 неделя |
+| Phase 4 — git, diff, комментарии | ~1–2 недели |
+| Phase 5 — полировка и поставка | ~1–2 недели |
 
-Фазы 2–4 не обязаны идти строго последовательно: после fork point они превращаются в параллельные workstreams. Критический путь — Core / Git и Sessions / Harness.
+Параллелить фазы больше не планируем: экономия от двух одновременных веток меньше стоимости конфликтов в контрактах и схеме БД. Внутри фазы можно резать шаги на небольшие коммиты, но работа идёт в `master`.
 
 ## 3. Приоритеты после MVP
 

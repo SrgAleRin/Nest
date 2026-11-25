@@ -30,10 +30,10 @@ pnpm install
 pnpm dev
 ```
 
-Изолированный профиль для параллельного dev worktree:
+Изолированный профиль (отдельные `userData`, БД, worktree-root и single-instance lock) — удобно для чистой БД и экспериментов:
 
 ```powershell
-$env:NEST_PROFILE="core"; pnpm dev
+$env:NEST_PROFILE="scratch"; pnpm dev
 ```
 
 Профиль переключает `userData`, `nest.db`, worktree-root и single-instance lock.
@@ -96,17 +96,12 @@ docs                продукт, архитектура, roadmap, макет�
 
 ![Архитектура](docs/mockups/architecture.png)
 
-### Параллельная разработка
-
-![План параллельной разработки](docs/mockups/parallel-plan.png)
-
 ## Документы
 
 - [Продукт: идея, модель, сценарии, требования](docs/product.md)
 - [Архитектура: стек, процессы, PTY, git, БД, безопасность](docs/architecture.md)
 - [Harness compatibility: Claude, Codex, DSH, OpenCode, pi, Copilot](docs/harness-compat.md)
 - [Roadmap: MVP, фазы, риски, открытые вопросы](docs/roadmap.md)
-- [Параллельная разработка через dev worktrees](docs/parallel-dev.md)
 
 ## Коротко о стеке
 
@@ -129,11 +124,11 @@ Tauri 2 не входит в MVP, но оставлен как future experiment
 
 ## Следующий шаг
 
-Foundation собран; точный resume по session id, fallback на последнюю беседу и авто-возобновление работают. NSIS-установщик собирается, упакованная и установленная сборка проходят локальный смоук. Дальше по порядку:
+Foundation собран; точный resume по session id, fallback на последнюю беседу и авто-возобновление работают. NSIS-установщик собирается, упакованная и установленная сборка проходят локальный смоук. Разработка идёт одним потоком, без dev worktree и параллельных веток. Дальше по порядку:
 
-1. Проверить два одновременных dev-профиля.
-2. Поставить локальный тег `foundation-v0.1` и перейти к fork point. CI отложен: удалённого репозитория пока нет.
-3. Прогнать установщик на чистой Windows без Node.js.
+1. Поставить локальный тег `foundation-v0.1` как базовую точку.
+2. Phase 2: `git fetch`, setup script и копирование `.env`, проверка dirty перед удалением, выбор `New worktree` / `Main checkout` в модалке.
+3. Прогнать установщик на чистой Windows без Node.js, когда будет машина.
 4. Smoke **Codex** в самом Nest — после MVP, по договорённости. OpenCode уже проверен: id захватывается, после рестарта продолжается та же беседа.
 
-Подробный план и таблица discovery — в [roadmap](docs/roadmap.md#точный-resume-по-session-id-сделано). После тега — параллельные workstreams из [parallel-dev.md](docs/parallel-dev.md).
+Подробный план и таблица discovery — в [roadmap](docs/roadmap.md#точный-resume-по-session-id-сделано).
