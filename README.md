@@ -2,7 +2,7 @@
 
 Лёгкий desktop-воркспейс для параллельной работы с CLI-агентами. Аналог Orca по сути, но без ботов, браузера, плагинов и нативного чата.
 
-**Статус:** foundation v0.1 собран. Работают: три колонки, проекты и main checkout, worktree-задачи, PTY + xterm, SQLite, git/diff/комментарии, resume завершённой сессии в той же вкладке, `FakeHarness` и e2e. Реальные harness-профили ждут smoke-теста на машинах коллег.
+**Статус:** foundation v0.1 собран. Работают: три колонки, проекты и main checkout, worktree-задачи, PTY + xterm, SQLite, git/diff/комментарии, resume завершённой сессии в той же вкладке с точным `harness_session_id`, `FakeHarness` и e2e. OpenCode проверен вручную, Codex/Claude smoke — после MVP.
 
 ```
 Project (git repo)
@@ -19,7 +19,7 @@ Project (git repo)
 - **в центре** — настоящий терминал с harness CLI;
 - **справа** — git, diff с комментариями и сессии.
 
-Windows-first. В MVP нет фонового daemon: при закрытии приложения PTY-процессы завершаются, а задачи и scrollback сохраняются. Сессии, которые были живы, при следующем запуске **автоматически продолжаются в тех же вкладках** — Nest перезапускает harness с `--continue`/`resume --last`. `NEST_AUTO_RESUME=0` отключает автозапуск; для остальных завершённых сессий есть кнопка **Resume**.
+Windows-first. В MVP нет фонового daemon: при закрытии приложения PTY-процессы завершаются, а задачи и scrollback сохраняются. Сессии, которые были живы, при следующем запуске **автоматически продолжаются в тех же вкладках** — Nest запускает harness по сохранённому `harness_session_id`, а если id ещё не найден, через `--continue` / `resume --last`. `NEST_AUTO_RESUME=0` отключает автозапуск; для остальных завершённых сессий есть кнопка **Resume**.
 
 ## Быстрый старт
 
@@ -124,12 +124,11 @@ Tauri 2 не входит в MVP, но оставлен как future experiment
 
 ## Следующий шаг
 
-Foundation собран; resume последней беседы и авто-возобновление уже работают. Дальше по порядку:
+Foundation собран; точный resume по session id, fallback на последнюю беседу и авто-возобновление работают. Дальше по порядку:
 
-1. **Точный resume по сохранённому `harness_session_id`** — миграция, discovery-адаптеры Claude/Codex/OpenCode/pi/Copilot, fallback на `--continue`, бейдж режима в UI.
-2. Smoke **Codex и OpenCode** в самом Nest; Claude — на машине коллег.
-3. Собрать NSIS-установщик и проверить на чистой Windows.
-4. Прогнать CI на удалённом репозитории, проверить два одновременных dev-профиля.
-5. Поставить тег `foundation-v0.1` и перейти к fork point.
+1. Smoke **Codex** в самом Nest — после MVP, по договорённости. OpenCode уже проверен: id захватывается, после рестарта продолжается та же беседа.
+2. Собрать NSIS-установщик и проверить на чистой Windows.
+3. Проверить два одновременных dev-профиля.
+4. Поставить локальный тег `foundation-v0.1` и перейти к fork point. CI отложен: удалённого репозитория пока нет.
 
-Подробный план и таблица discovery — в [roadmap](docs/roadmap.md#точный-resume-по-session-id-следующий-шаг). После тега — параллельные workstreams из [parallel-dev.md](docs/parallel-dev.md).
+Подробный план и таблица discovery — в [roadmap](docs/roadmap.md#точный-resume-по-session-id-сделано). После тега — параллельные workstreams из [parallel-dev.md](docs/parallel-dev.md).

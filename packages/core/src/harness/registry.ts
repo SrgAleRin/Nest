@@ -127,6 +127,43 @@ export class HarnessRegistry {
     return profile;
   }
 
+  /**
+   * Args that continue one specific conversation, when the CLI supports it.
+   * Returns null when only the "latest conversation" fallback is available.
+   */
+  exactResumeArgs(harnessId: string, sessionId: string): string[] | null {
+    switch (harnessId) {
+      case 'claude':
+        return ['--resume', sessionId];
+      case 'codex':
+        return ['resume', sessionId];
+      case 'opencode':
+        return ['--session', sessionId];
+      case 'pi':
+        return ['--session-id', sessionId];
+      case 'copilot':
+        return ['--resume', sessionId];
+      case 'fake':
+        return ['--session-id', sessionId];
+      default:
+        return null;
+    }
+  }
+
+  supportsDiscovery(harnessId: string): boolean {
+    switch (harnessId) {
+      case 'claude':
+      case 'codex':
+      case 'opencode':
+      case 'pi':
+      case 'copilot':
+      case 'fake':
+        return true;
+      default:
+        return false;
+    }
+  }
+
   private isAvailable(definition: Definition): boolean {
     if (!definition.command) return false;
     if (definition.id === 'fake') {

@@ -24,6 +24,13 @@ describe('baseline migration', () => {
       ]),
     );
 
+    const sessionColumns = (
+      db.prepare('PRAGMA table_info(sessions)').all() as Array<{ name: string }>
+    ).map((row) => row.name);
+    expect(sessionColumns).toEqual(
+      expect.arrayContaining(['harness_session_id', 'resume_mode', 'resume_on_start']),
+    );
+
     const applied = db.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get() as {
       count: number | bigint;
     };

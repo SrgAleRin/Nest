@@ -142,6 +142,12 @@ function StartScreen({
   );
 }
 
+function resumeLabel(session: Session): string {
+  return session.resumeMode === 'exact' && session.harnessSessionId
+    ? 'Resume exact'
+    : 'Resume latest';
+}
+
 function TerminalView({
   client,
   session,
@@ -306,8 +312,20 @@ function TerminalView({
             {session.exitCode === null ? '' : ` · exit ${session.exitCode}`}
           </span>
           {canResume ? (
+            <span
+              className={`resume-mode ${session.harnessSessionId ? 'exact' : 'latest'}`}
+              title={
+                session.harnessSessionId
+                  ? `continues ${session.harnessSessionId}`
+                  : 'continues the latest conversation in this workspace'
+              }
+            >
+              {session.harnessSessionId ? 'exact' : 'latest'}
+            </span>
+          ) : null}
+          {canResume ? (
             <button className="mini-btn primary" onClick={() => onResume(session)}>
-              Resume
+              {resumeLabel(session)}
             </button>
           ) : null}
           <button className="mini-btn" onClick={() => onNewSession(session)}>

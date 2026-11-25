@@ -22,14 +22,14 @@ MVP считается готовым, если можно:
 
 | # | Шаг | Зачем |
 |---|---|---|
-| 1 | **Точный resume по `harness_session_id`** | Resume должен продолжать именно эту беседу, а не последнюю в workspace |
-| 2 | Smoke реальных harness: Codex, OpenCode | Проверить TUI, ввод, resize, exit и resume на живых CLI |
+| 1 | ~~Точный resume по `harness_session_id`~~ — сделано | Resume продолжает именно эту беседу, а не последнюю в workspace |
+| 2 | Smoke OpenCode (сделан) и Codex (после MVP) | Проверить TUI, ввод, resize, exit и resume на живых CLI |
 | 3 | Установщик NSIS + запуск на чистой Windows | Проверить `node-pty` prebuilds, `node:sqlite`, asar, первый запуск |
-| 4 | CI на удалённом репозитории + два dev-профиля | Закрыть exit criteria foundation |
-| 5 | Тег `foundation-v0.1` и fork point | Разрешить параллельные workstreams |
+| 4 | Два dev-профиля одновременно | Изоляция `NEST_PROFILE`; CI отложен вместе с remote |
+| 5 | Локальный тег `foundation-v0.1` и fork point | Разрешить параллельные workstreams |
 | 6 | P1-полировка (уведомления, palette, настройки, range-комментарии) | «Удобно каждый день» |
 
-Точный resume — единственный пункт, который меняет контракты и схему БД, поэтому он идёт первым, до fork point.
+Точный resume изменил контракты и схему БД, поэтому он сделан до fork point. CI не блокирует foundation: удалённого репозитория пока нет.
 
 ## 2. План разработки
 
@@ -79,7 +79,7 @@ Phase 5 Integration / release
 - [x] PTY + xterm, scrollback в SQLite, восстановление `exited` после рестарта;
 - [x] Resume завершённой сессии в той же вкладке (`--continue` / `resume --last`);
 - [x] Авто-возобновление сессий, живых при закрытии/краше (`resume_on_start`);
-- [ ] Точный resume по сохранённому `harness_session_id`;
+- [x] Точный resume по сохранённому `harness_session_id` (OpenCode проверен вручную);
 - [x] git status/diff/stage/commit/push, inline-комментарии, отправка в сессию;
 - [x] `MockRpcClient` и `FakeHarness`;
 - [x] `NEST_PROFILE` изолирует userData, БД, worktree-root;
@@ -114,31 +114,31 @@ git worktree add ../nest-platform -b chore/platform main
 
 Phase 2–4 — это milestones, а не отдельные ветки. Их закрывают параллельные workstreams; один workstream может трогать несколько фаз. Правила merge, contract changes, миграции и изоляция профилей — в [parallel-dev.md](parallel-dev.md).
 
-### Точный resume по session id (следующий шаг)
+### Точный resume по session id (сделано)
 
-`--continue` продолжает последнюю беседу harness в рабочей директории. Если в задаче несколько сессий одного CLI, этого мало. Нужно хранить id беседы и продолжать именно её.
+`--continue` продолжает последнюю беседу harness в рабочей директории. Если в задаче несколько сессий одного CLI, этого мало. Теперь Nest хранит id беседы и продолжает именно её.
 
-План:
+Реализовано:
 
-1. Миграция: `sessions.harness_session_id TEXT`, `sessions.resume_mode TEXT` (`exact` / `latest`).
-2. После старта сессии — discovery-адаптер harness с таймаутом ~3 с: найти id, созданный после `created_at`, для текущего `cwd`.
-3. Resume: если id известен — запускать по id; иначе fallback на `--continue` / `resume --last`.
-4. В UI показывать, какой режим будет использован: `Resume exact` или `Resume latest`.
-5. Если exact resume падает — не терять сессию, предложить `Resume latest` / `New session`.
+1. Миграция 3: `sessions.harness_session_id TEXT`, `sessions.resume_mode TEXT NOT NULL DEFAULT 'latest'` (`exact` / `latest`).
+2. После старта сессии discovery-адаптер ищет id, созданный после `created_at`, для текущего `cwd`. Первый запуск сразу, дальше повторы с backoff до ~18 с; ввод в терминал перезапускает поиск, потому что многие CLI создают беседу только после первого промпта.
+3. Resume: если id известен — запускается exact-команда; иначе fallback на `--continue` / `resume --last`. После latest-resume поиск повторяется и может повысить сессию до `exact`.
+4. UI показывает режим: `Resume exact` / `Resume latest`, бейдж `exact`/`latest` и короткий id в панели Sessions.
+5. Если exact-resume падает в первые 20 с, id сбрасывается, сессия остаётся и предлагает `Resume latest`; ничего не теряется.
 
 Discovery по harness:
 
 | Harness | Где искать id | Resume exact |
 |---|---|---|
-| Claude Code | `~/.claude/projects/<escaped-cwd>/*.jsonl`, новейший файл | `claude --resume <id>` |
+| Claude Code | `~/.claude/projects/<escaped-cwd>/*.jsonl`, `sessionId`/`cwd` в первых строках | `claude --resume <id>` |
 | Codex | `~/.codex/sessions/.../rollout-*.jsonl`, `session_meta.payload.id` | `codex resume <id>` |
 | OpenCode | `opencode session list --format json` в cwd | `opencode --session <id>` |
-| pi | `~/.pi/agent/sessions/<cwd-key>/*.jsonl` | `pi --session <id>` |
+| pi | `~/.pi/agent/sessions/**/*.jsonl`, первая строка `{type:"session", id, cwd}` | `pi --session-id <id>` |
 | Copilot | `~/.copilot/session-state/<uuid>/workspace.yaml` | `copilot --resume <id>` |
-| DSH | пока неизвестно | `dsh tui --resume <id>` (best effort) |
-| Fake | id не нужен | тест через подмену адаптера |
+| DSH | пока неизвестно | latest / best effort |
+| Fake | `NEST_FAKE_SESSION_DIR/*.json` | тестовый полигон |
 
-Проверка: unit-тест на выбор id по mtime/cwd, e2e на `FakeHarness`, ручной smoke на OpenCode и Codex.
+Проверка: 9 unit-тестов на выбор id по cwd/mtime, core-интеграция и e2e на `FakeHarness`, ручной smoke OpenCode (id захвачен, после рестарта продолжена та же беседа). Codex smoke отложен до после MVP.
 
 ### Phase 2 — задачи и worktrees (parallel, 1 неделя)
 
@@ -263,7 +263,7 @@ Discovery по harness:
 ## 5. Открытые вопросы
 
 1. **Проверка Claude Code.** Кто из коллег и на какой версии CLI делает первый реальный smoke-тест после MVP? План: `FakeHarness` в e2e сейчас, реальный запуск — после MVP, фиксация версии в `harness-compat.md`.
-2. **Точные команды/версии.** Подтверждены launch/resume-флаги OpenCode (`--continue`, `--session`), Codex (`resume --last`, `resume <id>`), pi (`--continue`, `--session`), Copilot (`--continue`, `--resume`). Осталось: discovery session id для каждого CLI, `dsh` resume и hooks.
+2. **Точные команды/версии.** Подтверждены launch/resume-флаги OpenCode (`--continue`, `--session`), Codex (`resume --last`, `resume <id>`), pi (`--continue`, `--session-id`), Copilot (`--continue`, `--resume`). Discovery session id реализован для всех, кроме `dsh`; осталось: `dsh` resume, hooks и smoke Codex после MVP.
 3. **Main checkout.** Разрешать несколько сессий одновременно? Рекомендация: да, но с предупреждением; worktree — для рискованных задач.
 4. **Комментарии к diff.** Как отправлять многострочный текст в конкретный CLI: bracketed paste, построчная отправка или clipboard fallback? Проверить на Claude/Codex/DSH.
 5. **Anchor комментариев.** Что делать, если строка уехала после нового diff: показывать предупреждение или пытаться re-anchor? В MVP — предупреждение, re-anchor в P1.

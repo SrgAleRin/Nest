@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import type { NestEvent } from '@nest/shared';
 import { migrate, openDatabase, type Db } from './db/database.js';
+import { HarnessDiscovery } from './harness/discovery.js';
 import { HarnessRegistry } from './harness/registry.js';
 import { CommentsService } from './services/comments.js';
 import { GitService } from './services/git.js';
@@ -48,7 +49,8 @@ export function createCore(options: CoreOptions): Core {
   const projects = new ProjectService(db);
   const tasks = new TaskService(db, projects, options.worktreesRoot);
   const git = new GitService(db, tasks, emit);
-  const sessions = new SessionService(db, tasks, harnesses, emit);
+  const discovery = new HarnessDiscovery();
+  const sessions = new SessionService(db, tasks, harnesses, discovery, emit);
   sessions.recoverStale();
   sessions.resumePending();
   const comments = new CommentsService(db, tasks, sessions);

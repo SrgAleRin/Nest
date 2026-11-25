@@ -50,6 +50,17 @@ export function SessionsPanel({
               <span>{session.cwd}</span>
               <span>updated {relativeTime(session.updatedAt)}</span>
               {session.exitCode !== null ? <span>exit {session.exitCode}</span> : null}
+              {!live ? (
+                <span
+                  className={`resume-mode ${session.harnessSessionId ? 'exact' : 'latest'}`}
+                  title={session.harnessSessionId ?? undefined}
+                >
+                  resume {session.harnessSessionId ? 'exact' : 'latest'}
+                </span>
+              ) : null}
+              {!live && session.harnessSessionId ? (
+                <span className="session-harness-id">{session.harnessSessionId.slice(0, 8)}</span>
+              ) : null}
             </div>
             <div className="session-card-actions">
               <button className="mini-btn" onClick={() => onSelect(session.id)}>
@@ -64,7 +75,9 @@ export function SessionsPanel({
                 <>
                   {resumableHarnesses.has(session.harnessId) ? (
                     <button className="mini-btn primary" onClick={() => onResume(session)}>
-                      Resume
+                      {session.resumeMode === 'exact' && session.harnessSessionId
+                        ? 'Resume exact'
+                        : 'Resume latest'}
                     </button>
                   ) : null}
                   <button className="mini-btn" onClick={() => onNewSession(session)}>

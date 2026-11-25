@@ -30,6 +30,7 @@ function launchApp(): Promise<ElectronApplication> {
       NEST_USER_DATA: path.join(tempRoot, 'user-data'),
       NEST_DB_PATH: path.join(tempRoot, 'nest.db'),
       NEST_WORKTREES_ROOT: path.join(tempRoot, 'worktrees'),
+      NEST_FAKE_SESSION_DIR: path.join(tempRoot, 'fake-sessions'),
       NEST_DISABLE_SINGLE_INSTANCE: '1',
     },
   });
@@ -95,6 +96,30 @@ test('runs the fake harness, persists scrollback and recovers after restart', as
   expect(before).toHaveLength(1);
   expect(before[0]?.status === 'running' || before[0]?.status === 'idle').toBe(true);
 
+  // The fake harness writes its conversation id on disk, so discovery should
+  // upgrade the session from the "latest conversation" fallback to exact resume.
+  await expect
+    .poll(
+      async () => {
+        const list = await page.evaluate(async () => {
+          const result = await window.nest!.invoke('sessions.list', {});
+          if (!result.ok) throw new Error(result.error.message);
+          return result.data;
+        });
+        const session = list[0];
+        return session?.resumeMode === 'exact' ? (session.harnessSessionId ?? null) : null;
+      },
+      { timeout: 30_000 },
+    )
+    .not.toBeNull();
+
+  const harnessSessionId = await page.evaluate(async () => {
+    const list = await window.nest!.invoke('sessions.list', {});
+    if (!list.ok) throw new Error(list.error.message);
+    return list.data[0]?.harnessSessionId ?? '';
+  });
+  expect(harnessSessionId).not.toBe('');
+
   await app.close();
 
   app = await launchApp();
@@ -109,6 +134,8 @@ test('runs the fake harness, persists scrollback and recovers after restart', as
   });
   expect(after).toHaveLength(1);
   expect(['running', 'idle']).toContain(after[0]?.status ?? '');
+  expect(after[0]?.harnessSessionId).toBe(harnessSessionId);
+  expect(after[0]?.resumeMode).toBe('exact');
   await expect(page.locator('.terminal-tab')).toHaveCount(1);
 
   // Previous output is kept in scrollback above the resumed PTY's fresh screen.
@@ -123,6 +150,24 @@ test('runs the fake harness, persists scrollback and recovers after restart', as
   });
   expect(restored).toContain('hello-e2e');
   expect(restored).toContain('resume Fake harness');
+  expect(restored).toContain(`session ${harnessSessionId} (fresh)`);
+
+  // The resumed process must be launched with the stored id, not --continue.
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(async () => {
+          const list = await window.nest!.invoke('sessions.list', {});
+          if (!list.ok) throw new Error(list.error.message);
+          const scroll = await window.nest!.invoke('sessions.scrollback', {
+            sessionId: list.data[0]!.id,
+          });
+          if (!scroll.ok) throw new Error(scroll.error.message);
+          return scroll.data.data;
+        }),
+      { timeout: 30_000 },
+    )
+    .toContain(`session ${harnessSessionId} (exact)`);
 
   await page.locator('.terminal-view.active .xterm-helper-textarea').focus();
   await page.keyboard.type('echo after-reopen');
@@ -138,7 +183,7 @@ test('runs the fake harness, persists scrollback and recovers after restart', as
     await window.nest!.invoke('sessions.stop', { sessionId: list.data[0]!.id });
   });
   await expect(page.locator('.terminal-exit')).toContainText('exited', { timeout: 30_000 });
-  await page.getByRole('button', { name: 'Resume', exact: true }).click();
+  await page.getByRole('button', { name: 'Resume exact', exact: true }).click();
   await expect(page.locator('.terminal-tab')).toHaveCount(1);
 
   await page.locator('.terminal-view.active .xterm-helper-textarea').focus();

@@ -547,6 +547,31 @@ code,
   color: #ffc3cd;
 }
 
+.resume-mode {
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  color: var(--dim);
+  font: 9px var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.resume-mode.exact {
+  border-color: #2f5b46;
+  color: var(--green);
+}
+
+.resume-mode.latest {
+  border-color: #5a4b27;
+  color: var(--amber);
+}
+
+.session-harness-id {
+  color: var(--dim);
+  opacity: 0.75;
+}
+
 .start-screen {
   height: 100%;
   display: flex;

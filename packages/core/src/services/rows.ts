@@ -3,6 +3,7 @@ import type {
   CommentStatus,
   HarnessId,
   Project,
+  ResumeMode,
   ReviewComment,
   Session,
   SessionStatus,
@@ -41,6 +42,8 @@ export interface SessionRow {
   exit_code: number | null;
   scrollback: string;
   resume_on_start: number;
+  harness_session_id: string | null;
+  resume_mode: ResumeMode;
   created_at: string;
   updated_at: string;
 }
@@ -90,6 +93,8 @@ export function toSession(row: SessionRow): Session {
     status: row.status,
     cwd: row.cwd,
     exitCode: row.exit_code === null ? null : Number(row.exit_code),
+    harnessSessionId: row.harness_session_id,
+    resumeMode: row.resume_mode,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

@@ -12,7 +12,10 @@ const fakeHarnessScript = fileURLToPath(
 
 const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'nest-core-'));
 const repoPath = path.join(tempRoot, 'repo');
+const fakeSessionDir = path.join(tempRoot, 'fake-sessions');
 let core: Core | null = null;
+
+process.env.NEST_FAKE_SESSION_DIR = fakeSessionDir;
 
 function git(args: string[], cwd: string): void {
   execFileSync('git', args, { cwd, stdio: 'ignore', windowsHide: true });
@@ -94,6 +97,11 @@ describe('core vertical slice', () => {
     });
 
     await waitFor(() => core!.sessions.scrollback(session.id).includes('FakeHarness'));
+    await waitFor(() => core!.sessions.get(session.id).harnessSessionId !== null);
+    const started = core.sessions.get(session.id);
+    expect(started.resumeMode).toBe('exact');
+    expect(started.harnessSessionId).not.toBeNull();
+
     core.sessions.write(session.id, 'echo hello-core\r');
     await waitFor(() => core!.sessions.scrollback(session.id).includes('hello-core'));
 
@@ -115,9 +123,15 @@ describe('core vertical slice', () => {
     const resumed = await core.sessions.resume(previous.id);
     expect(resumed.id).toBe(previous.id);
     expect(resumed.title).toBe(previous.title);
+    expect(resumed.resumeMode).toBe('exact');
 
     await waitFor(() => ['running', 'idle'].includes(core!.sessions.get(previous.id).status));
     await waitFor(() => core!.sessions.scrollback(previous.id).includes('resume Fake harness'));
+    await waitFor(() =>
+      core!.sessions
+        .scrollback(previous.id)
+        .includes(`session ${previous.harnessSessionId ?? ''} (exact)`),
+    );
 
     expect(core.sessions.list()).toHaveLength(sessions.length);
 

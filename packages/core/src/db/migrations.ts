@@ -75,4 +75,15 @@ export const migrations: Migration[] = [
         ADD COLUMN resume_on_start INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    id: 3,
+    name: 'session_harness_id',
+    sql: `
+      ALTER TABLE sessions
+        ADD COLUMN harness_session_id TEXT;
+
+      ALTER TABLE sessions
+        ADD COLUMN resume_mode TEXT NOT NULL DEFAULT 'latest';
+    `,
+  },
 ];

@@ -58,6 +58,9 @@ export type HarnessProfile = z.infer<typeof HarnessProfileSchema>;
 export const SessionStatusSchema = z.enum(['starting', 'running', 'idle', 'exited', 'failed']);
 export type SessionStatus = z.infer<typeof SessionStatusSchema>;
 
+export const ResumeModeSchema = z.enum(['exact', 'latest']);
+export type ResumeMode = z.infer<typeof ResumeModeSchema>;
+
 export const SessionSchema = z.object({
   id: z.string().min(1),
   taskId: z.string().min(1),
@@ -66,6 +69,8 @@ export const SessionSchema = z.object({
   status: SessionStatusSchema,
   cwd: z.string().min(1),
   exitCode: z.number().int().nullable(),
+  harnessSessionId: z.string().min(1).nullable(),
+  resumeMode: ResumeModeSchema,
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
 });

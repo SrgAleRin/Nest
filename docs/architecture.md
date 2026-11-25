@@ -383,10 +383,11 @@ pty.onData(chunk)
 
 - при закрытии приложения все PTY-процессы завершаются;
 - сессии, которые были живы в этот момент, помечаются `resume_on_start = 1`;
-- при следующем запуске они автоматически возобновляются в тех же вкладках через resume-команду harness (`--continue` / `resume --last`);
+- при следующем запуске они автоматически возобновляются в тех же вкладках: по сохранённому `harness_session_id` (exact), иначе через `--continue` / `resume --last` (latest);
+- id беседы определяется discovery-адаптером после старта: OpenCode — `session list --format json`, Codex/pi/Claude — свежие JSONL по `cwd`, Copilot — `workspace.yaml`; поиск повторяется после ввода;
 - в БД сессии, завершившиеся сами или остановленные пользователем, помечаются `exited`/`failed`;
 - snapshot/scrollback сохраняется, новый вывод дописывается после маркера `── resume <harness> ──`;
-- для остальных завершённых сессий доступна кнопка `Resume`;
+- для остальных завершённых сессий доступна кнопка `Resume exact` / `Resume latest`; неудачный exact-resume сбрасывает id и оставляет сессию для latest-повтора;
 - `NEST_AUTO_RESUME=0` отключает автозапуск.
 
 Это осознанное упрощение: PTY не переживает закрытие процесса, но разговор harness продолжается. Полное выживание PTY без перезапуска CLI — отдельный этап с `nestd`, после MVP.
@@ -558,12 +559,12 @@ export interface HarnessProfile {
 
 | id | command | resume | примечание |
 |---|---|---|---|
-| `claude` | `claude` | `claude --continue` | поддержка есть; у автора нет доступа для ручного теста |
-| `codex` | `codex` | `codex resume --last` | ручной тест |
-| `dsh` | `dsh` | `dsh tui --resume <session>` (нужен id) | ручной тест |
-| `opencode` | `opencode` | `opencode --continue` | ручной тест |
-| `pi` | `pi` | `pi --continue` | базовый PTY-профиль |
-| `copilot` | `copilot` | `copilot --continue` | GitHub Copilot CLI |
+| `claude` | `claude` | `claude --resume <id>` / `--continue` | discovery best effort; ручного теста нет |
+| `codex` | `codex` | `codex resume <id>` / `resume --last` | smoke после MVP |
+| `dsh` | `dsh` | `dsh tui --resume <session>` (нужен id) | discovery неизвестен |
+| `opencode` | `opencode` | `opencode --session <id>` / `--continue` | exact resume проверен вручную |
+| `pi` | `pi` | `pi --session-id <id>` / `--continue` | базовый PTY-профиль |
+| `copilot` | `copilot` | `copilot --resume <id>` / `--continue` | GitHub Copilot CLI |
 | `shell` | `$SHELL` / `pwsh` | — | blank terminal |
 
 Claude Code не требует отдельной API-интеграции: базовый запуск — обычный PTY. Всё, что зависит от версии CLI (resume, hooks, точный `needs_input`), делаем best-effort и проверяем на сообществе. Если `claude` не установлен, профиль просто помечается `not found`; приложение не падает.
@@ -664,6 +665,7 @@ CREATE TABLE sessions (
   exit_code          INTEGER,
   scrollback_path    TEXT,
   harness_session_id TEXT,
+  resume_mode        TEXT NOT NULL DEFAULT 'latest',
   last_activity_at   INTEGER
 );
 
@@ -702,7 +704,7 @@ CREATE TABLE settings (
 - комментарии к diff восстанавливаются из SQLite и заново привязываются к file/line;
 - сессии со статусом `running`/`idle` помечаем `exited` — в MVP PTY не переживает закрытие приложения;
 - scrollback восстанавливаем из snapshot/log;
-- `harness_session_id` позволяет предложить `Resume`.
+- `harness_session_id` и `resume_mode` позволяют продолжить именно эту беседу; без id остаётся latest-fallback.
 
 ## 10. Структура репозитория
 

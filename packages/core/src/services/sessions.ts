@@ -3,6 +3,7 @@ import type { IPty } from 'node-pty';
 import {
   newId,
   nowIso,
+  type HarnessId,
   type HarnessProfile,
   type NestEvent,
   type Session,
@@ -10,12 +11,26 @@ import {
 } from '@nest/shared';
 import type { Db } from '../db/database.js';
 import { NestError } from '../errors.js';
+import { HarnessDiscovery } from '../harness/discovery.js';
 import { HarnessRegistry } from '../harness/registry.js';
 import { toSession, type SessionRow } from './rows.js';
 import type { TaskService } from './tasks.js';
 
 const MAX_SCROLLBACK = 4 * 1024 * 1024;
 const IDLE_AFTER_MS = 2000;
+const DISCOVERY_DELAYS = [1000, 2500, 5000, 10_000];
+const DISCOVERY_NUDGE_MS = 1500;
+const EXACT_RESUME_GRACE_MS = 20_000;
+
+interface DiscoveryState {
+  harnessId: HarnessId;
+  cwd: string;
+  since: Date;
+  includeUpdated: boolean;
+  attempts: number;
+  timer: NodeJS.Timeout | null;
+  running: boolean;
+}
 
 interface Runtime {
   pty: IPty;
@@ -24,6 +39,10 @@ interface Runtime {
   status: SessionStatus;
   stopping: boolean;
   idleTimer: NodeJS.Timeout | null;
+  harnessSessionId: string | null;
+  discovery: DiscoveryState | null;
+  exactResume: boolean;
+  startedAt: number;
 }
 
 export interface StartSessionInput {
@@ -40,6 +59,7 @@ export class SessionService {
     private readonly db: Db,
     private readonly tasks: TaskService,
     private readonly harnesses: HarnessRegistry,
+    private readonly discovery: HarnessDiscovery,
     private readonly emit: (event: NestEvent) => void,
   ) {}
 
@@ -103,6 +123,9 @@ export class SessionService {
       initialBuffer: '',
       cols: input.cols,
       rows: input.rows,
+      discovery: { since: new Date(timestamp), includeUpdated: false },
+      exactResume: false,
+      harnessSessionId: null,
     });
 
     return this.get(id);
@@ -120,7 +143,23 @@ export class SessionService {
     }
 
     const harness = this.harnesses.get(session.harnessId);
-    if (harness.resumeArgs.length === 0) {
+    const exactArgs = session.harnessSessionId
+      ? this.harnesses.exactResumeArgs(session.harnessId, session.harnessSessionId)
+      : null;
+
+    let extraArgs: string[];
+    let discovery: { since: Date; includeUpdated: boolean } | undefined;
+    let exactResume = false;
+
+    if (exactArgs && exactArgs.length > 0) {
+      extraArgs = exactArgs;
+      exactResume = true;
+    } else if (harness.resumeArgs.length > 0) {
+      extraArgs = harness.resumeArgs;
+      // We just continued the newest conversation in this workspace. Give the
+      // CLI a chance to reveal which one it picked so the next resume is exact.
+      discovery = { since: new Date(), includeUpdated: true };
+    } else {
       throw new NestError(
         'resume_unsupported',
         `${harness.label} has no resume command configured yet. Start a new session instead.`,
@@ -144,8 +183,11 @@ export class SessionService {
       taskId: task.id,
       cwd: task.workspacePath,
       harness,
-      extraArgs: harness.resumeArgs,
+      extraArgs,
       initialBuffer,
+      discovery,
+      exactResume,
+      harnessSessionId: exactResume ? session.harnessSessionId : null,
     });
 
     return this.get(sessionId);
@@ -160,6 +202,9 @@ export class SessionService {
     initialBuffer: string;
     cols?: number;
     rows?: number;
+    discovery?: { since: Date; includeUpdated: boolean };
+    exactResume: boolean;
+    harnessSessionId: string | null;
   }): void {
     const env: Record<string, string> = {};
     for (const [key, value] of Object.entries(process.env)) {
@@ -198,6 +243,10 @@ export class SessionService {
       status: 'running',
       stopping: false,
       idleTimer: null,
+      harnessSessionId: input.harnessSessionId,
+      discovery: null,
+      exactResume: input.exactResume,
+      startedAt: Date.now(),
     };
     this.runtimes.set(sessionId, runtime);
 
@@ -223,6 +272,30 @@ export class SessionService {
       const active = this.runtimes.get(sessionId);
       if (!active) return;
       if (active.idleTimer) clearTimeout(active.idleTimer);
+      this.stopDiscovery(active);
+
+      const failed = !active.stopping && exitCode !== 0;
+      if (
+        failed &&
+        active.exactResume &&
+        active.harnessSessionId &&
+        Date.now() - active.startedAt < EXACT_RESUME_GRACE_MS
+      ) {
+        // The stored conversation could not be continued. Keep the session and
+        // let the user retry with the "latest conversation" fallback instead of
+        // leaving a stale id that fails every time.
+        this.db
+          .prepare(
+            "UPDATE sessions SET harness_session_id = NULL, resume_mode = 'latest' WHERE id = ?",
+          )
+          .run(sessionId);
+        this.emit({
+          type: 'notification',
+          level: 'warn',
+          message: `Exact resume failed for ${input.harness.label}. The next Resume will continue its latest conversation.`,
+        });
+      }
+
       const status: SessionStatus = active.stopping || exitCode === 0 ? 'exited' : 'failed';
       this.persistScrollback(sessionId, active.buffer);
       this.runtimes.delete(sessionId);
@@ -230,15 +303,27 @@ export class SessionService {
     });
 
     this.setStatus(sessionId, 'running');
+
+    if (input.discovery) {
+      this.startDiscovery(
+        sessionId,
+        input.harness.id,
+        input.cwd,
+        input.discovery.since,
+        input.discovery.includeUpdated,
+      );
+    }
   }
 
   write(sessionId: string, data: string): void {
     this.runtime(sessionId).pty.write(data);
+    this.nudgeDiscovery(sessionId);
   }
 
   writeText(sessionId: string, text: string): void {
     const normalized = text.replace(/\r\n/g, '\n').replace(/\x1b\[201~/g, ''); // eslint-disable-line no-control-regex
     this.runtime(sessionId).pty.write(`\x1b[200~${normalized}\x1b[201~\r`);
+    this.nudgeDiscovery(sessionId);
   }
 
   resize(sessionId: string, cols: number, rows: number): void {
@@ -256,6 +341,7 @@ export class SessionService {
     const runtime = this.runtimes.get(sessionId);
     if (!runtime) return;
     runtime.stopping = true;
+    this.stopDiscovery(runtime);
     try {
       runtime.pty.kill();
     } catch {
@@ -267,6 +353,7 @@ export class SessionService {
     for (const runtime of this.runtimes.values()) {
       if (runtime.taskId === taskId) {
         runtime.stopping = true;
+        this.stopDiscovery(runtime);
         try {
           runtime.pty.kill();
         } catch {
@@ -316,6 +403,7 @@ export class SessionService {
   shutdownAll(): void {
     for (const [id, runtime] of this.runtimes) {
       if (runtime.idleTimer) clearTimeout(runtime.idleTimer);
+      this.stopDiscovery(runtime);
       this.persistScrollback(id, runtime.buffer);
       this.db.prepare('UPDATE sessions SET resume_on_start = 1 WHERE id = ?').run(id);
       runtime.stopping = true;
@@ -326,6 +414,101 @@ export class SessionService {
       }
     }
     this.runtimes.clear();
+  }
+
+  private startDiscovery(
+    sessionId: string,
+    harnessId: HarnessId,
+    cwd: string,
+    since: Date,
+    includeUpdated: boolean,
+  ): void {
+    const runtime = this.runtimes.get(sessionId);
+    if (!runtime || runtime.harnessSessionId || runtime.discovery) return;
+    if (!this.harnesses.supportsDiscovery(harnessId)) return;
+
+    runtime.discovery = {
+      harnessId,
+      cwd,
+      since,
+      includeUpdated,
+      attempts: 0,
+      timer: null,
+      running: false,
+    };
+    this.runDiscovery(sessionId);
+  }
+
+  private runDiscovery(sessionId: string): void {
+    const runtime = this.runtimes.get(sessionId);
+    const state = runtime?.discovery;
+    if (!runtime || !state || state.running || runtime.harnessSessionId) return;
+
+    state.running = true;
+    void this.discovery
+      .find(state.harnessId, state.cwd, state.since, {
+        includeUpdated: state.includeUpdated,
+      })
+      .catch(() => null)
+      .then((harnessSessionId) => {
+        const current = this.runtimes.get(sessionId);
+        if (!current || current.discovery !== state) return;
+        state.running = false;
+
+        if (harnessSessionId) {
+          this.rememberHarnessSession(sessionId, harnessSessionId);
+          return;
+        }
+
+        const delay = DISCOVERY_DELAYS[state.attempts];
+        state.attempts += 1;
+        if (delay === undefined) return;
+
+        state.timer = setTimeout(() => {
+          state.timer = null;
+          this.runDiscovery(sessionId);
+        }, delay);
+        state.timer.unref();
+      });
+  }
+
+  /**
+   * Most harnesses create their conversation lazily, after the first prompt.
+   * Every keystroke re-arms a short lookup so the id is captured soon after
+   * the CLI writes it, even if the initial scheduled attempts are exhausted.
+   */
+  private nudgeDiscovery(sessionId: string): void {
+    const runtime = this.runtimes.get(sessionId);
+    const state = runtime?.discovery;
+    if (!runtime || !state || state.running || runtime.harnessSessionId) return;
+
+    if (state.timer) clearTimeout(state.timer);
+    state.timer = setTimeout(() => {
+      state.timer = null;
+      state.attempts = 0;
+      this.runDiscovery(sessionId);
+    }, DISCOVERY_NUDGE_MS);
+    state.timer.unref();
+  }
+
+  private rememberHarnessSession(sessionId: string, harnessSessionId: string): void {
+    const runtime = this.runtimes.get(sessionId);
+    if (!runtime) return;
+
+    this.stopDiscovery(runtime);
+    runtime.harnessSessionId = harnessSessionId;
+    this.db
+      .prepare(
+        "UPDATE sessions SET harness_session_id = ?, resume_mode = 'exact', updated_at = ? WHERE id = ?",
+      )
+      .run(harnessSessionId, nowIso(), sessionId);
+    this.emitSession(sessionId);
+  }
+
+  private stopDiscovery(runtime: Runtime): void {
+    if (!runtime.discovery) return;
+    if (runtime.discovery.timer) clearTimeout(runtime.discovery.timer);
+    runtime.discovery = null;
   }
 
   private runtime(sessionId: string): Runtime {
@@ -353,6 +536,10 @@ export class SessionService {
         .prepare('UPDATE sessions SET status = ?, exit_code = ?, updated_at = ? WHERE id = ?')
         .run(status, exitCode, updatedAt, sessionId);
     }
+    this.emitSession(sessionId);
+  }
+
+  private emitSession(sessionId: string): void {
     const row = this.db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId) as
       | SessionRow
       | undefined;
