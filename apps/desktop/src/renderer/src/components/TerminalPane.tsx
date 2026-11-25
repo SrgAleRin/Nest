@@ -29,6 +29,7 @@ interface TerminalPaneProps {
   task: Task | null;
   sessions: Session[];
   selectedSessionId: string | null;
+  unread: Record<string, number>;
   harnesses: HarnessProfile[];
   busy: boolean;
   onSelectSession: (sessionId: string) => void;
@@ -75,6 +76,11 @@ export function TerminalPane(props: TerminalPaneProps) {
             >
               <span className={`dot dot-${session.status}`} />
               <span className="terminal-tab-title">{session.title}</span>
+              {props.unread[session.id] ? (
+                <span className="unread-badge" title="Finished while you were away">
+                  {props.unread[session.id]}
+                </span>
+              ) : null}
               {session.status === 'failed' ? <span className="tab-exit">!</span> : null}
             </button>
           ))}
@@ -110,11 +116,7 @@ export function TerminalPane(props: TerminalPaneProps) {
         ) : null}
 
         {task && sessions.length === 0 ? (
-          <StartScreen
-            harnesses={props.harnesses}
-            busy={props.busy}
-            onStart={props.onStart}
-          />
+          <StartScreen harnesses={props.harnesses} busy={props.busy} onStart={props.onStart} />
         ) : null}
 
         {mountedSessions.map((session) => (
@@ -386,9 +388,7 @@ function TerminalView({
       const last = lastSizeRef.current;
       if (last?.cols === cols && last.rows === rows) return;
       lastSizeRef.current = { cols, rows };
-      void client
-        .invoke('sessions.resize', { sessionId: session.id, cols, rows })
-        .catch(() => {});
+      void client.invoke('sessions.resize', { sessionId: session.id, cols, rows }).catch(() => {});
     };
 
     const applyFit = () => {

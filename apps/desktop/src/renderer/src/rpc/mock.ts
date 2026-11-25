@@ -312,6 +312,10 @@ export function createMockClient(): NestClient {
         };
         return settings;
       }
+      case 'notifications.show':
+        return { shown: false };
+      case 'notifications.badge':
+        return undefined;
       case 'dialog.pickDirectory':
         return null;
       case 'projects.list':

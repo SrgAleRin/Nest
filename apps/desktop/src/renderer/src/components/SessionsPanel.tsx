@@ -6,6 +6,7 @@ import { relativeTime } from '../utils';
 interface SessionsPanelProps {
   sessions: Session[];
   selectedSessionId: string | null;
+  unread: Record<string, number>;
   resumableHarnesses: ReadonlySet<string>;
   onSelect: (sessionId: string) => void;
   onStop: (sessionId: string) => void;
@@ -16,6 +17,7 @@ interface SessionsPanelProps {
 export function SessionsPanel({
   sessions,
   selectedSessionId,
+  unread,
   resumableHarnesses,
   onSelect,
   onStop,
@@ -43,6 +45,11 @@ export function SessionsPanel({
               <span className={`dot dot-${session.status}`} />
               <TerminalIcon size={12} />
               <span className="session-card-title">{session.title}</span>
+              {unread[session.id] ? (
+                <span className="unread-badge" title="Finished while you were away">
+                  {unread[session.id]}
+                </span>
+              ) : null}
               <span className={`session-status status-${session.status}`}>{session.status}</span>
             </div>
             <div className="session-card-meta">

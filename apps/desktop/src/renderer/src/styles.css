@@ -391,6 +391,19 @@ code,
   flex: 0 0 auto;
 }
 
+.unread-badge {
+  flex: 0 0 auto;
+  min-width: 15px;
+  padding: 0 4px;
+  border: 1px solid rgba(122, 162, 247, 0.5);
+  border-radius: 999px;
+  background: rgba(122, 162, 247, 0.18);
+  color: #cfe0ff;
+  font: 9px var(--mono);
+  line-height: 14px;
+  text-align: center;
+}
+
 .task-remove {
   opacity: 0;
   margin-right: 2px;

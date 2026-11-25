@@ -134,7 +134,7 @@ Nest — это на 70% терминал и процессы, а не ренд�
 - wiring core-сервисов;
 - IPC-роутер;
 - `WorkspaceWatcher`: `@parcel/watcher` на каждый workspace и на общий git-каталог проекта, debounce и `git:changed`;
-- tray, notifications, deep links (позже);
+- tray и системные уведомления: клик по уведомлению показывает окно и открывает сессию; deep links — позже;
 - graceful shutdown: остановить PTY, закрыть watcher, checkpoint БД.
 
 ### `apps/desktop/src/preload`
@@ -265,6 +265,8 @@ export const rpcContract = {
 'harness.list':    { input: z.object({ includeDisabled: z.boolean().optional() }), output: z.array(HarnessProfileSchema) },
 'settings.get':    { input: z.void(), output: AppSettingsSchema },
 'settings.update': { input: AppSettingsSchema.partial(), output: AppSettingsSchema },
+'notifications.show':  { input: z.object({ title: z.string(), body: z.string(), sessionId: z.string().optional(), urgent: z.boolean().optional() }), output: z.object({ shown: z.boolean() }) },
+'notifications.badge': { input: z.object({ count: z.number().int() }), output: z.void() },
 ```
 
 
@@ -277,7 +279,8 @@ export type NestEvent =
   | { type: 'task:updated'; task: Task }
   | { type: 'task:progress'; taskId: string; step: string; message?: string }
   | { type: 'git:changed'; taskId: string }
-  | { type: 'notification'; level: 'info' | 'warn' | 'error'; title: string; body: string };
+  | { type: 'notification'; level: 'info' | 'warn' | 'error'; title: string; body: string }
+  | { type: 'notification:activated'; sessionId?: string };
 ```
 
 `git:changed` адресован конкретной задаче. Renderer хранит счётчик версии на `taskId` и перезапрашивает status/diff только для выбранной задачи, поэтому события из чужих worktree не дёргают открытые панели.
@@ -416,6 +419,20 @@ pty.onData(chunk)
 - ссылки в выводе — `@xterm/addon-web-links`, открываются по Ctrl/Cmd+клику через `app.openExternal`, который пропускает только `http:`, `https:` и `mailto:`;
 - clipboard: `Ctrl+Shift+C/V` на Linux/Windows, `Cmd+Shift+C/V` на macOS; `Ctrl+C` копирует только когда есть выделение, иначе уходит в PTY как SIGINT;
 - не интерпретировать вывод агента как HTML.
+
+### 6.8 Уведомления и непрочитанное
+
+Политика живёт в renderer: только он знает, открыта ли эта сессия и в фокусе ли окно. Main владеет системными уведомлениями и маршрутизацией клика.
+
+- сессия перешла из `starting`/`running`/`idle` в `exited`/`failed` → `notifications.show` вызывается, если окно не в фокусе (или скрыто в трей); `failed` помечается `urgent` и содержит exit code;
+- если завершилась не открытая сейчас сессия, растёт её unread-счётчик: бейдж на вкладке терминала, в строке сессии, у задачи (сумма) и в карточке Sessions;
+- unread снимается при выборе сессии, при возврате фокуса в окно или по клику на уведомление;
+- сумма unread уходит в `notifications.badge`: `app.setBadgeCount` для dock/taskbar и tooltip трея; на Windows счётчик на иконке не рисуется — остаётся бейдж в UI;
+- клик по уведомлению показывает окно, фокусирует его и отправляет `notification:activated`, renderer открывает соответствующую сессию;
+- `NEST_DISABLE_NOTIFICATIONS=1` отключает только системные тосты (e2e и тихий режим), unread-бейджи продолжают работать;
+- уведомления best-effort: `Notification.isSupported()` проверяется, ошибки не ломают сессию. `needs_input` не уведомляем — без hooks мы его не знаем.
+
+На Windows тосты требуют AppUserModelID; main выставляет `dev.nest.desktop` (совпадает с `appId` в `electron-builder.yml`).
 
 ## 7. Git и workspace
 

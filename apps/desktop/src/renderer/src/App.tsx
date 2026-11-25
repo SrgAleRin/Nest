@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AppInfo,
   AppSettings,
   HarnessProfile,
   Project,
   Session,
+  SessionStatus,
   Task,
   TaskProgressStep,
 } from '@nest/shared';
@@ -17,6 +18,7 @@ import { Sidebar } from './components/Sidebar';
 import { TerminalPane } from './components/TerminalPane';
 import { createClient } from './rpc/client';
 import { emitSessionData } from './state/terminalBus';
+import { sessionEndEffect, unreadTotal } from './notifications';
 import { errorMessage, shortPath, upsert } from './utils';
 
 interface Toast {
@@ -50,7 +52,17 @@ export function App() {
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [unread, setUnread] = useState<Record<string, number>>({});
+  const [activateSessionId, setActivateSessionId] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
+
+  // The status event handler runs outside the render cycle, so it reads the
+  // selected session, tasks and previous statuses from refs.
+  const selectedSessionIdRef = useRef<string | null>(null);
+  const tasksRef = useRef<Task[]>([]);
+  const sessionStatusRef = useRef<Map<string, SessionStatus>>(new Map());
+  selectedSessionIdRef.current = selectedSessionId;
+  tasksRef.current = tasks;
 
   const notify = useCallback((level: 'info' | 'warn' | 'error', message: string) => {
     setToast({ id: Date.now(), level, message });
@@ -83,6 +95,7 @@ export function App() {
       ),
     [harnesses],
   );
+  const unreadCount = useMemo(() => Math.min(999, unreadTotal(unread)), [unread]);
 
   const refreshAll = useCallback(async () => {
     try {
@@ -139,9 +152,38 @@ export function App() {
         case 'session:data':
           emitSessionData(event.sessionId, event.data);
           return;
-        case 'session:status':
-          setSessions((prev) => upsert(prev, event.session));
+        case 'session:status': {
+          const session = event.session;
+          const previous = sessionStatusRef.current.get(session.id);
+          sessionStatusRef.current.set(session.id, session.status);
+          setSessions((prev) => upsert(prev, session));
+
+          const ended = session.status === 'exited' || session.status === 'failed';
+          const wasLive = previous === 'starting' || previous === 'running' || previous === 'idle';
+          if (ended && wasLive) {
+            const effect = sessionEndEffect({
+              session,
+              task: tasksRef.current.find((task) => task.id === session.taskId) ?? null,
+              viewingSessionId: selectedSessionIdRef.current,
+              focused: document.hasFocus() && !document.hidden,
+            });
+            if (effect.markUnread) {
+              setUnread((prev) => ({
+                ...prev,
+                [session.id]: (prev[session.id] ?? 0) + 1,
+              }));
+            }
+            if (effect.notification) {
+              void client
+                .invoke('notifications.show', {
+                  ...effect.notification,
+                  sessionId: session.id,
+                })
+                .catch(() => {});
+            }
+          }
           return;
+        }
         case 'task:updated':
           setTasks((prev) => upsert(prev, event.task));
           return;
@@ -159,6 +201,9 @@ export function App() {
         case 'notification':
           notify(event.level, event.message);
           return;
+        case 'notification:activated':
+          if (event.sessionId) setActivateSessionId(event.sessionId);
+          return;
         default:
           return;
       }
@@ -175,6 +220,67 @@ export function App() {
       return live[live.length - 1]?.id ?? list[list.length - 1]?.id ?? null;
     });
   }, [selectedTaskId, sessions]);
+
+  // Keep the transition map in sync with sessions loaded from the database, so
+  // a session that was already running when the window opened still reports its
+  // exit once.
+  useEffect(() => {
+    const statuses = sessionStatusRef.current;
+    const known = new Set<string>();
+    for (const session of sessions) {
+      statuses.set(session.id, session.status);
+      known.add(session.id);
+    }
+    for (const id of statuses.keys()) {
+      if (!known.has(id)) statuses.delete(id);
+    }
+  }, [sessions]);
+
+  useEffect(() => {
+    if (!selectedSessionId) return;
+    setUnread((prev) => {
+      if (!prev[selectedSessionId]) return prev;
+      const next = { ...prev };
+      delete next[selectedSessionId];
+      return next;
+    });
+  }, [selectedSessionId]);
+
+  useEffect(() => {
+    const clearSelected = () => {
+      const sessionId = selectedSessionIdRef.current;
+      if (!sessionId) return;
+      setUnread((prev) => {
+        if (!prev[sessionId]) return prev;
+        const next = { ...prev };
+        delete next[sessionId];
+        return next;
+      });
+    };
+    const onVisibility = () => {
+      if (!document.hidden) clearSelected();
+    };
+    window.addEventListener('focus', clearSelected);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('focus', clearSelected);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, []);
+
+  // A clicked notification brings the window forward and opens its session.
+  useEffect(() => {
+    if (!activateSessionId) return;
+    const session = sessions.find((candidate) => candidate.id === activateSessionId);
+    if (!session) return;
+    setSelectedTaskId(session.taskId);
+    setSelectedSessionId(session.id);
+    setActivateSessionId(null);
+  }, [activateSessionId, sessions]);
+
+  useEffect(() => {
+    void client.invoke('notifications.badge', { count: unreadCount }).catch(() => {});
+  }, [client, unreadCount]);
 
   useEffect(() => {
     if (!toast) return;
@@ -449,6 +555,7 @@ export function App() {
           sessions={sessions}
           selectedTaskId={selectedTaskId}
           selectedSessionId={selectedSessionId}
+          unread={unread}
           profile={info?.profile ?? null}
           onSelectTask={setSelectedTaskId}
           onSelectSession={(session) => selectSession(session.id)}
@@ -468,6 +575,7 @@ export function App() {
           task={selectedTask}
           sessions={selectedSessions}
           selectedSessionId={selectedSessionId}
+          unread={unread}
           harnesses={visibleHarnesses}
           busy={busy}
           onSelectSession={setSelectedSessionId}
@@ -483,6 +591,7 @@ export function App() {
           task={selectedTask}
           sessions={selectedSessions}
           selectedSessionId={selectedSessionId}
+          unread={unread}
           refreshKey={gitVersion}
           onGitChanged={bumpGit}
           onNotify={notify}

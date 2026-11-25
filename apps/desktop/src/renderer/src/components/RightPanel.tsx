@@ -11,6 +11,7 @@ interface RightPanelProps {
   task: Task | null;
   sessions: Session[];
   selectedSessionId: string | null;
+  unread: Record<string, number>;
   refreshKey: number;
   onGitChanged: () => void;
   onNotify: (level: 'info' | 'warn' | 'error', message: string) => void;
@@ -72,6 +73,7 @@ export function RightPanel(props: RightPanelProps) {
           <SessionsPanel
             sessions={props.sessions}
             selectedSessionId={props.selectedSessionId}
+            unread={props.unread}
             resumableHarnesses={props.resumableHarnesses}
             onSelect={props.onSelectSession}
             onStop={props.onStopSession}

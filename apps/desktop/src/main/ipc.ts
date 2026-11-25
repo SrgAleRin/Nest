@@ -9,6 +9,7 @@ import {
   type RpcResponse,
 } from '@nest/shared';
 import { NestError, type Core } from '@nest/core';
+import type { NotificationInput } from './notifications';
 
 export interface IpcContext {
   core: Core;
@@ -16,6 +17,8 @@ export interface IpcContext {
   getWindow: () => BrowserWindow | null;
   /** Called after a project/task mutation so filesystem watches can be reconciled. */
   onTasksChanged?: () => void;
+  showNotification?: (input: NotificationInput) => boolean;
+  setBadge?: (count: number) => void;
 }
 
 export function registerIpc(context: IpcContext): void {
@@ -146,6 +149,12 @@ export function registerIpc(context: IpcContext): void {
       // The custom command may have changed, so cached PATH lookups are stale.
       core.harnesses.invalidate();
       return settings;
+    },
+
+    'notifications.show': (input) => ({ shown: context.showNotification?.(input) ?? false }),
+
+    'notifications.badge': ({ count }) => {
+      context.setBadge?.(count);
     },
   };
 

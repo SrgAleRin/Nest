@@ -161,6 +161,20 @@ export const rpcMethods = {
 
   'settings.get': { params: empty, result: AppSettingsSchema },
   'settings.update': { params: AppSettingsPatchSchema, result: AppSettingsSchema },
+
+  'notifications.show': {
+    params: z.object({
+      title: z.string().min(1).max(200),
+      body: z.string().min(1).max(500),
+      sessionId: id.optional(),
+      urgent: z.boolean().optional(),
+    }),
+    result: z.object({ shown: z.boolean() }),
+  },
+  'notifications.badge': {
+    params: z.object({ count: z.number().int().min(0).max(999) }),
+    result: z.void(),
+  },
 } as const;
 
 export type RpcMethod = keyof typeof rpcMethods;
@@ -187,7 +201,8 @@ export type NestEvent =
   | { type: 'task:updated'; task: Task }
   | { type: 'task:progress'; projectId: string; step: TaskProgressStep }
   | { type: 'git:changed'; taskId: string }
-  | { type: 'notification'; level: 'info' | 'warn' | 'error'; message: string };
+  | { type: 'notification'; level: 'info' | 'warn' | 'error'; message: string }
+  | { type: 'notification:activated'; sessionId?: string };
 
 export interface NestClient {
   invoke<M extends RpcMethod>(method: M, params: RpcParams<M>): Promise<RpcResult<M>>;

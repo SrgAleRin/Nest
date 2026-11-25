@@ -4,6 +4,7 @@ import { mkdirSync } from 'node:fs';
 import { createCore, type Core } from '@nest/core';
 import type { AppInfo, NestEvent } from '@nest/shared';
 import { registerIpc } from './ipc';
+import { setAppBadge, showNotification } from './notifications';
 import { resolveProfileName } from './profile';
 import { WorkspaceWatcher } from './watcher';
 
@@ -12,6 +13,9 @@ const TRAY_ICON_BASE64 =
 
 const profile = resolveProfileName(process.env.NEST_PROFILE);
 app.setName('Nest');
+// Windows only shows toasts for an app with a registered AppUserModelID, which
+// the NSIS shortcut uses as well. Other platforms ignore this call.
+app.setAppUserModelId('dev.nest.desktop');
 
 if (process.env.NEST_USER_DATA) {
   const userDataPath = path.resolve(process.env.NEST_USER_DATA);
@@ -164,6 +168,19 @@ if (!allowMultipleInstances && !app.requestSingleInstanceLock()) {
       getWindow: () => mainWindow,
       onTasksChanged: () => {
         if (core && watcher) void watcher.sync(core.tasks.list());
+      },
+      showNotification: (input) =>
+        showNotification(input, (sessionId) => {
+          showWindow();
+          broadcast(
+            sessionId
+              ? { type: 'notification:activated', sessionId }
+              : { type: 'notification:activated' },
+          );
+        }),
+      setBadge: (count) => {
+        setAppBadge(count);
+        tray?.setToolTip(count > 0 ? `Nest — ${count} unread` : 'Nest');
       },
     });
     createWindow();

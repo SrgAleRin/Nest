@@ -1,13 +1,6 @@
 import type { Project, Session, Task } from '@nest/shared';
 import { IconButton } from '@nest/ui';
-import {
-  BranchIcon,
-  FolderIcon,
-  FolderOpenIcon,
-  PlusIcon,
-  TerminalIcon,
-  TrashIcon,
-} from './Icons';
+import { BranchIcon, FolderIcon, FolderOpenIcon, PlusIcon, TerminalIcon, TrashIcon } from './Icons';
 import { relativeTime } from '../utils';
 
 interface SidebarProps {
@@ -16,6 +9,8 @@ interface SidebarProps {
   sessions: Session[];
   selectedTaskId: string | null;
   selectedSessionId: string | null;
+  /** Finished sessions whose output the user has not opened yet. */
+  unread: Record<string, number>;
   profile: string | null;
   onSelectTask: (taskId: string) => void;
   onSelectSession: (session: Session) => void;
@@ -50,15 +45,18 @@ export function Sidebar(props: SidebarProps) {
               const project = projects.find((candidate) => candidate.id === task?.projectId);
               return (
                 <button
-                  className={`running-row ${
-                    session.id === selectedSessionId ? 'selected' : ''
-                  }`}
+                  className={`running-row ${session.id === selectedSessionId ? 'selected' : ''}`}
                   key={session.id}
                   onClick={() => props.onSelectSession(session)}
                   title={`${project?.name ?? ''} · ${task?.branch ?? ''} · ${session.status}`}
                 >
                   <span className={`dot dot-${session.status}`} />
                   <span className="running-name">{session.title}</span>
+                  {props.unread[session.id] ? (
+                    <span className="unread-badge" title="Finished while you were away">
+                      {props.unread[session.id]}
+                    </span>
+                  ) : null}
                   <span className="running-context">
                     {project?.name ?? '—'}
                     {task?.kind === 'checkout' ? ' · main' : task ? ` · ${task.title}` : ''}
@@ -115,13 +113,14 @@ export function Sidebar(props: SidebarProps) {
                 {projectTasks.map((task) => {
                   const taskSessions = sessions.filter((session) => session.taskId === task.id);
                   const active = task.id === selectedTaskId;
+                  const taskUnread = taskSessions.reduce(
+                    (sum, session) => sum + (props.unread[session.id] ?? 0),
+                    0,
+                  );
                   return (
                     <div className="task-block" key={task.id}>
                       <div className={`task-row ${active ? 'selected' : ''}`}>
-                        <button
-                          className="task-select"
-                          onClick={() => props.onSelectTask(task.id)}
-                        >
+                        <button className="task-select" onClick={() => props.onSelectTask(task.id)}>
                           {task.kind === 'checkout' ? (
                             <span className="task-kind task-kind-main">main</span>
                           ) : (
@@ -137,6 +136,11 @@ export function Sidebar(props: SidebarProps) {
                           ) : null}
                           {taskSessions.length > 0 ? (
                             <span className="task-count">{taskSessions.length}</span>
+                          ) : null}
+                          {taskUnread > 0 ? (
+                            <span className="unread-badge" title="Unread in this task">
+                              {taskUnread}
+                            </span>
                           ) : null}
                         </button>
                         {task.kind === 'worktree' ? (
@@ -163,7 +167,14 @@ export function Sidebar(props: SidebarProps) {
                               <span className={`dot dot-${session.status}`} />
                               <TerminalIcon size={11} />
                               <span className="session-name">{session.title}</span>
-                              <span className="session-time">{relativeTime(session.updatedAt)}</span>
+                              {props.unread[session.id] ? (
+                                <span className="unread-badge" title="Finished while you were away">
+                                  {props.unread[session.id]}
+                                </span>
+                              ) : null}
+                              <span className="session-time">
+                                {relativeTime(session.updatedAt)}
+                              </span>
                             </button>
                           ))
                         : null}
@@ -181,7 +192,9 @@ export function Sidebar(props: SidebarProps) {
       </div>
 
       <div className="sidebar-foot">
-        <span className="profile-chip">{props.profile ? `profile: ${props.profile}` : 'default profile'}</span>
+        <span className="profile-chip">
+          {props.profile ? `profile: ${props.profile}` : 'default profile'}
+        </span>
       </div>
     </aside>
   );
