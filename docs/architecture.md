@@ -839,8 +839,9 @@ Windows-first:
 - **Linux** — best effort: AppImage + deb, без блокирующего CI в MVP.
 
 - `electron-builder` для всех платформ;
-- `node-pty` — native module; prebuilds для Electron win32-x64 уже входят в пакет, `@electron/rebuild` нужен только при смене ABI/архитектуры;
+- `node-pty` — native module; prebuilds для Electron win32-x64 уже входят в пакет, `@electron/rebuild` нужен только при смене ABI/архитектуры, поэтому в конфиге стоит `npmRebuild: false` и Visual Studio на сборочной машине не требуется;
 - `node:sqlite` — встроен в Node 24, отдельной native-сборки нет;
+- `pnpm dist` собирает NSIS x64; `apps/desktop/e2e/packaged.spec.ts` проверяет упакованную и установленную сборку (asar, распакованный `node-pty`, ресурсный `fake-harness.mjs`, PTY, БД);
 - CI: Windows обязателен, macOS/Ubuntu — по возможности;
 - code signing: Windows (Azure Trusted Signing / SignPath), macOS notarization;
 - auto-update: `electron-updater` + GitHub Releases;

@@ -2,7 +2,7 @@
 
 Лёгкий desktop-воркспейс для параллельной работы с CLI-агентами. Аналог Orca по сути, но без ботов, браузера, плагинов и нативного чата.
 
-**Статус:** foundation v0.1 собран. Работают: три колонки, проекты и main checkout, worktree-задачи, PTY + xterm, SQLite, git/diff/комментарии, resume завершённой сессии в той же вкладке с точным `harness_session_id`, `FakeHarness` и e2e. OpenCode проверен вручную, Codex/Claude smoke — после MVP.
+**Статус:** foundation v0.1 собран. Работают: три колонки, проекты и main checkout, worktree-задачи, PTY + xterm, SQLite, git/diff/комментарии, resume завершённой сессии в той же вкладке с точным `harness_session_id`, `FakeHarness` и e2e. OpenCode проверен вручную, Codex/Claude smoke — после MVP. Собирается NSIS-установщик; упакованная и установленная сборка проходят автоматический смоук локально, проверка на чистой Windows ещё впереди.
 
 ```
 Project (git repo)
@@ -48,9 +48,12 @@ pnpm lint
 pnpm test        # unit + PTY integration
 pnpm build
 pnpm test:e2e    # FakeHarness: старт, ввод, рестарт, scrollback
+pnpm dist        # NSIS-установщик в apps/desktop/release
 ```
 
 `FakeHarness` запускается через `node`, поэтому в dev-окружении Node должен быть в `PATH`. Реальные harness-профили ищутся по `where`/`which` и показываются в UI как доступные или отсутствующие.
+
+`pnpm test:e2e` дополнительно прогоняет `e2e/packaged.spec.ts`, если уже собран `apps/desktop/release/win-unpacked`: установленное приложение должно стартовать, поднять PTY из `resources/fake-harness.mjs` и создать БД. Без собранного релиза шаг пропускается. Тот же смоук можно направить на установленную копию через `NEST_E2E_EXE`.
 
 ## Структура
 
@@ -126,11 +129,11 @@ Tauri 2 не входит в MVP, но оставлен как future experiment
 
 ## Следующий шаг
 
-Foundation собран; точный resume по session id, fallback на последнюю беседу и авто-возобновление работают. Дальше по порядку:
+Foundation собран; точный resume по session id, fallback на последнюю беседу и авто-возобновление работают. NSIS-установщик собирается, упакованная и установленная сборка проходят локальный смоук. Дальше по порядку:
 
-1. Smoke **Codex** в самом Nest — после MVP, по договорённости. OpenCode уже проверен: id захватывается, после рестарта продолжается та же беседа.
-2. Собрать NSIS-установщик и проверить на чистой Windows.
-3. Проверить два одновременных dev-профиля.
-4. Поставить локальный тег `foundation-v0.1` и перейти к fork point. CI отложен: удалённого репозитория пока нет.
+1. Проверить два одновременных dev-профиля.
+2. Поставить локальный тег `foundation-v0.1` и перейти к fork point. CI отложен: удалённого репозитория пока нет.
+3. Прогнать установщик на чистой Windows без Node.js.
+4. Smoke **Codex** в самом Nest — после MVP, по договорённости. OpenCode уже проверен: id захватывается, после рестарта продолжается та же беседа.
 
 Подробный план и таблица discovery — в [roadmap](docs/roadmap.md#точный-resume-по-session-id-сделано). После тега — параллельные workstreams из [parallel-dev.md](docs/parallel-dev.md).

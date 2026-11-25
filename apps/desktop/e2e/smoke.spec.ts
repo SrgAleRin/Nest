@@ -22,11 +22,16 @@ function git(args: string[], cwd: string): void {
 }
 
 function launchApp(): Promise<ElectronApplication> {
+  // An Electron-based terminal (for example an agent harness) may export
+  // ELECTRON_RUN_AS_NODE, which would turn Nest into a plain Node process.
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+
   return electron.launch({
     args: ['.'],
     cwd: appDir,
     env: {
-      ...process.env,
+      ...env,
       NEST_USER_DATA: path.join(tempRoot, 'user-data'),
       NEST_DB_PATH: path.join(tempRoot, 'nest.db'),
       NEST_WORKTREES_ROOT: path.join(tempRoot, 'worktrees'),

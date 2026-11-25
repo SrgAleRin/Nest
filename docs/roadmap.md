@@ -24,7 +24,7 @@ MVP считается готовым, если можно:
 |---|---|---|
 | 1 | ~~Точный resume по `harness_session_id`~~ — сделано | Resume продолжает именно эту беседу, а не последнюю в workspace |
 | 2 | Smoke OpenCode (сделан) и Codex (после MVP) | Проверить TUI, ввод, resize, exit и resume на живых CLI |
-| 3 | Установщик NSIS + запуск на чистой Windows | Проверить `node-pty` prebuilds, `node:sqlite`, asar, первый запуск |
+| 3 | Установщик NSIS (собран) + запуск на чистой Windows | Проверить `node-pty` prebuilds, `node:sqlite`, asar, первый запуск |
 | 4 | Два dev-профиля одновременно | Изоляция `NEST_PROFILE`; CI отложен вместе с remote |
 | 5 | Локальный тег `foundation-v0.1` и fork point | Разрешить параллельные workstreams |
 | 6 | P1-полировка (уведомления, palette, настройки, range-комментарии) | «Удобно каждый день» |
@@ -84,11 +84,24 @@ Phase 5 Integration / release
 - [x] `MockRpcClient` и `FakeHarness`;
 - [x] `NEST_PROFILE` изолирует userData, БД, worktree-root;
 - [x] unit/integration тесты и e2e FakeHarness → рестарт;
-- [x] CI-конфиг для Windows.
+- [x] CI-конфиг для Windows;
+- [x] `pnpm dist` и NSIS-установщик (локально: тихая установка, запуск, PTY, БД);
 - [ ] первый прогон GitHub Actions на удалённом репозитории;
 - [ ] smoke реального harness (Claude Code / Codex) на машине коллег;
 - [ ] ручная проверка двух одновременно запущенных dev-профилей;
-- [ ] `pnpm dist` и установщик NSIS.
+- [ ] установщик на чистой Windows без Node.js.
+
+### Сборка и упакованный смоук (сделано)
+
+`pnpm dist` собирает `apps/desktop/release/win-unpacked` и `Nest Setup 0.1.0.exe` (NSIS x64, без подписи). Проверено локально:
+
+1. asar содержит `out/**` и workspace-пакеты; `node-pty` распакован в `app.asar.unpacked`, `fake-harness.mjs` лежит в `resources/`.
+2. `e2e/packaged.spec.ts` запускает `win-unpacked\Nest.exe` (или установленную копию через `NEST_E2E_EXE`) и проверяет старт окна, `projects.add`, PTY из ресурсного `fake-harness.mjs`, ввод и создание `nest.db`; без собранного релиза шаг пропускается.
+3. Тихая установка `Nest Setup 0.1.0.exe /S /D=...` проходит, установленный `Nest.exe` тоже проходит смоук.
+
+`npmRebuild: false` в [electron-builder.yml](../apps/desktop/electron-builder.yml): `node-pty` 1.1.0 собран на node-addon-api и поставляет prebuilds под `win32-x64`, поэтому `@electron/rebuild` не нужен и Visual Studio на сборочной машине не требуется.
+
+Отдельно: оболочки на базе Electron (например, агентский harness) могут экспортировать `ELECTRON_RUN_AS_NODE=1`; тогда `Nest.exe` стартует как Node и отвергает `--remote-debugging-port`. e2e-спеки удаляют эту переменную из окружения дочернего процесса.
 
 ### Fork point
 

@@ -1,5 +1,9 @@
 appId: dev.nest.desktop
 productName: Nest
+# node-pty 1.1.0 is built with node-addon-api (N-API) and ships prebuilt
+# binaries for win32-x64, so packaging must not try to recompile it: that
+# would require Visual Studio on every build machine.
+npmRebuild: false
 directories:
   output: release
   buildResources: build
