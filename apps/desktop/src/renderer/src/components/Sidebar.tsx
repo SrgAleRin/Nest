@@ -101,6 +101,11 @@ export function Sidebar(props: SidebarProps) {
                           <span className="task-name" title={task.branch}>
                             {task.kind === 'checkout' ? 'main checkout' : task.title}
                           </span>
+                          {task.setupError ? (
+                            <span className="task-warn" title={task.setupError}>
+                              setup
+                            </span>
+                          ) : null}
                           {taskSessions.length > 0 ? (
                             <span className="task-count">{taskSessions.length}</span>
                           ) : null}

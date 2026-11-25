@@ -31,6 +31,16 @@ describe('baseline migration', () => {
       expect.arrayContaining(['harness_session_id', 'resume_mode', 'resume_on_start']),
     );
 
+    const projectColumns = (
+      db.prepare('PRAGMA table_info(projects)').all() as Array<{ name: string }>
+    ).map((row) => row.name);
+    expect(projectColumns).toContain('setup_script');
+
+    const taskColumns = (
+      db.prepare('PRAGMA table_info(tasks)').all() as Array<{ name: string }>
+    ).map((row) => row.name);
+    expect(taskColumns).toContain('setup_error');
+
     const applied = db.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get() as {
       count: number | bigint;
     };

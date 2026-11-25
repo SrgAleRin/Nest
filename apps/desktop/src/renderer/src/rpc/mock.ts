@@ -21,7 +21,7 @@ const GREETING =
 
 export function createMockClient(): NestClient {
   const projects: Project[] = [
-    { id: 'project-nest', name: 'nest-demo', path: 'D:\\dev\\nest-demo', createdAt: now },
+    { id: 'project-nest', name: 'nest-demo', path: 'D:\\dev\\nest-demo', setupScript: 'pnpm install', createdAt: now },
   ];
   const tasks: Task[] = [
     {
@@ -33,6 +33,7 @@ export function createMockClient(): NestClient {
       branch: 'main',
       workspacePath: 'D:\\dev\\nest-demo',
       status: 'active',
+      setupError: null,
       createdAt: now,
       updatedAt: now,
     },
@@ -45,6 +46,7 @@ export function createMockClient(): NestClient {
       branch: 'nest/terminal-reconnect',
       workspacePath: 'D:\\dev\\nest-worktrees\\nest-demo\\terminal-reconnect',
       status: 'active',
+      setupError: null,
       createdAt: now,
       updatedAt: now,
     },
@@ -233,6 +235,7 @@ export function createMockClient(): NestClient {
           id: `project-${projects.length + 1}`,
           name: path.split(/[\\/]/).pop() ?? 'project',
           path,
+          setupScript: null,
           createdAt: new Date().toISOString(),
         };
         projects.push(project);
@@ -245,6 +248,7 @@ export function createMockClient(): NestClient {
           branch: 'main',
           workspacePath: path,
           status: 'active',
+          setupError: null,
           createdAt: now,
           updatedAt: now,
         };
@@ -265,6 +269,10 @@ export function createMockClient(): NestClient {
         const id = `task-${tasks.length + 1}`;
         const title = String(params.title ?? 'new task');
         const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+        const project = projects.find((candidate) => candidate.id === params.projectId);
+        if (project && params.setupScript !== undefined) {
+          project.setupScript = params.setupScript ? String(params.setupScript) : null;
+        }
         const task: Task = {
           id,
           projectId: String(params.projectId),
@@ -274,6 +282,7 @@ export function createMockClient(): NestClient {
           branch: `nest/${slug}`,
           workspacePath: `D:\\dev\\nest-worktrees\\nest-demo\\${slug}`,
           status: 'active',
+          setupError: null,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };

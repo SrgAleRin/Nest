@@ -11,13 +11,18 @@ import type { Db } from '../db/database.js';
 import { NestError } from '../errors.js';
 import { git, gitOrNull } from '../git/exec.js';
 import { ProjectService } from './projects.js';
+import { prepareWorkspace } from './setup.js';
 import { toTask, type TaskRow } from './rows.js';
 
 export interface CreateTaskInput {
   projectId: string;
   title: string;
   baseBranch?: string;
+  /** Replaces the project setup script when provided (undefined keeps it). */
+  setupScript?: string | null;
 }
+
+const FETCH_TIMEOUT_MS = 60_000;
 
 export class TaskService {
   private beforeRemove: (task: Task) => void | Promise<void> = () => {};
@@ -58,11 +63,18 @@ export class TaskService {
   }
 
   async create(input: CreateTaskInput): Promise<Task> {
-    const project = this.projects.get(input.projectId);
+    let project = this.projects.get(input.projectId);
+    if (input.setupScript !== undefined) {
+      project = this.projects.update(project.id, { setupScript: input.setupScript });
+    }
     const checkout = this.projects.checkout(project.id);
     if (!checkout) throw new NestError('checkout_missing', 'Project has no main checkout');
 
     await mkdir(this.worktreesRoot, { recursive: true });
+
+    // Refresh remote refs so a task created from origin/main does not start on
+    // a stale base. Best effort: offline or remote-less repos still work.
+    await this.fetch(project.path);
 
     const base = await this.resolveBaseBranch(project.path, input.baseBranch);
     const existing = new Set(
@@ -114,6 +126,19 @@ export class TaskService {
       throw error;
     }
 
+    // Setup runs after the row exists, so a failing script leaves a visible
+    // task with its worktree and an explanation instead of an orphan folder.
+    const setupError = await prepareWorkspace({
+      projectPath: project.path,
+      workspacePath: worktreePath,
+      setupScript: project.setupScript,
+    });
+    if (setupError) {
+      this.db
+        .prepare('UPDATE tasks SET setup_error = ?, updated_at = ? WHERE id = ?')
+        .run(setupError, nowIso(), id);
+    }
+
     return this.get(id);
   }
 
@@ -135,11 +160,23 @@ export class TaskService {
     this.db.prepare('DELETE FROM tasks WHERE id = ?').run(taskId);
   }
 
+  private async fetch(repoPath: string): Promise<void> {
+    const remotes = await gitOrNull(repoPath, ['remote']);
+    if (!remotes) return;
+    await gitOrNull(repoPath, ['fetch', '--prune'], { timeout: FETCH_TIMEOUT_MS });
+  }
+
   private async resolveBaseBranch(repoPath: string, requested?: string): Promise<string> {
     if (requested) {
-      const exists = await gitOrNull(repoPath, ['rev-parse', '--verify', `refs/heads/${requested}`]);
-      if (!exists) throw new NestError('base_branch_missing', `Branch ${requested} does not exist`);
-      return requested;
+      // Accept both a local branch (main) and a remote-tracking one (origin/main):
+      // without a remote, or when the base only exists upstream, the latter is
+      // the only usable ref.
+      if (await refExists(repoPath, `refs/heads/${requested}`)) return requested;
+      if (await refExists(repoPath, `refs/remotes/${requested}`)) return requested;
+      throw new NestError(
+        'base_branch_missing',
+        `Branch ${requested} does not exist locally or on a remote`,
+      );
     }
     const current = await gitOrNull(repoPath, ['symbolic-ref', '--short', 'HEAD']);
     if (!current) {
@@ -149,9 +186,13 @@ export class TaskService {
   }
 }
 
-async function branchExists(repoPath: string, branch: string): Promise<boolean> {
-  const value = await gitOrNull(repoPath, ['rev-parse', '--verify', `refs/heads/${branch}`]);
+async function refExists(repoPath: string, ref: string): Promise<boolean> {
+  const value = await gitOrNull(repoPath, ['rev-parse', '--verify', ref]);
   return Boolean(value);
+}
+
+async function branchExists(repoPath: string, branch: string): Promise<boolean> {
+  return refExists(repoPath, `refs/heads/${branch}`);
 }
 
 function sanitizeDir(value: string): string {

@@ -12,6 +12,7 @@ import type { Db } from '../db/database.js';
 import { NestError } from '../errors.js';
 import { git } from '../git/exec.js';
 import { toProject, toTask, type ProjectRow, type TaskRow } from './rows.js';
+import { normalizeSetupScript } from './setup.js';
 
 export class ProjectService {
   constructor(private readonly db: Db) {}
@@ -109,6 +110,23 @@ export class ProjectService {
   remove(projectId: string): void {
     this.get(projectId);
     this.db.prepare('DELETE FROM projects WHERE id = ?').run(projectId);
+  }
+
+  update(
+    projectId: string,
+    patch: { setupScript?: string | null },
+  ): Project {
+    this.get(projectId);
+    if (patch.setupScript !== undefined) {
+      const script = normalizeSetupScript(patch.setupScript);
+      if (script && script.length > 2000) {
+        throw new NestError('invalid_setup_script', 'Setup script is too long (max 2000 chars)');
+      }
+      this.db
+        .prepare('UPDATE projects SET setup_script = ? WHERE id = ?')
+        .run(script, projectId);
+    }
+    return this.get(projectId);
   }
 }
 

@@ -417,15 +417,18 @@ pty.onData(chunk)
 
 ```
 1. validate project path
-2. git fetch --prune            (optional, cancellable)
-3. git worktree add -b <branch> <path> <base>
-4. setup:
-   - copy .env / .env.local
-   - link shared dirs (node_modules, .cache)
-   - run setup script
+2. save setup script on the project (если пришёл из модалки)
+3. git fetch --prune            (best effort: 60 с, пропускается без remotes)
+4. git worktree add -b <branch> <path> <base>
 5. insert task row (kind=worktree, status=active)
-6. start session (optional)
+6. setup:
+   - copy .env / .env.local    (только если файла ещё нет в worktree)
+   - run setup script in the worktree (10 минут, вывод попадает в ошибку)
+7. on setup failure: tasks.setup_error = причина, задача и worktree остаются
+8. start session (optional)
 ```
+
+`base` — локальная ветка (`main`) или remote-tracking (`origin/main`); вторая разрешается после `git fetch`, поэтому задача может стартовать от свежего upstream. Setup script хранится в `projects.setup_script`, запоминается при создании задачи и подставляется в модалку New task.
 
 Для `checkout`:
 
@@ -439,8 +442,8 @@ pty.onData(chunk)
 
 Rollback:
 
-- если worktree создан, а setup упал — task остаётся в `error`, worktree не удаляем автоматически (пользователь может зайти и посмотреть);
-- если worktree не создан — task удаляется, показываем ошибку;
+- если worktree создан, а setup упал — задача остаётся, причина лежит в `tasks.setup_error`, worktree не удаляем автоматически (пользователь может зайти и посмотреть, в сайдбаре горит бейдж `setup`);
+- если worktree не создан — ничего не пишем в БД, показываем ошибку;
 - branch создаётся только вместе с worktree; при откате удаляем, если она пустая;
 - для checkout rollback не нужен: мы не создаём файлов и не меняем ветку.
 

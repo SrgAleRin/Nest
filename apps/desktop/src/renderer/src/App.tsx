@@ -181,7 +181,7 @@ export function App() {
   );
 
   const createTask = useCallback(
-    async (title: string, baseBranch?: string) => {
+    async (title: string, baseBranch?: string, setupScript?: string | null) => {
       if (!newTaskProjectId) return;
       setBusy(true);
       try {
@@ -189,11 +189,23 @@ export function App() {
           projectId: newTaskProjectId,
           title,
           ...(baseBranch ? { baseBranch } : {}),
+          ...(setupScript !== undefined ? { setupScript } : {}),
         });
         setTasks((prev) => upsert(prev, task));
+        setProjects((prev) =>
+          prev.map((project) =>
+            project.id === newTaskProjectId && setupScript !== undefined
+              ? { ...project, setupScript: setupScript || null }
+              : project,
+          ),
+        );
         setSelectedTaskId(task.id);
         setNewTaskProjectId(null);
-        notify('info', `Created ${task.branch} in ${shortPath(task.workspacePath, 48)}`);
+        if (task.setupError) {
+          notify('warn', `Created ${task.branch}, but setup failed: ${task.setupError}`);
+        } else {
+          notify('info', `Created ${task.branch} in ${shortPath(task.workspacePath, 48)}`);
+        }
       } catch (error) {
         notify('error', errorMessage(error));
       } finally {
@@ -418,7 +430,9 @@ export function App() {
           project={newTaskProject}
           busy={busy}
           onClose={() => setNewTaskProjectId(null)}
-          onSubmit={(title, baseBranch) => void createTask(title, baseBranch)}
+          onSubmit={(title, baseBranch, setupScript) =>
+            void createTask(title, baseBranch, setupScript)
+          }
         />
       ) : null}
 

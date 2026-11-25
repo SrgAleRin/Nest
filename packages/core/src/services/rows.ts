@@ -16,6 +16,7 @@ export interface ProjectRow {
   id: string;
   name: string;
   path: string;
+  setup_script: string | null;
   created_at: string;
 }
 
@@ -28,6 +29,7 @@ export interface TaskRow {
   branch: string;
   workspace_path: string;
   status: TaskStatus;
+  setup_error: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -65,6 +67,7 @@ export function toProject(row: ProjectRow): Project {
     id: row.id,
     name: row.name,
     path: row.path,
+    setupScript: row.setup_script,
     createdAt: row.created_at,
   };
 }
@@ -79,6 +82,7 @@ export function toTask(row: TaskRow): Task {
     branch: row.branch,
     workspacePath: row.workspace_path,
     status: row.status,
+    setupError: row.setup_error,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

@@ -45,6 +45,7 @@ export const rpcMethods = {
       projectId: id,
       title: z.string().trim().min(1).max(200),
       baseBranch: z.string().min(1).optional(),
+      setupScript: z.string().max(2000).nullable().optional(),
     }),
     result: TaskSchema,
   },

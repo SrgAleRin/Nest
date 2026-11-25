@@ -6,12 +6,13 @@ interface NewTaskDialogProps {
   project: Project;
   busy: boolean;
   onClose: () => void;
-  onSubmit: (title: string, baseBranch?: string) => void;
+  onSubmit: (title: string, baseBranch?: string, setupScript?: string | null) => void;
 }
 
 export function NewTaskDialog({ project, busy, onClose, onSubmit }: NewTaskDialogProps) {
   const [title, setTitle] = useState('');
   const [baseBranch, setBaseBranch] = useState('');
+  const [setupScript, setSetupScript] = useState(project.setupScript ?? '');
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -26,7 +27,11 @@ export function NewTaskDialog({ project, busy, onClose, onSubmit }: NewTaskDialo
         onSubmit={(event) => {
           event.preventDefault();
           if (!title.trim() || busy) return;
-          onSubmit(title.trim(), baseBranch.trim() || undefined);
+          onSubmit(
+            title.trim(),
+            baseBranch.trim() || undefined,
+            setupScript.trim() ? setupScript.trim() : null,
+          );
         }}
       >
         <header className="modal-head">
@@ -60,8 +65,24 @@ export function NewTaskDialog({ project, busy, onClose, onSubmit }: NewTaskDialo
           <input
             value={baseBranch}
             onChange={(event) => setBaseBranch(event.target.value)}
-            placeholder="current branch"
+            placeholder="current branch, or origin/main after fetch"
           />
+        </label>
+
+        <label className="field">
+          <span>
+            Setup script <em>optional</em>
+          </span>
+          <input
+            value={setupScript}
+            onChange={(event) => setSetupScript(event.target.value)}
+            placeholder="pnpm install"
+            maxLength={2000}
+          />
+          <small className="field-hint">
+            Runs in the new worktree after it is created and is remembered for this project.
+            <code>.env</code> and <code>.env.local</code> are copied automatically.
+          </small>
         </label>
 
         <footer className="modal-foot">

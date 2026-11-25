@@ -329,6 +329,15 @@ code,
   border-radius: 999px;
 }
 
+.task-warn {
+  font: 9px var(--mono);
+  color: var(--amber);
+  padding: 0 4px;
+  border: 1px solid rgba(224, 175, 104, 0.4);
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+
 .task-remove {
   opacity: 0;
   margin-right: 2px;
@@ -1472,6 +1481,17 @@ code,
 .field input {
   padding: 7px 9px;
   font: 12px var(--sans);
+}
+
+.field-hint {
+  color: var(--dim);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.field-hint code {
+  font: 9.5px var(--mono);
+  color: var(--muted);
 }
 
 .modal-foot {

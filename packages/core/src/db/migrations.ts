@@ -86,4 +86,15 @@ export const migrations: Migration[] = [
         ADD COLUMN resume_mode TEXT NOT NULL DEFAULT 'latest';
     `,
   },
+  {
+    id: 4,
+    name: 'task_setup',
+    sql: `
+      ALTER TABLE projects
+        ADD COLUMN setup_script TEXT;
+
+      ALTER TABLE tasks
+        ADD COLUMN setup_error TEXT;
+    `,
+  },
 ];

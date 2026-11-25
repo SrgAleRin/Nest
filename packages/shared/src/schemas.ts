@@ -4,6 +4,7 @@ export const ProjectSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   path: z.string().min(1),
+  setupScript: z.string().nullable(),
   createdAt: z.string().min(1),
 });
 export type Project = z.infer<typeof ProjectSchema>;
@@ -26,6 +27,7 @@ export const TaskSchema = z.object({
   branch: z.string().min(1),
   workspacePath: z.string().min(1),
   status: TaskStatusSchema,
+  setupError: z.string().nullable(),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
 });

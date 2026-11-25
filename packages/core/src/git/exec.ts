@@ -9,13 +9,19 @@ export interface GitResult {
   stderr: string;
 }
 
-export async function git(cwd: string, args: string[]): Promise<GitResult> {
+export interface GitOptions {
+  /** Kill the child process after this many milliseconds (fetch, push). */
+  timeout?: number;
+}
+
+export async function git(cwd: string, args: string[], options: GitOptions = {}): Promise<GitResult> {
   try {
     const { stdout, stderr } = await execFileAsync('git', args, {
       cwd,
       encoding: 'utf8',
       maxBuffer: 64 * 1024 * 1024,
       windowsHide: true,
+      ...(options.timeout ? { timeout: options.timeout } : {}),
     });
     return { stdout, stderr };
   } catch (error) {
@@ -28,9 +34,13 @@ export async function git(cwd: string, args: string[]): Promise<GitResult> {
   }
 }
 
-export async function gitOrNull(cwd: string, args: string[]): Promise<string | null> {
+export async function gitOrNull(
+  cwd: string,
+  args: string[],
+  options: GitOptions = {},
+): Promise<string | null> {
   try {
-    const result = await git(cwd, args);
+    const result = await git(cwd, args, options);
     return result.stdout.trim();
   } catch {
     return null;
