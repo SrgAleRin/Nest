@@ -3,11 +3,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { _electron as electron } from 'playwright';
+import { _electron as electron, type ElectronApplication } from 'playwright';
 
 const appDir = path.resolve(__dirname, '..');
 let tempRoot = '';
 let repoPath = '';
+let app: ElectronApplication | null = null;
 
 function git(args: string[], cwd: string): void {
   execFileSync('git', args, { cwd, stdio: 'ignore', windowsHide: true });
@@ -26,15 +27,22 @@ test.beforeAll(() => {
   );
 });
 
-test.afterAll(() => {
-  if (tempRoot) rmSync(tempRoot, { recursive: true, force: true });
+test.afterAll(async () => {
+  await app?.close().catch(() => {});
+  // Windows may keep the SQLite/PTY files locked for a moment after exit.
+  if (tempRoot) {
+    rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+  }
 });
 
 test('keeps at most eight terminals mounted and replays scrollback for the rest', async () => {
+  // Nine PTY sessions are noticeably slower on a shared Windows runner.
+  test.setTimeout(240_000);
+
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
 
-  const app = await electron.launch({
+  app = await electron.launch({
     args: ['.'],
     cwd: appDir,
     env: {
@@ -73,4 +81,5 @@ test('keeps at most eight terminals mounted and replays scrollback for the rest'
   await expect(page.locator('.terminal-view')).toHaveCount(8);
 
   await app.close();
+  app = null;
 });
