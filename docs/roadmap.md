@@ -78,7 +78,7 @@ Phase 1 Foundation ──► тег foundation-v0.1 ──► Phase 2 задач
 - [x] unit/integration тесты и e2e FakeHarness → рестарт;
 - [x] CI-конфиг для Windows: проверки на push/PR и сборка релиза по тегу;
 - [x] `pnpm dist` и NSIS-установщик (локально: тихая установка, запуск, PTY, БД);
-- [ ] первый прогон `ci.yml` и `release.yml` на GitHub (удалённого репозитория пока нет);
+- [x] первый прогон `ci.yml` и `release.yml` на GitHub (v0.1.0: зелёные, черновик релиза с ассетами);
 - [ ] smoke реального harness (Claude Code / Codex) на машине коллег;
 - [ ] установщик на чистой Windows без Node.js.
 
@@ -204,7 +204,7 @@ Shared dirs (`node_modules`) остаются в P1.
 
 Полировка состояний сделана: boot-скелетон повторяет трёхколоночный layout, первичная ошибка — `FatalScreen` с повтором, панели Git/Diff используют `panelPhase` и inline `ErrorState`, добавлен `ErrorBoundary`, скелетоны настроек и пустой старт-экран при выключенных harness. Проверка: unit на `panelPhase`, e2e `resilience.spec.ts` (ошибка → retry → восстановление) и скриншоты boot/error/settings.
 
-Поставка: NSIS собирается с иконкой и стабильным именем `Nest-Setup-<version>.exe`, `scripts/make-latest-yml.mjs` пишет `latest.yml`, автообновление использует generic-feed из Settings (`updateFeedUrl`) или `NEST_UPDATE_URL` и проверяется упакованным `e2e/updates.spec.ts` против локального feed. CI на Windows гоняет проверки на push/PR, а тег `v*` собирает установщик, прогоняет packaged-смоук и создаёт черновик GitHub Release; подпись включается секретами `CSC_LINK` / `CSC_KEY_PASSWORD`. Установщик проверен тихой установкой, запуском установленной копии, ярлыками и удалением на этой машине; чек-лист чистой Windows без Node.js остаётся открытым, см. `docs/release.md`.
+Поставка: NSIS собирается с иконкой и стабильным именем `Nest-Setup-<version>.exe`, `scripts/make-latest-yml.mjs` пишет `latest.yml`, автообновление использует generic-feed из Settings (`updateFeedUrl`) или `NEST_UPDATE_URL` и проверяется упакованным `e2e/updates.spec.ts` против локального feed. CI на Windows гоняет проверки на push/PR, а тег `v*` собирает установщик, прогоняет packaged-смоук и создаёт черновик GitHub Release; подпись включается секретами `CSC_LINK` / `CSC_KEY_PASSWORD`. Прогон `v0.1.0` в GitHub Actions прошёл: `ci` и `release` зелёные, черновик релиза содержит `.exe`, `.blockmap` и `latest.yml`. Установщик проверен тихой установкой, запуском установленной копии, ярлыками и удалением на этой машине; чек-лист чистой Windows без Node.js остаётся открытым, см. `docs/release.md`.
 
 Оценка для одного потока: foundation уже собран, осталось три-четыре недели последовательной работы.
 
