@@ -61,7 +61,7 @@ pnpm dist        # NSIS-установщик + latest.yml в apps/desktop/releas
 
 ### CI
 
-GitHub Actions на Windows: `ci.yml` гоняет typecheck, lint, unit, build и e2e на каждый push в `master` и на PR. Тег `v*` запускает `release.yml`: он сверяет тег с версией, собирает установщик, прогоняет packaged-смоук и создаёт **черновик** GitHub Release с `.exe`, `.blockmap` и `latest.yml`. Подпись включается секретами `CSC_LINK` / `CSC_KEY_PASSWORD`. Пошаговый выпуск и настройка feed — в [docs/release.md §3](docs/release.md#3-ci-релиз-github-actions).
+GitHub Actions на Windows: `ci.yml` гоняет typecheck, lint, unit, build и e2e на каждый push в `main` и на PR. Тег `v*` запускает `release.yml`: он сверяет тег с версией, собирает установщик, прогоняет packaged-смоук и создаёт **черновик** GitHub Release с `.exe`, `.blockmap` и `latest.yml`. Подпись включается секретами `CSC_LINK` / `CSC_KEY_PASSWORD`. Пошаговый выпуск и настройка feed — в [docs/release.md §3](docs/release.md#3-ci-релиз-github-actions).
 
 ## Структура
 
@@ -140,3 +140,7 @@ Foundation собран, тег `foundation-v0.1` поставлен; точны
 4. Smoke **Codex** в самом Nest — после MVP, по договорённости. OpenCode уже проверен: id захватывается, после рестарта продолжается та же беседа.
 
 Подробный план и таблица discovery — в [roadmap](docs/roadmap.md#точный-resume-по-session-id-сделано).
+
+## Лицензия
+
+[MIT](LICENSE) © 2026 Serge Baburin.

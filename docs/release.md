@@ -37,14 +37,14 @@ win-unpacked/
 
 В репозитории два workflow:
 
-- [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) — на каждый push в `master` и на pull request: install, typecheck, lint, unit/integration, build и e2e. При падении e2e `test-results` с трейсами уходят артефактом;
+- [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) — на каждый push в `main` и на pull request: install, typecheck, lint, unit/integration, build и e2e. При падении e2e `test-results` с трейсами уходят артефактом;
 - [`.github/workflows/release.yml`](../.github/workflows/release.yml) — по тегу `v*`: проверка версии, те же проверки, `pnpm dist`, проверка артефактов, packaged-смоук и черновик GitHub Release с `Nest-Setup-<version>.exe`, `.blockmap` и `latest.yml`.
 
 ### Что нужно один раз
 
 - репозиторий на GitHub и remote `origin`; Actions включены (по умолчанию);
-- workflow слушает ветку `master`;
-- по желанию: branch protection на `master` с обязательным job `windows` из `ci` и tag protection для `v*`, чтобы релизный тег мог поставить только владелец;
+- workflow слушает ветку `main`;
+- по желанию: branch protection на `main` с обязательным job `windows` из `ci` и tag protection для `v*`, чтобы релизный тег мог поставить только владелец;
 - **публичный репозиторий**, если feed должен жить на GitHub Releases: ассеты приватного релиза отдаются только с токеном, которого у установленного Nest нет. Для приватного репозитория соберите артефакты в CI и выложите три файла на свой HTTPS-хостинг;
 - секреты **Settings → Secrets and variables → Actions** (необязательно, но нужно для подписи):
   - `CSC_LINK` — base64 от `.pfx`-сертификата;
@@ -63,7 +63,7 @@ $bytes = [IO.File]::ReadAllBytes("C:\keys\nest.pfx")
 
 ### Выпуск версии
 
-1. Поднимите `version` в `apps/desktop/package.json` (для порядка и в корневом `package.json`), закоммитьте и запушьте `master`. Дождитесь зелёного `ci`.
+1. Поднимите `version` в `apps/desktop/package.json` (для порядка и в корневом `package.json`), закоммитьте и запушьте `main`. Дождитесь зелёного `ci`.
 2. Поставьте тег ровно на эту версию и запушьте его:
 
    ```powershell
