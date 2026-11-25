@@ -132,6 +132,16 @@ Nest хранит проекты, задачи, настройки, коммен
 
 **Обновления не проверяются.** Проверьте адрес feed в **Settings → Updates**. В dev-сборке автообновление отключено.
 
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+
+- Committers and reviewers: [Serge Baburin (@SrgAleRin)](https://github.com/SrgAleRin)
+- Approvers: [Serge Baburin (@SrgAleRin)](https://github.com/SrgAleRin)
+- Privacy policy: [docs/privacy.md](docs/privacy.md)
+
+Release artifacts are built from this repository by GitHub Actions, and every signing request is approved manually.
+
 ## Разработка
 
 Нужны Node.js 24, pnpm 12.18 и Git.
