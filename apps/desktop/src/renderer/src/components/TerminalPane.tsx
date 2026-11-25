@@ -38,6 +38,8 @@ interface TerminalPaneProps {
   onNewSession: (session: Session) => void;
   resumableHarnesses: ReadonlySet<string>;
   onError: (message: string) => void;
+  /** Opens the command palette without typing Ctrl+Shift+P into the PTY. */
+  onOpenPalette: () => void;
 }
 
 export function TerminalPane(props: TerminalPaneProps) {
@@ -129,6 +131,7 @@ export function TerminalPane(props: TerminalPaneProps) {
             onResume={props.onResume}
             onNewSession={props.onNewSession}
             onError={props.onError}
+            onOpenPalette={props.onOpenPalette}
           />
         ))}
       </div>
@@ -194,6 +197,7 @@ function TerminalView({
   onError,
   onResume,
   onNewSession,
+  onOpenPalette,
 }: {
   client: NestClient;
   session: Session;
@@ -202,6 +206,7 @@ function TerminalView({
   onError: (message: string) => void;
   onResume: (session: Session) => void;
   onNewSession: (session: Session) => void;
+  onOpenPalette: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -215,6 +220,8 @@ function TerminalView({
   statusRef.current = session.status;
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
+  const onOpenPaletteRef = useRef(onOpenPalette);
+  onOpenPaletteRef.current = onOpenPalette;
 
   const [findOpen, setFindOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -337,6 +344,10 @@ function TerminalView({
       }
       if (mod && event.shiftKey && key === 'v') {
         pasteClipboard();
+        return false;
+      }
+      if (mod && event.shiftKey && key === 'p') {
+        onOpenPaletteRef.current();
         return false;
       }
       // Ctrl+C is SIGINT unless the user selected text first.

@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import type { NestClient, Session, Task } from '@nest/shared';
 import { DiffPanel } from './DiffPanel';
 import { GitPanel } from './GitPanel';
@@ -12,6 +11,8 @@ interface RightPanelProps {
   sessions: Session[];
   selectedSessionId: string | null;
   unread: Record<string, number>;
+  tab: RightTab;
+  onTabChange: (tab: RightTab) => void;
   refreshKey: number;
   onGitChanged: () => void;
   onNotify: (level: 'info' | 'warn' | 'error', message: string) => void;
@@ -23,7 +24,8 @@ interface RightPanelProps {
 }
 
 export function RightPanel(props: RightPanelProps) {
-  const [tab, setTab] = useState<RightTab>('git');
+  const tab = props.tab;
+  const setTab = props.onTabChange;
 
   return (
     <aside className="right">

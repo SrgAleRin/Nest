@@ -10,12 +10,14 @@ import type {
   TaskProgressStep,
 } from '@nest/shared';
 import { Badge, Button, IconButton, Spinner } from '@nest/ui';
+import { CommandPalette } from './components/CommandPalette';
 import { GearIcon } from './components/Icons';
 import { NewTaskDialog, type NewTaskSubmission } from './components/NewTaskDialog';
-import { RightPanel } from './components/RightPanel';
+import { RightPanel, type RightTab } from './components/RightPanel';
 import { SettingsDialog } from './components/SettingsDialog';
 import { Sidebar } from './components/Sidebar';
 import { TerminalPane } from './components/TerminalPane';
+import type { CommandItem } from './commands';
 import { createClient } from './rpc/client';
 import { emitSessionData } from './state/terminalBus';
 import { sessionEndEffect, unreadTotal } from './notifications';
@@ -52,6 +54,8 @@ export function App() {
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [rightTab, setRightTab] = useState<RightTab>('git');
   const [unread, setUnread] = useState<Record<string, number>>({});
   const [activateSessionId, setActivateSessionId] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
@@ -78,6 +82,8 @@ export function App() {
     () => sessions.filter((session) => session.taskId === selectedTaskId),
     [sessions, selectedTaskId],
   );
+  const selectedSession =
+    selectedSessions.find((session) => session.id === selectedSessionId) ?? null;
   const newTaskProject = projects.find((project) => project.id === newTaskProjectId) ?? null;
   // Full harness list drives resume support, while disabled profiles stay out
   // of the start pickers. Both come from the same cached registry.
@@ -96,6 +102,23 @@ export function App() {
     [harnesses],
   );
   const unreadCount = useMemo(() => Math.min(999, unreadTotal(unread)), [unread]);
+
+  const openPalette = useCallback(() => {
+    // Another modal owns the keyboard while it is open.
+    if (settingsOpen || newTaskProject) return;
+    setPaletteOpen(true);
+  }, [newTaskProject, settingsOpen]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'p') {
+        event.preventDefault();
+        openPalette();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [openPalette]);
 
   const refreshAll = useCallback(async () => {
     try {
@@ -496,6 +519,135 @@ export function App() {
     }));
   }, [selectedTaskId]);
 
+  const paletteCommands: CommandItem[] = [];
+  for (const task of tasks) {
+    const project = projects.find((candidate) => candidate.id === task.projectId);
+    paletteCommands.push({
+      id: `task:${task.id}`,
+      title: task.kind === 'checkout' ? 'main checkout' : task.title,
+      detail: `${project?.name ?? 'project'} · ${task.branch}`,
+      keywords: 'switch task project workspace',
+      kind: 'task',
+      run: () => setSelectedTaskId(task.id),
+    });
+  }
+  for (const session of sessions) {
+    const task = tasks.find((candidate) => candidate.id === session.taskId);
+    paletteCommands.push({
+      id: `session:${session.id}`,
+      title: session.title,
+      detail: `${task?.kind === 'checkout' ? 'main checkout' : (task?.title ?? 'task')} · ${session.status}`,
+      keywords: 'open session terminal',
+      kind: 'session',
+      run: () => selectSession(session.id),
+    });
+  }
+  if (selectedTask) {
+    for (const harness of visibleHarnesses) {
+      if (!harness.available) continue;
+      paletteCommands.push({
+        id: `harness:${harness.id}`,
+        title: `Start ${harness.label}`,
+        detail: selectedTask.kind === 'checkout' ? 'main checkout' : selectedTask.title,
+        keywords: 'run launch harness new session',
+        kind: 'harness',
+        run: () => void startSession(harness.id),
+      });
+    }
+    const live =
+      selectedSession?.status === 'starting' ||
+      selectedSession?.status === 'running' ||
+      selectedSession?.status === 'idle';
+    if (selectedSession && live) {
+      paletteCommands.push({
+        id: 'session:stop',
+        title: `Stop ${selectedSession.title}`,
+        detail: 'kill the running harness',
+        keywords: 'kill terminate',
+        kind: 'action',
+        run: () => void stopSession(selectedSession.id),
+      });
+    }
+    if (selectedSession && !live && resumableHarnesses.has(selectedSession.harnessId)) {
+      paletteCommands.push({
+        id: 'session:resume',
+        title: `Resume ${selectedSession.title}`,
+        detail: selectedSession.harnessSessionId ? 'exact conversation' : 'latest conversation',
+        keywords: 'continue session',
+        kind: 'action',
+        run: () => void resumeSession(selectedSession),
+      });
+    }
+    paletteCommands.push({
+      id: 'task:reveal',
+      title: 'Reveal workspace in Explorer',
+      detail: shortPath(selectedTask.workspacePath, 48),
+      keywords: 'open folder finder',
+      kind: 'action',
+      run: () => {
+        void client.invoke('tasks.reveal', { taskId: selectedTask.id }).catch((error) => {
+          notify('error', errorMessage(error));
+        });
+      },
+    });
+    paletteCommands.push({
+      id: 'git:refresh',
+      title: 'Refresh git status',
+      detail: selectedTask.branch,
+      keywords: 'reload changes diff',
+      kind: 'action',
+      run: bumpGit,
+    });
+  }
+  if (selectedProject) {
+    paletteCommands.push({
+      id: 'task:new',
+      title: 'New task',
+      detail: selectedProject.name,
+      keywords: 'create worktree branch',
+      kind: 'action',
+      run: () => setNewTaskProjectId(selectedProject.id),
+    });
+  }
+  paletteCommands.push({
+    id: 'project:add',
+    title: 'Add project',
+    detail: 'register a git repository',
+    keywords: 'open folder repository',
+    kind: 'action',
+    run: () => void addProject(),
+  });
+  paletteCommands.push({
+    id: 'app:settings',
+    title: 'Settings',
+    detail: 'harness profiles and custom command',
+    keywords: 'preferences config options',
+    kind: 'action',
+    run: () => setSettingsOpen(true),
+  });
+  for (const [tab, label] of [
+    ['git', 'Git'],
+    ['diff', 'Diff'],
+    ['sessions', 'Sessions'],
+  ] as Array<[RightTab, string]>) {
+    paletteCommands.push({
+      id: `panel:${tab}`,
+      title: `Show ${label} panel`,
+      detail: 'right column',
+      keywords: 'tab switch right column',
+      kind: 'action',
+      run: () => setRightTab(tab),
+    });
+  }
+  paletteCommands.push({
+    id: 'app:palette',
+    title: 'Command palette',
+    detail: 'Ctrl+Shift+P',
+    keywords: 'search commands',
+    kind: 'action',
+    run: () => setPaletteOpen(true),
+  });
+
   if (loading) {
     return (
       <div className="boot">
@@ -584,6 +736,7 @@ export function App() {
           onNewSession={restartSession}
           resumableHarnesses={resumableHarnesses}
           onError={reportError}
+          onOpenPalette={openPalette}
         />
 
         <RightPanel
@@ -592,6 +745,8 @@ export function App() {
           sessions={selectedSessions}
           selectedSessionId={selectedSessionId}
           unread={unread}
+          tab={rightTab}
+          onTabChange={setRightTab}
           refreshKey={gitVersion}
           onGitChanged={bumpGit}
           onNotify={notify}
@@ -653,6 +808,10 @@ export function App() {
             void refreshHarnesses();
           }}
         />
+      ) : null}
+
+      {paletteOpen ? (
+        <CommandPalette items={paletteCommands} onClose={() => setPaletteOpen(false)} />
       ) : null}
 
       {toast ? (

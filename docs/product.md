@@ -291,11 +291,12 @@ No tasks yet. Create one to get a worktree and a fresh agent session.
 
 ### 6.6 Command palette
 
-`Ctrl+K`:
+`Ctrl+Shift+P` (не `Ctrl+K`: в шелле это kill-line, и Nest не отбирает его у терминала):
 
 - задачи и сессии по имени;
-- проекты;
-- команды: `New task`, `New session`, `Open main checkout`, `Open settings`, `Reveal workspace`;
+- запуск доступного harness, stop/resume текущей сессии;
+- переключение панелей Git / Diff / Sessions;
+- команды: `New task`, `Add project`, `Settings`, `Reveal workspace`, `Refresh git`;
 - переход к файлу — позже.
 
 ## 7. Функциональные требования

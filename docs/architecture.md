@@ -434,6 +434,14 @@ pty.onData(chunk)
 
 На Windows тосты требуют AppUserModelID; main выставляет `dev.nest.desktop` (совпадает с `appId` в `electron-builder.yml`).
 
+### 6.9 Command palette
+
+`Ctrl+Shift+P` открывает палитру команд (намеренно не `Ctrl+K` — в шелле это kill-line). Renderer строит плоский список `CommandItem` на каждый рендер: задачи, сессии, запуск доступных harness, stop/resume текущей сессии, переключение панелей Git/Diff/Sessions, `New task`, `Add project`, `Settings`, `Reveal workspace`, `Refresh git`. `filterCommands` сортирует совпадения по prefix > substring > subsequence и учитывает `detail`/`keywords`.
+
+Палитра — обычный `modal-overlay` с `max-height` и скроллом: ↑↓/Enter/Esc, клик по строке, фокус в поле поиска, выбранная строка подскролливается. Команда выполняется после закрытия палитры, поэтому `New task`/`Settings` открываются без наложения модалов.
+
+Вкладка правой колонки поднята в `App` (`RightTab`), чтобы палитра могла переключать её теми же callbacks, что и кнопки. Когда фокус в терминале, xterm-хендлер распознаёт `Ctrl+Shift+P` и возвращает `false`, не отправляя его в PTY; глобальный keydown-listener открывает палитру. Пока открыт другой модал, shortcut игнорируется.
+
 ## 7. Git и workspace
 
 ### 7.0 Два вида workspace
