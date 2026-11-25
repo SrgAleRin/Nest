@@ -26,6 +26,11 @@ const empty = z.object({});
 export const rpcMethods = {
   'app.info': { params: empty, result: AppInfoSchema },
 
+  'app.openExternal': {
+    params: z.object({ url: z.string().min(1).max(2048) }),
+    result: z.void(),
+  },
+
   'dialog.pickDirectory': { params: empty, result: z.string().nullable() },
 
   'projects.list': { params: empty, result: z.array(ProjectSchema) },

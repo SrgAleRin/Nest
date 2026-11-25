@@ -589,6 +589,43 @@ code,
   inset: 10px 4px 8px 10px;
 }
 
+.terminal-find {
+  position: absolute;
+  top: 8px;
+  right: 14px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 5px 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.terminal-find input {
+  width: 170px;
+  padding: 3px 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: #0b0f15;
+  color: var(--text);
+  font: 11px var(--mono);
+  outline: none;
+}
+
+.terminal-find input:focus {
+  border-color: var(--blue);
+}
+
+.find-count {
+  min-width: 38px;
+  text-align: center;
+  color: var(--dim);
+  font: 10px var(--mono);
+}
+
 .terminal-exit {
   position: absolute;
   right: 12px;

@@ -22,6 +22,19 @@ export function registerIpc(context: IpcContext): void {
   const handlers: RpcHandlers = {
     'app.info': () => context.info(),
 
+    'app.openExternal': async ({ url }) => {
+      let protocol = '';
+      try {
+        protocol = new URL(url).protocol;
+      } catch {
+        throw new NestError('invalid_url', 'Not a valid URL');
+      }
+      if (protocol !== 'http:' && protocol !== 'https:' && protocol !== 'mailto:') {
+        throw new NestError('unsupported_url', `Refusing to open ${protocol} links`);
+      }
+      await shell.openExternal(url);
+    },
+
     'dialog.pickDirectory': async () => {
       const window = context.getWindow();
       const result = window

@@ -223,6 +223,8 @@ export function createMockClient(): NestClient {
     switch (method) {
       case 'app.info':
         return info;
+      case 'app.openExternal':
+        return undefined;
       case 'harness.list':
         return harnesses;
       case 'dialog.pickDirectory':

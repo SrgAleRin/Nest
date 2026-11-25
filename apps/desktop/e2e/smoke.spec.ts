@@ -88,6 +88,16 @@ test('runs the fake harness, persists scrollback and recovers after restart', as
   await page.keyboard.press('Enter');
   await expect(page.locator('.xterm-rows')).toContainText('hello-e2e', { timeout: 30_000 });
 
+  // Ctrl+F opens the in-terminal search with match highlighting.
+  await page.locator('.xterm-helper-textarea').focus();
+  await page.keyboard.press('Control+f');
+  await expect(page.locator('.terminal-find')).toBeVisible();
+  await page.locator('.terminal-find input').fill('FakeHarness');
+  await expect(page.locator('.find-count')).toContainText('/', { timeout: 10_000 });
+  await expect(page.locator('.find-count')).not.toHaveText('0/0');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.terminal-find')).toHaveCount(0);
+
   // A status change (running -> idle) must not remount the terminal: remounting
   // disposes xterm and replays scrollback, which looks like flashing in TUIs.
   const terminal = await page.locator('.xterm').elementHandle();

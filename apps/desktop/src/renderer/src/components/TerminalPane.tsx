@@ -1,11 +1,22 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { FitAddon } from '@xterm/addon-fit';
+import { SearchAddon } from '@xterm/addon-search';
+import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
 import type { HarnessProfile, NestClient, Session, Task } from '@nest/shared';
 import { EmptyState } from '@nest/ui';
 import { PlayIcon, TerminalIcon } from './Icons';
 import { onSessionData } from '../state/terminalBus';
 import { errorMessage } from '../utils';
+
+const SEARCH_DECORATIONS = {
+  matchBackground: '#2a3a55',
+  matchBorder: '#3b5375',
+  matchOverviewRuler: '#7aa2f7',
+  activeMatchBackground: '#7aa2f7',
+  activeMatchBorder: '#e7ecf6',
+  activeMatchColorOverviewRuler: '#e0af68',
+} as const;
 
 interface TerminalPaneProps {
   client: NestClient;
@@ -168,6 +179,8 @@ function TerminalView({
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  const searchRef = useRef<SearchAddon | null>(null);
+  const findInputRef = useRef<HTMLInputElement>(null);
   const applyFitRef = useRef<() => void>(() => {});
   const lastSizeRef = useRef<{ cols: number; rows: number } | null>(null);
   const warnedRef = useRef(false);
@@ -175,6 +188,47 @@ function TerminalView({
   statusRef.current = session.status;
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
+
+  const [findOpen, setFindOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [findResults, setFindResults] = useState({ index: -1, count: 0 });
+  const findOpenRef = useRef(findOpen);
+  findOpenRef.current = findOpen;
+  const queryRef = useRef(query);
+  queryRef.current = query;
+
+  const runFind = (direction: 'next' | 'prev', value = queryRef.current): void => {
+    const search = searchRef.current;
+    if (!search) return;
+    const term = value.trim();
+    if (!term) {
+      search.clearDecorations();
+      setFindResults({ index: -1, count: 0 });
+      return;
+    }
+    const options = {
+      caseSensitive: false,
+      incremental: direction === 'next',
+      decorations: SEARCH_DECORATIONS,
+    };
+    if (direction === 'next') search.findNext(term, options);
+    else search.findPrevious(term, options);
+  };
+
+  const closeFind = (): void => {
+    setFindOpen(false);
+    searchRef.current?.clearDecorations();
+    setFindResults({ index: -1, count: 0 });
+    termRef.current?.focus();
+  };
+
+  useEffect(() => {
+    if (!findOpen) return;
+    findInputRef.current?.focus();
+    findInputRef.current?.select();
+    if (queryRef.current.trim()) runFind('next');
+    // Only react to opening the bar; typing is handled by the input itself.
+  }, [findOpen]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -186,7 +240,10 @@ function TerminalView({
       fontSize: 13,
       lineHeight: 1.25,
       scrollback: 10000,
-      allowProposedApi: false,
+      // SearchAddon highlights matches through the decorations API, which xterm
+      // still exposes behind allowProposedApi. xterm is pinned, so the surface
+      // cannot drift between releases.
+      allowProposedApi: true,
       theme: {
         background: '#080a0e',
         foreground: '#e7ecf6',
@@ -209,6 +266,38 @@ function TerminalView({
     term.open(host);
     termRef.current = term;
     fitRef.current = fit;
+
+    const search = new SearchAddon();
+    term.loadAddon(search);
+    searchRef.current = search;
+    const searchResults = search.onDidChangeResults(({ resultIndex, resultCount }) => {
+      setFindResults({ index: resultIndex, count: resultCount });
+    });
+
+    term.loadAddon(
+      new WebLinksAddon((event, uri) => {
+        event.preventDefault();
+        void client
+          .invoke('app.openExternal', { url: uri })
+          .catch((error) => onErrorRef.current(errorMessage(error)));
+      }),
+    );
+
+    term.attachCustomKeyEventHandler((event) => {
+      if (event.type !== 'keydown') return true;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+        setFindOpen(true);
+        return false;
+      }
+      if (event.key === 'Escape' && findOpenRef.current) {
+        setFindOpen(false);
+        search.clearDecorations();
+        setFindResults({ index: -1, count: 0 });
+        term.focus();
+        return false;
+      }
+      return true;
+    });
 
     const offData = onSessionData(session.id, (data) => term.write(data));
     const input = term.onData((data) => {
@@ -272,11 +361,13 @@ function TerminalView({
       cancelAnimationFrame(initialFrame);
       if (frame !== 0) cancelAnimationFrame(frame);
       observer.disconnect();
+      searchResults.dispose();
       offData();
       input.dispose();
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
+      searchRef.current = null;
       applyFitRef.current = () => {};
       lastSizeRef.current = null;
     };
@@ -304,6 +395,45 @@ function TerminalView({
 
   return (
     <div className={`terminal-view ${active ? 'active' : ''}`}>
+      {findOpen ? (
+        <div className="terminal-find">
+          <input
+            ref={findInputRef}
+            value={query}
+            onChange={(event) => {
+              const value = event.target.value;
+              setQuery(value);
+              runFind('next', value);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                runFind(event.shiftKey ? 'prev' : 'next');
+              } else if (event.key === 'Escape') {
+                event.preventDefault();
+                closeFind();
+              }
+            }}
+            placeholder="Find in terminal"
+            aria-label="Find in terminal"
+            spellCheck={false}
+          />
+          <span className="find-count">
+            {findResults.count === 0
+              ? '0/0'
+              : `${findResults.index < 0 ? '…' : findResults.index + 1}/${findResults.count}`}
+          </span>
+          <button className="mini-btn" title="Previous match" onClick={() => runFind('prev')}>
+            ↑
+          </button>
+          <button className="mini-btn" title="Next match" onClick={() => runFind('next')}>
+            ↓
+          </button>
+          <button className="icon-btn" title="Close search" onClick={closeFind}>
+            ×
+          </button>
+        </div>
+      ) : null}
       <div className="terminal-host" ref={hostRef} />
       {session.status === 'exited' || session.status === 'failed' ? (
         <div className={`terminal-exit ${session.status}`}>
