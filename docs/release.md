@@ -38,7 +38,7 @@ win-unpacked/
 В репозитории два workflow:
 
 - [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) — на каждый push в `main` и на pull request: install, typecheck, lint, unit/integration, build и e2e. При падении e2e `test-results` с трейсами уходят артефактом;
-- [`.github/workflows/release.yml`](../.github/workflows/release.yml) — по тегу `v*`: проверка версии, те же проверки, `pnpm dist`, проверка артефактов, packaged-смоук и черновик GitHub Release с `Nest-Setup-<version>.exe`, `.blockmap` и `latest.yml`.
+- [`.github/workflows/release.yml`](../.github/workflows/release.yml) — по тегу `v*`: проверка версии, typecheck, lint, unit/integration, `pnpm dist`, проверка артефактов, packaged-смоук и черновик GitHub Release с `Nest-Setup-<version>.exe`, `.blockmap` и `latest.yml`. Полный e2e остаётся блокирующим в `ci` на `main`; релиз не дублирует его, чтобы не удлинять сборку и не зависеть от таймингов UI-тестов.
 
 ### Что нужно один раз
 
