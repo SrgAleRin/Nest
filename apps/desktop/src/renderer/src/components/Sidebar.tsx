@@ -28,6 +28,9 @@ interface SidebarProps {
 
 export function Sidebar(props: SidebarProps) {
   const { projects, tasks, sessions, selectedTaskId, selectedSessionId } = props;
+  const live = sessions.filter(
+    (session) => session.status === 'running' || session.status === 'idle',
+  );
 
   return (
     <aside className="sidebar">
@@ -39,6 +42,32 @@ export function Sidebar(props: SidebarProps) {
       </div>
 
       <div className="sidebar-scroll">
+        {live.length > 0 ? (
+          <div className="running">
+            <div className="section-label">Running</div>
+            {live.map((session) => {
+              const task = tasks.find((candidate) => candidate.id === session.taskId);
+              const project = projects.find((candidate) => candidate.id === task?.projectId);
+              return (
+                <button
+                  className={`running-row ${
+                    session.id === selectedSessionId ? 'selected' : ''
+                  }`}
+                  key={session.id}
+                  onClick={() => props.onSelectSession(session)}
+                  title={`${project?.name ?? ''} · ${task?.branch ?? ''} · ${session.status}`}
+                >
+                  <span className={`dot dot-${session.status}`} />
+                  <span className="running-name">{session.title}</span>
+                  <span className="running-context">
+                    {project?.name ?? '—'}
+                    {task?.kind === 'checkout' ? ' · main' : task ? ` · ${task.title}` : ''}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
         {projects.length === 0 ? (
           <div className="sidebar-empty">
             <p>No projects yet.</p>

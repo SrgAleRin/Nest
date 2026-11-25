@@ -78,6 +78,11 @@ test('runs the fake harness, persists scrollback and recovers after restart', as
   await expect(page.locator('.terminal-tab')).toContainText('Fake harness', { timeout: 30_000 });
   await expect(page.locator('.xterm-rows')).toContainText('FakeHarness', { timeout: 30_000 });
 
+  // The sidebar groups live sessions above the project tree.
+  await expect(page.locator('.running .running-row')).toContainText('Fake harness', {
+    timeout: 30_000,
+  });
+
   await page.locator('.xterm-helper-textarea').focus();
   await page.keyboard.type('echo hello-e2e');
   await page.keyboard.press('Enter');
