@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { GitStatus, NestClient, Task } from '@nest/shared';
-import { Button, EmptyState, Spinner } from '@nest/ui';
+import { Button, EmptyState, ErrorState } from '@nest/ui';
 import { BranchIcon, RefreshIcon } from './Icons';
+import { GitPanelSkeleton } from './PanelSkeletons';
+import { panelPhase } from '../panelState';
 import { errorMessage, statusLetter, statusTone } from '../utils';
 
 interface GitPanelProps {
@@ -15,6 +17,7 @@ interface GitPanelProps {
 export function GitPanel({ client, task, refreshKey, onChanged, onNotify }: GitPanelProps) {
   const [status, setStatus] = useState<GitStatus | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [stageAll, setStageAll] = useState(true);
@@ -22,18 +25,29 @@ export function GitPanel({ client, task, refreshKey, onChanged, onNotify }: GitP
   const load = useCallback(async () => {
     if (!task) {
       setStatus(null);
+      setError(null);
       return;
     }
     setLoading(true);
+    setError(null);
     try {
       const next = await client.invoke('git.status', { taskId: task.id });
       setStatus(next);
-    } catch (error) {
-      onNotify('error', errorMessage(error));
+    } catch (loadError) {
+      // A panel error stays inline with a retry; a toast would vanish before
+      // the user can act on it.
+      setError(errorMessage(loadError));
     } finally {
       setLoading(false);
     }
-  }, [client, task, onNotify]);
+  }, [client, task]);
+
+  // A different task must never show the previous task's files. The right
+  // panel also keys this component by task id, so this only guards reuse.
+  useEffect(() => {
+    setStatus(null);
+    setError(null);
+  }, [task?.id]);
 
   useEffect(() => {
     void load();
@@ -97,29 +111,32 @@ export function GitPanel({ client, task, refreshKey, onChanged, onNotify }: GitP
     });
   }
 
+  const phase = panelPhase({ loading, error, hasData: status !== null });
+
   if (!task) {
     return <EmptyState title="No workspace selected">Select a task to see git status.</EmptyState>;
   }
 
+  if (phase === 'error') {
+    return (
+      <div className="panel-scroll git-panel">
+        <GitHead status={status} loading={loading} onRefresh={() => void load()} />
+        <ErrorState title="Git status unavailable" onRetry={() => void load()}>
+          {error}
+        </ErrorState>
+      </div>
+    );
+  }
+
+  if (phase !== 'ready' || !status) {
+    return <GitPanelSkeleton />;
+  }
+
   return (
     <div className="panel-scroll git-panel">
-      <div className="git-head">
-        <div className="git-branch">
-          <BranchIcon />
-          <span className="git-branch-name">{status?.branch ?? '…'}</span>
-          {status?.upstream ? <span className="git-upstream">{status.upstream}</span> : null}
-        </div>
-        <button
-          className="icon-btn"
-          title="Refresh status"
-          onClick={() => void load()}
-          disabled={loading}
-        >
-          <RefreshIcon />
-        </button>
-      </div>
+      <GitHead status={status} loading={loading} onRefresh={() => void load()} />
 
-      {status && (status.ahead > 0 || status.behind > 0) ? (
+      {status.ahead > 0 || status.behind > 0 ? (
         <div className="git-track">
           {status.ahead > 0 ? <span className="track-pill">↑ {status.ahead}</span> : null}
           {status.behind > 0 ? <span className="track-pill">↓ {status.behind}</span> : null}
@@ -127,23 +144,23 @@ export function GitPanel({ client, task, refreshKey, onChanged, onNotify }: GitP
       ) : null}
 
       <div className="git-files-head">
-        <span className="section-label">Changes {status ? `(${status.files.length})` : ''}</span>
+        <span className="section-label">Changes ({status.files.length})</span>
         <div className="git-files-actions">
-          <button className="mini-btn" onClick={stageEverything} disabled={busy || !status?.files.length}>
+          <button
+            className="mini-btn"
+            onClick={stageEverything}
+            disabled={busy || !status.files.length}
+          >
             Stage all
           </button>
         </div>
       </div>
 
-      {loading && !status ? (
-        <div className="panel-loading">
-          <Spinner /> Loading status
-        </div>
-      ) : null}
-
       <div className="git-files">
-        {status?.files.length === 0 ? <div className="panel-empty">Working tree is clean</div> : null}
-        {status?.files.map((file) => (
+        {status.files.length === 0 ? (
+          <div className="panel-empty">Working tree is clean</div>
+        ) : null}
+        {status.files.map((file) => (
           <div className="git-file" key={`${file.path}-${file.indexStatus}${file.worktreeStatus}`}>
             <span className={`git-letter ${statusTone(file)}`}>{statusLetter(file)}</span>
             <span className="git-path" title={file.path}>
@@ -187,12 +204,7 @@ export function GitPanel({ client, task, refreshKey, onChanged, onNotify }: GitP
           Stage all changes
         </label>
         <div className="commit-actions">
-          <Button
-            variant="primary"
-            size="sm"
-            disabled={busy || !message.trim()}
-            onClick={commit}
-          >
+          <Button variant="primary" size="sm" disabled={busy || !message.trim()} onClick={commit}>
             {busy ? 'Working…' : 'Commit'}
           </Button>
           <Button variant="secondary" size="sm" disabled={busy} onClick={push}>
@@ -200,6 +212,29 @@ export function GitPanel({ client, task, refreshKey, onChanged, onNotify }: GitP
           </Button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function GitHead({
+  status,
+  loading,
+  onRefresh,
+}: {
+  status: GitStatus | null;
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <div className="git-head">
+      <div className="git-branch">
+        <BranchIcon />
+        <span className="git-branch-name">{status?.branch ?? '…'}</span>
+        {status?.upstream ? <span className="git-upstream">{status.upstream}</span> : null}
+      </div>
+      <button className="icon-btn" title="Refresh status" onClick={onRefresh} disabled={loading}>
+        <RefreshIcon />
+      </button>
     </div>
   );
 }

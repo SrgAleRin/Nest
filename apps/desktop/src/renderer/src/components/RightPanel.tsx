@@ -52,6 +52,7 @@ export function RightPanel(props: RightPanelProps) {
       <div className="right-body">
         {tab === 'git' ? (
           <GitPanel
+            key={props.task?.id ?? 'none'}
             client={props.client}
             task={props.task}
             refreshKey={props.refreshKey}
@@ -62,6 +63,7 @@ export function RightPanel(props: RightPanelProps) {
 
         {tab === 'diff' ? (
           <DiffPanel
+            key={props.task?.id ?? 'none'}
             client={props.client}
             task={props.task}
             sessions={props.sessions}
@@ -74,6 +76,7 @@ export function RightPanel(props: RightPanelProps) {
         {tab === 'sessions' ? (
           <SessionsPanel
             sessions={props.sessions}
+            hasTask={props.task !== null}
             selectedSessionId={props.selectedSessionId}
             unread={props.unread}
             resumableHarnesses={props.resumableHarnesses}

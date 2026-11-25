@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AppSettings, HarnessId, HarnessProfile, NestClient } from '@nest/shared';
-import { Button, Spinner } from '@nest/ui';
+import { Button } from '@nest/ui';
 import { CloseIcon } from './Icons';
+import { SettingsListSkeleton } from './PanelSkeletons';
 import { errorMessage } from '../utils';
 
 interface SettingsDialogProps {
@@ -16,29 +17,36 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
   const [customCommand, setCustomCommand] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const aliveRef = useRef(true);
 
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const [settings, list] = await Promise.all([
-          client.invoke('settings.get', {}),
-          client.invoke('harness.list', { includeDisabled: true }),
-        ]);
-        if (cancelled) return;
-        // The custom profile is configured through the text field below, not
-        // through a checkbox, so it is not part of the toggle list.
-        setProfiles(list.filter((profile) => profile.source === 'builtin'));
-        setDisabled(new Set(settings.disabledHarnesses));
-        setCustomCommand(settings.customCommand);
-      } catch (loadError) {
-        if (!cancelled) setError(errorMessage(loadError));
-      }
-    })();
+    aliveRef.current = true;
     return () => {
-      cancelled = true;
+      aliveRef.current = false;
     };
+  }, []);
+
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      const [settings, list] = await Promise.all([
+        client.invoke('settings.get', {}),
+        client.invoke('harness.list', { includeDisabled: true }),
+      ]);
+      if (!aliveRef.current) return;
+      // The custom profile is configured through the text field below, not
+      // through a checkbox, so it is not part of the toggle list.
+      setProfiles(list.filter((profile) => profile.source === 'builtin'));
+      setDisabled(new Set(settings.disabledHarnesses));
+      setCustomCommand(settings.customCommand);
+    } catch (loadError) {
+      if (aliveRef.current) setError(errorMessage(loadError));
+    }
   }, [client]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -94,12 +102,23 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
           </button>
         </header>
 
-        {error ? <div className="settings-error">{error}</div> : null}
+        {error ? (
+          <div className="settings-error">
+            <span>{error}</span>
+            {profiles === null ? (
+              <button type="button" className="link-btn" onClick={() => void load()}>
+                Try again
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
         {profiles === null ? (
-          <div className="settings-loading">
-            {error ? null : <Spinner />} {error ? 'Could not load settings.' : 'Loading settings…'}
-          </div>
+          error ? (
+            <div className="settings-loading">Could not load settings.</div>
+          ) : (
+            <SettingsListSkeleton />
+          )
         ) : (
           <>
             <div className="settings-section">

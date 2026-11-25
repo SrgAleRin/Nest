@@ -50,17 +50,53 @@ export function Spinner({ label = 'Loading' }: { label?: string }) {
   return <span className="spinner" role="status" aria-label={label} />;
 }
 
-export function EmptyState({
-  title,
-  children,
+export function Skeleton({
+  width = '100%',
+  height = 10,
+  radius = 4,
+  className = '',
 }: {
-  title: string;
-  children?: ReactNode;
+  width?: number | string;
+  height?: number | string;
+  radius?: number;
+  className?: string;
 }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`skeleton ${className}`.trim()}
+      style={{ width, height, borderRadius: radius }}
+    />
+  );
+}
+
+export function EmptyState({ title, children }: { title: string; children?: ReactNode }) {
   return (
     <div className="empty-state">
       <div className="empty-state-title">{title}</div>
       {children ? <div className="empty-state-body">{children}</div> : null}
+    </div>
+  );
+}
+
+export function ErrorState({
+  title,
+  children,
+  onRetry,
+}: {
+  title: string;
+  children?: ReactNode;
+  onRetry?: () => void;
+}) {
+  return (
+    <div className="error-state" role="alert">
+      <div className="error-state-title">{title}</div>
+      {children ? <div className="error-state-body">{children}</div> : null}
+      {onRetry ? (
+        <Button size="sm" variant="secondary" onClick={onRetry}>
+          Try again
+        </Button>
+      ) : null}
     </div>
   );
 }

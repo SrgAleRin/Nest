@@ -5,6 +5,7 @@ import { relativeTime } from '../utils';
 
 interface SessionsPanelProps {
   sessions: Session[];
+  hasTask: boolean;
   selectedSessionId: string | null;
   unread: Record<string, number>;
   resumableHarnesses: ReadonlySet<string>;
@@ -16,6 +17,7 @@ interface SessionsPanelProps {
 
 export function SessionsPanel({
   sessions,
+  hasTask,
   selectedSessionId,
   unread,
   resumableHarnesses,
@@ -24,6 +26,14 @@ export function SessionsPanel({
   onResume,
   onNewSession,
 }: SessionsPanelProps) {
+  if (!hasTask) {
+    return (
+      <EmptyState title="No workspace selected">
+        Select a task to see the sessions running in it.
+      </EmptyState>
+    );
+  }
+
   if (sessions.length === 0) {
     return (
       <EmptyState title="No sessions yet">

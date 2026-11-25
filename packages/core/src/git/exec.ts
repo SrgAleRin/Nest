@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { promisify } from 'node:util';
 import { NestError } from '../errors.js';
 
@@ -14,7 +15,16 @@ export interface GitOptions {
   timeout?: number;
 }
 
-export async function git(cwd: string, args: string[], options: GitOptions = {}): Promise<GitResult> {
+export async function git(
+  cwd: string,
+  args: string[],
+  options: GitOptions = {},
+): Promise<GitResult> {
+  // execFile reports a missing working directory as ENOENT, exactly like a
+  // missing executable, so check the workspace first for an accurate error.
+  if (!existsSync(cwd)) {
+    throw new NestError('workspace_missing', `Workspace not found: ${cwd}`);
+  }
   try {
     const { stdout, stderr } = await execFileAsync('git', args, {
       cwd,

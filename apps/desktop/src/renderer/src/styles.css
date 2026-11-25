@@ -81,7 +81,8 @@ code,
   background-clip: padding-box;
 }
 
-.app {
+.app,
+.boot-shell {
   height: 100vh;
   display: grid;
   grid-template-rows: 46px minmax(0, 1fr) 26px;
@@ -584,6 +585,12 @@ code,
   position: relative;
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.terminal-body > .empty-state {
+  flex: 1;
 }
 
 .terminal-view {
@@ -858,6 +865,42 @@ code,
   max-width: 340px;
   font-size: 11.5px;
   line-height: 1.6;
+}
+
+.empty-state-action {
+  display: flex;
+  margin: 10px auto 0;
+}
+
+.error-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 120px;
+  padding: 28px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.error-state-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #ffc3cd;
+}
+
+.error-state-body {
+  max-width: 360px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.error-state .btn {
+  margin-top: 4px;
 }
 
 /* ---------- git panel ---------- */
@@ -1580,6 +1623,42 @@ code,
   }
 }
 
+.skeleton {
+  display: block;
+  flex: 0 0 auto;
+  max-width: 100%;
+  background: linear-gradient(90deg, #131922 25%, #1c2635 37%, #131922 63%);
+  background-size: 400% 100%;
+  animation: skeleton-sweep 1.4s ease-in-out infinite;
+}
+
+@keyframes skeleton-sweep {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* ---------- modal, toast, status ---------- */
 
 .modal-overlay {
@@ -1801,12 +1880,20 @@ code,
 }
 
 .settings-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   padding: 7px 9px;
   border: 1px solid #5a2733;
   border-radius: 6px;
   background: #1a0e12;
   color: #ffd8de;
   font-size: 11px;
+}
+
+.settings-error span {
+  overflow-wrap: anywhere;
 }
 
 /* ---------- command palette ---------- */
@@ -2018,4 +2105,208 @@ code,
   color: var(--blue);
   font-size: 11px;
   cursor: pointer;
+}
+
+/* ---------- boot, skeletons and fatal errors ---------- */
+
+.boot-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-top: 6px;
+}
+
+.boot-project {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.boot-project-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 6px;
+}
+
+.boot-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-left: 12px;
+  padding-left: 8px;
+  border-left: 1px solid #1b2230;
+}
+
+.boot-task-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding-left: 4px;
+}
+
+.boot-spacer {
+  flex: 1;
+}
+
+.boot-terminal {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: 24px;
+}
+
+.boot-start {
+  width: min(620px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+}
+
+.boot-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+  width: 100%;
+  margin-top: 6px;
+}
+
+.boot-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.boot-right-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-bottom: 2px solid transparent;
+}
+
+.boot-right-tab.active {
+  border-bottom-color: #263449;
+  background: rgba(122, 162, 247, 0.04);
+}
+
+.boot-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.boot-git-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.boot-git-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.boot-commit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.boot-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.boot-diff-file {
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+}
+
+.boot-diff-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 10px;
+}
+
+.fatal-card {
+  width: min(520px, calc(100vw - 48px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px 20px;
+  border: 1px solid #5a2733;
+  border-radius: 12px;
+  background: #140c11;
+  text-align: left;
+}
+
+.fatal-title {
+  color: #ffd8de;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.fatal-message {
+  max-height: 120px;
+  margin: 0;
+  overflow: auto;
+  color: #f3c6ce;
+  font: 11px/1.5 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.fatal-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.fatal-details {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.fatal-details summary {
+  color: var(--blue);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.fatal-details pre {
+  max-height: 180px;
+  margin: 6px 0 0;
+  padding: 8px;
+  overflow: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: #0b0f15;
+  color: var(--dim);
+  font: 9.5px/1.45 var(--mono);
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+.fatal-card .btn {
+  align-self: flex-start;
+  margin-top: 2px;
 }

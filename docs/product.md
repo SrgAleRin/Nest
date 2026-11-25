@@ -271,23 +271,22 @@ Nest должен оставаться маленьким: если функци
 
 ### 6.5 Empty state
 
-Когда нет проектов:
+Первый запуск, проектов ещё нет:
 
 ```
-        ┌──────────────────────────────┐
-        │  Add your first repository   │
-        │  Nest will create isolated   │
-        │  worktrees for every task.   │
-        │        [ Add project ]       │
-        └──────────────────────────────┘
+sidebar:  No projects yet.
+          Add a git repository
+
+center:   Add your first repository
+          Nest creates isolated worktrees for every task.
+          [ Add project ]
 ```
 
-Когда нет задач у проекта:
+Нет выбранной задачи, но проекты есть: в центре «No task selected» с подсказкой выбрать задачу слева.
 
-```
-No tasks yet. Create one to get a worktree and a fresh agent session.
-[ New task ]
-```
+Нет сессий у задачи: стартовый экран «Start a harness» с доступными профилями; если на PATH ничего не найдено — подсказка про установку CLI и Fake harness. Если все профили выключены в настройках — «Every harness profile is disabled» и ссылка в Settings.
+
+Нет изменений: Git — «Working tree is clean», Diff — «No changes to review»; ошибка чтения статуса или diff показывается в панели с кнопкой `Try again`.
 
 ### 6.6 Command palette
 

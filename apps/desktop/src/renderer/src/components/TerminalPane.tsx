@@ -4,7 +4,7 @@ import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
 import type { HarnessProfile, NestClient, Session, Task } from '@nest/shared';
-import { EmptyState } from '@nest/ui';
+import { Button, EmptyState } from '@nest/ui';
 import { PlayIcon, TerminalIcon } from './Icons';
 import { onSessionData } from '../state/terminalBus';
 import { errorMessage } from '../utils';
@@ -27,10 +27,14 @@ const MOUNT_LIMIT = 8;
 interface TerminalPaneProps {
   client: NestClient;
   task: Task | null;
+  /** Drives the first-run empty state instead of the generic "no task" one. */
+  hasProjects: boolean;
   sessions: Session[];
   selectedSessionId: string | null;
   unread: Record<string, number>;
   harnesses: HarnessProfile[];
+  /** Every known profile is switched off in Settings. */
+  allHarnessesDisabled: boolean;
   busy: boolean;
   onSelectSession: (sessionId: string) => void;
   onStart: (harnessId: string) => void;
@@ -38,8 +42,9 @@ interface TerminalPaneProps {
   onNewSession: (session: Session) => void;
   resumableHarnesses: ReadonlySet<string>;
   onError: (message: string) => void;
-  /** Opens the command palette without typing Ctrl+Shift+P into the PTY. */
   onOpenPalette: () => void;
+  onOpenSettings: () => void;
+  onAddProject: () => void;
 }
 
 export function TerminalPane(props: TerminalPaneProps) {
@@ -112,13 +117,34 @@ export function TerminalPane(props: TerminalPaneProps) {
 
       <div className="terminal-body">
         {!task ? (
-          <EmptyState title="No task selected">
-            Pick a project or task in the left column to open a workspace.
+          <EmptyState title={props.hasProjects ? 'No task selected' : 'Add your first repository'}>
+            {props.hasProjects ? (
+              'Pick a project or task in the left column to open a workspace.'
+            ) : (
+              <>
+                Nest creates isolated worktrees for every task.
+                <br />
+                <Button
+                  variant="primary"
+                  size="sm"
+                  className="empty-state-action"
+                  onClick={props.onAddProject}
+                >
+                  Add project
+                </Button>
+              </>
+            )}
           </EmptyState>
         ) : null}
 
         {task && sessions.length === 0 ? (
-          <StartScreen harnesses={props.harnesses} busy={props.busy} onStart={props.onStart} />
+          <StartScreen
+            harnesses={props.harnesses}
+            busy={props.busy}
+            allDisabled={props.allHarnessesDisabled}
+            onStart={props.onStart}
+            onOpenSettings={props.onOpenSettings}
+          />
         ) : null}
 
         {mountedSessions.map((session) => (
@@ -142,11 +168,15 @@ export function TerminalPane(props: TerminalPaneProps) {
 function StartScreen({
   harnesses,
   busy,
+  allDisabled,
   onStart,
+  onOpenSettings,
 }: {
   harnesses: HarnessProfile[];
   busy: boolean;
+  allDisabled: boolean;
   onStart: (harnessId: string) => void;
+  onOpenSettings: () => void;
 }) {
   const available = harnesses.filter((harness) => harness.available);
   return (
@@ -162,8 +192,20 @@ function StartScreen({
       <div className="start-grid">
         {available.length === 0 ? (
           <div className="start-hint">
-            No harness commands found on PATH. Install Claude Code, Codex or OpenCode, or use the
-            built-in Fake harness in development.
+            {allDisabled ? (
+              <>
+                Every harness profile is disabled. Turn one on in{' '}
+                <button className="link-btn" onClick={onOpenSettings}>
+                  Settings
+                </button>
+                .
+              </>
+            ) : (
+              <>
+                No harness commands found on PATH. Install Claude Code, Codex or OpenCode, or use
+                the built-in Fake harness in development.
+              </>
+            )}
           </div>
         ) : null}
         {available.map((harness) => (

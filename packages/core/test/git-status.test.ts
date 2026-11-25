@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -67,5 +67,17 @@ describe('git status line counts', () => {
       untracked: true,
     });
     expect(byPath.get('blob.bin')).toMatchObject({ additions: null, deletions: null });
+  });
+
+  it('reports a missing workspace instead of a missing git binary', async () => {
+    const moved = `${repoPath}-moved`;
+    renameSync(repoPath, moved);
+    try {
+      await expect(core!.git.status(taskId)).rejects.toMatchObject({
+        code: 'workspace_missing',
+      });
+    } finally {
+      renameSync(moved, repoPath);
+    }
   });
 });

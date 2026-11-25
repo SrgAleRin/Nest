@@ -11,8 +11,10 @@ import type {
   Session,
   Task,
 } from '@nest/shared';
-import { Button, EmptyState, Spinner } from '@nest/ui';
+import { Button, EmptyState, ErrorState } from '@nest/ui';
 import { CheckIcon, SendIcon, TrashIcon } from './Icons';
+import { DiffPanelSkeleton } from './PanelSkeletons';
+import { panelPhase } from '../panelState';
 import { errorMessage } from '../utils';
 import { highlightHunk, tokenStyle, type HunkHighlight } from '../highlight';
 
@@ -72,6 +74,7 @@ export function DiffPanel({
   const [comments, setComments] = useState<ReviewComment[]>([]);
   const [highlights, setHighlights] = useState<Map<DiffHunk, HunkHighlight>>(new Map());
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [composer, setComposer] = useState<ComposerState | null>(null);
   const [draft, setDraft] = useState('');
@@ -88,9 +91,11 @@ export function DiffPanel({
     if (!task) {
       setDiff(null);
       setComments([]);
+      setError(null);
       return;
     }
     setLoading(true);
+    setError(null);
     try {
       const [nextDiff, nextComments] = await Promise.all([
         client.invoke('git.diff', { taskId: task.id }),
@@ -98,12 +103,12 @@ export function DiffPanel({
       ]);
       setDiff(nextDiff);
       setComments(nextComments);
-    } catch (error) {
-      onNotify('error', errorMessage(error));
+    } catch (loadError) {
+      setError(errorMessage(loadError));
     } finally {
       setLoading(false);
     }
-  }, [client, task, onNotify]);
+  }, [client, task]);
 
   useEffect(() => {
     void load();
@@ -394,32 +399,38 @@ export function DiffPanel({
     }
   }
 
+  const phase = panelPhase({ loading, error, hasData: diff !== null });
+
   if (!task) {
     return <EmptyState title="No workspace selected">Select a task to review its diff.</EmptyState>;
   }
 
+  if (phase === 'error') {
+    return (
+      <div className="diff-panel">
+        <DiffHead
+          count={diff?.files.length ?? null}
+          loading={loading}
+          onRefresh={() => void load()}
+        />
+        <ErrorState title="Diff unavailable" onRetry={() => void load()}>
+          {error}
+        </ErrorState>
+      </div>
+    );
+  }
+
+  if (phase !== 'ready' || !diff) {
+    return <DiffPanelSkeleton />;
+  }
+
   return (
     <div className="diff-panel">
-      <div className="diff-head">
-        <span className="section-label">
-          Diff {diff ? `· ${diff.files.length} file${diff.files.length === 1 ? '' : 's'}` : ''}
-        </span>
-        <button className="mini-btn" onClick={() => void load()} disabled={loading}>
-          {loading ? 'Loading…' : 'Refresh'}
-        </button>
-      </div>
-
-      {loading && !diff ? (
-        <div className="panel-loading">
-          <Spinner /> Loading diff
-        </div>
-      ) : null}
+      <DiffHead count={diff.files.length} loading={loading} onRefresh={() => void load()} />
 
       <div className="diff-body">
         <div className="diff-scroll" ref={scrollRef}>
-          {diff && diff.files.length === 0 ? (
-            <div className="panel-empty">No changes to review</div>
-          ) : null}
+          {diff.files.length === 0 ? <div className="panel-empty">No changes to review</div> : null}
 
           <div className="diff-rows" style={{ height: virtualizer.getTotalSize() }}>
             {virtualItems.map((item) => {
@@ -442,6 +453,28 @@ export function DiffPanel({
 
         {stickyFile ? <DiffFileHeader file={stickyFile} sticky /> : null}
       </div>
+    </div>
+  );
+}
+
+function DiffHead({
+  count,
+  loading,
+  onRefresh,
+}: {
+  count: number | null;
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <div className="diff-head">
+      <span className="section-label">
+        Diff
+        {count !== null ? ` · ${count} file${count === 1 ? '' : 's'}` : ''}
+      </span>
+      <button className="mini-btn" onClick={onRefresh} disabled={loading}>
+        {loading ? 'Loading…' : 'Refresh'}
+      </button>
     </div>
   );
 }

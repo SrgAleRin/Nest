@@ -9,7 +9,8 @@ import type {
   Task,
   TaskProgressStep,
 } from '@nest/shared';
-import { Badge, Button, IconButton, Spinner } from '@nest/ui';
+import { Badge, Button, IconButton } from '@nest/ui';
+import { BootSkeleton, FatalScreen } from './components/Boot';
 import { CommandPalette } from './components/CommandPalette';
 import { GearIcon } from './components/Icons';
 import { NewTaskDialog, type NewTaskSubmission } from './components/NewTaskDialog';
@@ -53,6 +54,7 @@ export function App() {
     step: TaskProgressStep;
   } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [rightTab, setRightTab] = useState<RightTab>('git');
@@ -102,6 +104,7 @@ export function App() {
     [harnesses],
   );
   const unreadCount = useMemo(() => Math.min(999, unreadTotal(unread)), [unread]);
+  const allHarnessesDisabled = harnesses.length > 0 && visibleHarnesses.length === 0;
 
   const openPalette = useCallback(() => {
     // Another modal owns the keyboard while it is open.
@@ -136,38 +139,37 @@ export function App() {
     }
   }, [client, notify]);
 
+  const loadInitial = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const [nextInfo, nextHarnesses, nextSettings] = await Promise.all([
+        client.invoke('app.info', {}),
+        client.invoke('harness.list', { includeDisabled: true }),
+        client.invoke('settings.get', {}),
+      ]);
+      const [nextProjects, nextTasks, nextSessions] = await Promise.all([
+        client.invoke('projects.list', {}),
+        client.invoke('tasks.list', {}),
+        client.invoke('sessions.list', {}),
+      ]);
+      setInfo(nextInfo);
+      setHarnesses(nextHarnesses);
+      setSettings(nextSettings);
+      setProjects(nextProjects);
+      setTasks(nextTasks);
+      setSessions(nextSessions);
+      setSelectedTaskId((current) => pickTaskId(nextTasks, current));
+    } catch (error) {
+      setLoadError(errorMessage(error));
+    } finally {
+      setLoading(false);
+    }
+  }, [client]);
+
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const [nextInfo, nextHarnesses, nextSettings] = await Promise.all([
-          client.invoke('app.info', {}),
-          client.invoke('harness.list', { includeDisabled: true }),
-          client.invoke('settings.get', {}),
-        ]);
-        const [nextProjects, nextTasks, nextSessions] = await Promise.all([
-          client.invoke('projects.list', {}),
-          client.invoke('tasks.list', {}),
-          client.invoke('sessions.list', {}),
-        ]);
-        if (cancelled) return;
-        setInfo(nextInfo);
-        setHarnesses(nextHarnesses);
-        setSettings(nextSettings);
-        setProjects(nextProjects);
-        setTasks(nextTasks);
-        setSessions(nextSessions);
-        setSelectedTaskId((current) => pickTaskId(nextTasks, current));
-      } catch (error) {
-        if (!cancelled) notify('error', errorMessage(error));
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [client, notify]);
+    void loadInitial();
+  }, [loadInitial]);
 
   useEffect(() => {
     return client.on((event) => {
@@ -649,13 +651,18 @@ export function App() {
   });
 
   if (loading) {
+    return <BootSkeleton />;
+  }
+
+  if (loadError) {
     return (
-      <div className="boot">
-        <div className="logo large">n</div>
-        <div className="boot-row">
-          <Spinner /> Starting Nest…
-        </div>
-      </div>
+      <FatalScreen
+        title="Nest could not start"
+        message={loadError}
+        hint="Check that the data directory is readable and that another copy of Nest is not holding the database."
+        actionLabel="Try again"
+        onAction={() => void loadInitial()}
+      />
     );
   }
 
@@ -725,10 +732,12 @@ export function App() {
         <TerminalPane
           client={client}
           task={selectedTask}
+          hasProjects={projects.length > 0}
           sessions={selectedSessions}
           selectedSessionId={selectedSessionId}
           unread={unread}
           harnesses={visibleHarnesses}
+          allHarnessesDisabled={allHarnessesDisabled}
           busy={busy}
           onSelectSession={setSelectedSessionId}
           onStart={(harnessId) => void startSession(harnessId)}
@@ -737,6 +746,8 @@ export function App() {
           resumableHarnesses={resumableHarnesses}
           onError={reportError}
           onOpenPalette={openPalette}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onAddProject={() => void addProject()}
         />
 
         <RightPanel

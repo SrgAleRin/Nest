@@ -193,13 +193,15 @@ Shared dirs (`node_modules`) остаются в P1.
 - [x] настройки harness: custom-команда и вкл/выкл встроенных профилей (⚙ в статусбаре, SQLite);
 - [x] уведомления: системные тосты о завершении/падении сессии и unread-бейджи в сайдбаре, вкладках и Sessions;
 - [x] command palette: `Ctrl+Shift+P`, задачи/сессии, запуск harness, панели, настройки и git-действия;
-- [ ] empty states, ошибки, скелетоны;
+- [x] empty states, ошибки, скелетоны;
 - [ ] e2e-тесты (main checkout, FakeHarness, комментарии к diff);
 - [ ] сборка: Windows NSIS — обязательна, macOS dmg — вторично, Linux — best effort;
 - [ ] auto-update;
 - [ ] документация.
 
 **Exit criteria:** установщик на чистой Windows-машине, первый запуск без Node.js, обновление работает; main checkout и хотя бы 2 harness проходят smoke-тест.
+
+Полировка состояний сделана: boot-скелетон повторяет трёхколоночный layout, первичная ошибка — `FatalScreen` с повтором, панели Git/Diff используют `panelPhase` и inline `ErrorState`, добавлен `ErrorBoundary`, скелетоны настроек и пустой старт-экран при выключенных harness. Проверка: unit на `panelPhase`, e2e `resilience.spec.ts` (ошибка → retry → восстановление) и скриншоты boot/error/settings.
 
 Оценка для одного потока: foundation уже собран, осталось три-четыре недели последовательной работы.
 
