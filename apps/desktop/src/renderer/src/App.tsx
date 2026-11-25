@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AppInfo, HarnessProfile, Project, Session, Task } from '@nest/shared';
 import { Badge, Button, Spinner } from '@nest/ui';
-import { NewTaskDialog } from './components/NewTaskDialog';
+import { NewTaskDialog, type NewTaskSubmission } from './components/NewTaskDialog';
 import { RightPanel } from './components/RightPanel';
 import { Sidebar } from './components/Sidebar';
 import { TerminalPane } from './components/TerminalPane';
@@ -181,21 +181,32 @@ export function App() {
   );
 
   const createTask = useCallback(
-    async (title: string, baseBranch?: string, setupScript?: string | null) => {
+    async (submission: NewTaskSubmission) => {
       if (!newTaskProjectId) return;
       setBusy(true);
       try {
+        if (submission.location === 'checkout') {
+          const task = await client.invoke('tasks.openCheckout', { projectId: newTaskProjectId });
+          setTasks((prev) => upsert(prev, task));
+          setSelectedTaskId(task.id);
+          setNewTaskProjectId(null);
+          notify('info', `Opened main checkout of ${shortPath(task.workspacePath, 48)}`);
+          return;
+        }
+
         const task = await client.invoke('tasks.create', {
           projectId: newTaskProjectId,
-          title,
-          ...(baseBranch ? { baseBranch } : {}),
-          ...(setupScript !== undefined ? { setupScript } : {}),
+          title: submission.title ?? '',
+          ...(submission.baseBranch ? { baseBranch: submission.baseBranch } : {}),
+          ...(submission.setupScript !== undefined
+            ? { setupScript: submission.setupScript }
+            : {}),
         });
         setTasks((prev) => upsert(prev, task));
         setProjects((prev) =>
           prev.map((project) =>
-            project.id === newTaskProjectId && setupScript !== undefined
-              ? { ...project, setupScript: setupScript || null }
+            project.id === newTaskProjectId && submission.setupScript !== undefined
+              ? { ...project, setupScript: submission.setupScript || null }
               : project,
           ),
         );
@@ -467,9 +478,7 @@ export function App() {
           project={newTaskProject}
           busy={busy}
           onClose={() => setNewTaskProjectId(null)}
-          onSubmit={(title, baseBranch, setupScript) =>
-            void createTask(title, baseBranch, setupScript)
-          }
+          onSubmit={(submission) => void createTask(submission)}
         />
       ) : null}
 

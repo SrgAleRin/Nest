@@ -62,6 +62,13 @@ export class TaskService {
     return toTask(row);
   }
 
+  /** The singleton main checkout of a project; projects.add creates it. */
+  ensureCheckout(projectId: string): Task {
+    const checkout = this.projects.checkout(projectId);
+    if (!checkout) throw new NestError('checkout_missing', 'Project has no main checkout');
+    return checkout;
+  }
+
   async create(input: CreateTaskInput): Promise<Task> {
     let project = this.projects.get(input.projectId);
     if (input.setupScript !== undefined) {

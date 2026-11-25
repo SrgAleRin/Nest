@@ -133,6 +133,19 @@ describe('task setup', () => {
     ).rejects.toThrow(/does not exist/);
   });
 
+  it('opens the existing main checkout instead of creating a task', async () => {
+    if (!core) throw new Error('core was not created');
+    const before = core.tasks.list(projectId).length;
+
+    const checkout = core.tasks.ensureCheckout(projectId);
+    expect(checkout.kind).toBe('checkout');
+    expect(checkout.slug).toBe('@main');
+    expect(checkout.workspacePath).toBe(repoPath);
+
+    core.tasks.ensureCheckout(projectId);
+    expect(core.tasks.list(projectId)).toHaveLength(before);
+  });
+
   it('removes a clean worktree without force', async () => {
     if (!core) throw new Error('core was not created');
     const task = await core.tasks.create({

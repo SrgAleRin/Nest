@@ -265,6 +265,14 @@ export function createMockClient(): NestClient {
         return undefined;
       case 'tasks.list':
         return tasks;
+      case 'tasks.openCheckout': {
+        const checkout = tasks.find(
+          (candidate) =>
+            candidate.projectId === params.projectId && candidate.kind === 'checkout',
+        );
+        if (!checkout) throw new Error('checkout not found');
+        return { ...checkout };
+      }
       case 'tasks.create': {
         const id = `task-${tasks.length + 1}`;
         const title = String(params.title ?? 'new task');

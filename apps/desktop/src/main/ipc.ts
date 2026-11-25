@@ -51,6 +51,8 @@ export function registerIpc(context: IpcContext): void {
       await core.tasks.remove(taskId, { force });
     },
 
+    'tasks.openCheckout': ({ projectId }) => core.tasks.ensureCheckout(projectId),
+
     'tasks.reveal': async ({ taskId }) => {
       const task = core.tasks.get(taskId);
       await shell.openPath(task.workspacePath);

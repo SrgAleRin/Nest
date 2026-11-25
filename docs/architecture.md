@@ -440,6 +440,8 @@ pty.onData(chunk)
 5. start session (optional)
 ```
 
+В UI это `tasks.openCheckout`: возвращает существующий singleton, ничего не создаёт и не трогает файлы; выбор `Main checkout` в модалке просто открывает его.
+
 Rollback:
 
 - если worktree создан, а setup упал — задача остаётся, причина лежит в `tasks.setup_error`, worktree не удаляем автоматически (пользователь может зайти и посмотреть, в сайдбаре горит бейдж `setup`);
