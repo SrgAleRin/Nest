@@ -98,7 +98,7 @@ Nest не встраивает агентов в себя — он запуск�
 
 ## Обновления
 
-Nest проверяет обновления в фоне, если в **Settings → Updates** указан адрес feed. Для этого репозитория используется GitHub Releases:
+Nest проверяет обновления в фоне, если в **Settings → Updates** указан адрес feed. Для этого репозитория укажите:
 
 ```text
 https://github.com/SrgAleRin/Nest/releases/latest/download/
