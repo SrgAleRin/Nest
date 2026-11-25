@@ -281,6 +281,13 @@ export function createMockClient(): NestClient {
         if (project && params.setupScript !== undefined) {
           project.setupScript = params.setupScript ? String(params.setupScript) : null;
         }
+        const progressProjectId = String(params.projectId);
+        emit({ type: 'task:progress', projectId: progressProjectId, step: 'fetch' });
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        emit({ type: 'task:progress', projectId: progressProjectId, step: 'worktree' });
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        emit({ type: 'task:progress', projectId: progressProjectId, step: 'setup' });
+        await new Promise((resolve) => setTimeout(resolve, 120));
         const task: Task = {
           id,
           projectId: String(params.projectId),

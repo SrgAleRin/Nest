@@ -132,28 +132,28 @@ Discovery по harness:
 
 Проверка: 9 unit-тестов на выбор id по cwd/mtime, core-интеграция и e2e на `FakeHarness`, ручной smoke OpenCode (id захвачен, после рестарта продолжена та же беседа). Codex smoke отложен до после MVP.
 
-### Phase 2 — задачи и worktrees (1 неделя)
+### Phase 2 — задачи и worktrees (сделано)
 
 Частично сделано в foundation: `worktree add/remove`, main checkout, New task.
 
-Сделано в Phase 2: `git fetch --prune` перед созданием (best effort, база может быть `origin/main`), setup script на проекте + копирование `.env` / `.env.local`, `setup_error` и бейдж `setup` при падении скрипта, проверка dirty перед удалением worktree (`workspace_dirty` без `force`, файлы перечисляются в подтверждении), выбор `New worktree` / `Main checkout` в модалке (`tasks.openCheckout` возвращает singleton, ничего не создавая).
+Добавлено в Phase 2: `git fetch --prune` перед созданием (best effort, база может быть `origin/main`), setup script на проекте + копирование `.env` / `.env.local`, `setup_error` и бейдж `setup` при падении скрипта, проверка dirty перед удалением worktree (`workspace_dirty` без `force`, файлы перечисляются в подтверждении), выбор `New worktree` / `Main checkout` в модалке (`tasks.openCheckout` возвращает singleton), прогресс создания (`task:progress`: fetch → worktree → setup) и running-секция в сайдбаре.
 
-Осталось: прогресс создания и rollback в UI, running-секция в сайдбаре.
-
-- модалка New task с выбором `New worktree` / `Main checkout` (второй просто открывает существующий main checkout);
-- `git fetch` + `git worktree add` для worktree;
-- прогресс создания, rollback;
-- setup script, копирование `.env` (только worktree);
-- удаление worktree-задачи с проверкой dirty; main checkout не удаляется;
-- сайдбар: main checkout, задачи, статусы, running-секция.
+- [x] модалка New task с выбором `New worktree` / `Main checkout`;
+- [x] `git fetch` + `git worktree add` для worktree;
+- [x] прогресс создания, rollback;
+- [x] setup script, копирование `.env` (только worktree);
+- [x] удаление worktree-задачи с проверкой dirty; main checkout не удаляется;
+- [x] сайдбар: main checkout, задачи, статусы, running-секция.
 
 **Exit criteria:** задача создаётся за < 10 секунд на среднем репо, main checkout открывается мгновенно, ошибки показываются с retry.
 
+Shared dirs (`node_modules`) остаются в P1.
+
 ### Phase 3 — сессии и терминал (1 неделя)
 
-Сделано в foundation: профили, start/stop/resume, табы, resize, scrollback, статусы, завершение PTY.
+Сделано в foundation: профили, start/stop/resume, табы, resize, scrollback, статусы, завершение PTY, точный resume по session id.
 
-Осталось: search и links, copy/paste shortcuts, лимит смонтированных xterm, точный resume по session id.
+Осталось: search и links, copy/paste shortcuts, лимит смонтированных xterm.
 
 - реестр harness-профилей: Claude Code, Codex, DeepSeek Harness, OpenCode, pi, Copilot, custom;
 - запуск/остановка/рестарт сессии;

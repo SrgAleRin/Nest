@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { NestEvent } from '@nest/shared';
 import { createCore, type Core } from '../src/index.js';
 
 const fakeHarnessScript = fileURLToPath(
@@ -13,6 +14,7 @@ const fakeHarnessScript = fileURLToPath(
 const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'nest-tasks-'));
 const repoPath = path.join(tempRoot, 'repo');
 const remotePath = path.join(tempRoot, 'origin.git');
+const events: NestEvent[] = [];
 let core: Core | null = null;
 let projectId = '';
 
@@ -55,6 +57,7 @@ beforeAll(async () => {
     dbPath: path.join(tempRoot, 'nest.db'),
     worktreesRoot: path.join(tempRoot, 'worktrees'),
     fakeHarnessScript,
+    onEvent: (event) => events.push(event),
   });
   const { project } = await core.projects.add(repoPath);
   projectId = project.id;
@@ -144,6 +147,19 @@ describe('task setup', () => {
 
     core.tasks.ensureCheckout(projectId);
     expect(core.tasks.list(projectId)).toHaveLength(before);
+  });
+
+  it('reports creation progress in order', async () => {
+    if (!core) throw new Error('core was not created');
+    const start = events.length;
+
+    await core.tasks.create({ projectId, title: 'Progress steps', setupScript: null });
+
+    const steps = events
+      .slice(start)
+      .filter((event) => event.type === 'task:progress')
+      .map((event) => (event.type === 'task:progress' ? event.step : ''));
+    expect(steps).toEqual(['fetch', 'worktree', 'setup']);
   });
 
   it('removes a clean worktree without force', async () => {

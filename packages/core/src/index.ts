@@ -47,7 +47,7 @@ export function createCore(options: CoreOptions): Core {
     customCommand: options.customCommand,
   });
   const projects = new ProjectService(db);
-  const tasks = new TaskService(db, projects, options.worktreesRoot);
+  const tasks = new TaskService(db, projects, options.worktreesRoot, emit);
   const git = new GitService(db, tasks, emit);
   const discovery = new HarnessDiscovery();
   const sessions = new SessionService(db, tasks, harnesses, discovery, emit);

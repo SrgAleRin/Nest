@@ -430,6 +430,8 @@ pty.onData(chunk)
 
 `base` — локальная ветка (`main`) или remote-tracking (`origin/main`); вторая разрешается после `git fetch`, поэтому задача может стартовать от свежего upstream. Setup script хранится в `projects.setup_script`, запоминается при создании задачи и подставляется в модалку New task.
 
+Создание остаётся одним синхронным RPC, но по пути core шлёт события `task:progress` (`fetch` → `worktree` → `setup`); модалка показывает текущий шаг, а не просто «Creating…».
+
 Для `checkout`:
 
 ```

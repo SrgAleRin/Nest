@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Project } from '@nest/shared';
+import type { Project, TaskProgressStep } from '@nest/shared';
 import { Button } from '@nest/ui';
 
 export type NewTaskLocation = 'worktree' | 'checkout';
@@ -14,11 +14,19 @@ export interface NewTaskSubmission {
 interface NewTaskDialogProps {
   project: Project;
   busy: boolean;
+  /** Current creation step, pushed from the core progress events. */
+  step: TaskProgressStep | null;
   onClose: () => void;
   onSubmit: (submission: NewTaskSubmission) => void;
 }
 
-export function NewTaskDialog({ project, busy, onClose, onSubmit }: NewTaskDialogProps) {
+const STEP_LABELS: Record<TaskProgressStep, string> = {
+  fetch: 'Fetching remotes…',
+  worktree: 'Creating worktree…',
+  setup: 'Copying env and running setup…',
+};
+
+export function NewTaskDialog({ project, busy, step, onClose, onSubmit }: NewTaskDialogProps) {
   const [location, setLocation] = useState<NewTaskLocation>('worktree');
   const [title, setTitle] = useState('');
   const [baseBranch, setBaseBranch] = useState('');
@@ -144,6 +152,7 @@ export function NewTaskDialog({ project, busy, onClose, onSubmit }: NewTaskDialo
         )}
 
         <footer className="modal-foot">
+          {busy && step ? <span className="modal-step">{STEP_LABELS[step]}</span> : null}
           <Button type="button" variant="ghost" onClick={onClose}>
             Cancel
           </Button>

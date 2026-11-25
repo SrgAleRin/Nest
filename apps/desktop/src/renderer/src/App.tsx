@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { AppInfo, HarnessProfile, Project, Session, Task } from '@nest/shared';
+import type { AppInfo, HarnessProfile, Project, Session, Task, TaskProgressStep } from '@nest/shared';
 import { Badge, Button, Spinner } from '@nest/ui';
 import { NewTaskDialog, type NewTaskSubmission } from './components/NewTaskDialog';
 import { RightPanel } from './components/RightPanel';
@@ -33,6 +33,10 @@ export function App() {
   const [newTaskProjectId, setNewTaskProjectId] = useState<string | null>(null);
   const [gitVersion, setGitVersion] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [taskProgress, setTaskProgress] = useState<{
+    projectId: string;
+    step: TaskProgressStep;
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<Toast | null>(null);
 
@@ -122,6 +126,9 @@ export function App() {
           return;
         case 'task:updated':
           setTasks((prev) => upsert(prev, event.task));
+          return;
+        case 'task:progress':
+          setTaskProgress({ projectId: event.projectId, step: event.step });
           return;
         case 'git:changed':
           setGitVersion((value) => value + 1);
@@ -221,6 +228,7 @@ export function App() {
         notify('error', errorMessage(error));
       } finally {
         setBusy(false);
+        setTaskProgress(null);
       }
     },
     [client, newTaskProjectId, notify],
@@ -477,6 +485,11 @@ export function App() {
         <NewTaskDialog
           project={newTaskProject}
           busy={busy}
+          step={
+            taskProgress && taskProgress.projectId === newTaskProject.id
+              ? taskProgress.step
+              : null
+          }
           onClose={() => setNewTaskProjectId(null)}
           onSubmit={(submission) => void createTask(submission)}
         />

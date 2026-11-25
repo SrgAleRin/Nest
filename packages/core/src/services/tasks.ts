@@ -5,6 +5,7 @@ import {
   newId,
   nowIso,
   slugify,
+  type NestEvent,
   type Task,
 } from '@nest/shared';
 import type { Db } from '../db/database.js';
@@ -31,6 +32,7 @@ export class TaskService {
     private readonly db: Db,
     private readonly projects: ProjectService,
     private readonly worktreesRoot: string,
+    private readonly emit: (event: NestEvent) => void = () => {},
   ) {}
 
   onBeforeRemove(handler: (task: Task) => void | Promise<void>): void {
@@ -81,6 +83,7 @@ export class TaskService {
 
     // Refresh remote refs so a task created from origin/main does not start on
     // a stale base. Best effort: offline or remote-less repos still work.
+    this.emit({ type: 'task:progress', projectId: project.id, step: 'fetch' });
     await this.fetch(project.path);
 
     const base = await this.resolveBaseBranch(project.path, input.baseBranch);
@@ -108,6 +111,7 @@ export class TaskService {
     const projectDir = sanitizeDir(project.name);
     const worktreePath = path.join(this.worktreesRoot, projectDir, slug);
 
+    this.emit({ type: 'task:progress', projectId: project.id, step: 'worktree' });
     await git(project.path, ['worktree', 'add', '-b', branch, worktreePath, base]);
 
     const id = newId();
@@ -135,6 +139,7 @@ export class TaskService {
 
     // Setup runs after the row exists, so a failing script leaves a visible
     // task with its worktree and an explanation instead of an orphan folder.
+    this.emit({ type: 'task:progress', projectId: project.id, step: 'setup' });
     const setupError = await prepareWorkspace({
       projectPath: project.path,
       workspacePath: worktreePath,

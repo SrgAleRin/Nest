@@ -162,10 +162,13 @@ export interface RpcErrorShape {
 
 export type RpcResponse<T> = { ok: true; data: T } | { ok: false; error: RpcErrorShape };
 
+export type TaskProgressStep = 'fetch' | 'worktree' | 'setup';
+
 export type NestEvent =
   | { type: 'session:data'; sessionId: string; data: string }
   | { type: 'session:status'; session: Session }
   | { type: 'task:updated'; task: Task }
+  | { type: 'task:progress'; projectId: string; step: TaskProgressStep }
   | { type: 'git:changed'; taskId: string }
   | { type: 'notification'; level: 'info' | 'warn' | 'error'; message: string };
 
