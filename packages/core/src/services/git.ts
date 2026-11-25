@@ -3,12 +3,16 @@ import { readFile } from 'node:fs/promises';
 import type { DiffFile, GitDiff, GitFile, GitStatus, NestEvent } from '@nest/shared';
 import type { Db } from '../db/database.js';
 import { NestError } from '../errors.js';
-import { git } from '../git/exec.js';
+import { git, gitOrNull } from '../git/exec.js';
 import { buildUntrackedDiff, parseUnifiedDiff } from '../git/diff.js';
+import { mergeNumstat, parseNumstat, type Numstat } from '../git/numstat.js';
 import type { TaskService } from './tasks.js';
 
 const BINARY_CHECK_BYTES = 8000;
 const MAX_UNTRACKED_BYTES = 1024 * 1024;
+/** Counting untracked lines reads files; a huge untracked tree only needs a hint. */
+const MAX_COUNTED_UNTRACKED = 200;
+const NUMSTAT_TIMEOUT_MS = 20_000;
 
 export class GitService {
   constructor(
@@ -101,12 +105,9 @@ export class GitService {
 }
 
 async function readStatus(cwd: string): Promise<GitStatus> {
-  const { stdout } = await git(cwd, [
-    'status',
-    '--porcelain=v1',
-    '-z',
-    '--branch',
-    '--untracked-files=all',
+  const [{ stdout }, stats] = await Promise.all([
+    git(cwd, ['status', '--porcelain=v1', '-z', '--branch', '--untracked-files=all']),
+    readNumstat(cwd),
   ]);
 
   const tokens = stdout.split('\0');
@@ -145,8 +146,17 @@ async function readStatus(cwd: string): Promise<GitStatus> {
     const filePath = token.slice(3);
     const untracked = indexStatus === '?' && worktreeStatus === '?';
     const staged = !untracked && indexStatus !== ' ' && indexStatus !== '?';
+    const stat = stats.get(filePath);
 
-    files.push({ path: filePath, indexStatus, worktreeStatus, staged, untracked });
+    files.push({
+      path: filePath,
+      indexStatus,
+      worktreeStatus,
+      staged,
+      untracked,
+      additions: stat?.additions ?? null,
+      deletions: stat?.deletions ?? null,
+    });
 
     if (indexStatus === 'R' || indexStatus === 'C') {
       index += 1;
@@ -154,7 +164,61 @@ async function readStatus(cwd: string): Promise<GitStatus> {
   }
 
   files.sort((a, b) => a.path.localeCompare(b.path));
+  await countUntracked(files, cwd);
   return { branch, upstream, ahead, behind, files };
+}
+
+/**
+ * `git diff HEAD` covers staged and unstaged changes against the last commit.
+ * Repositories without commits have no HEAD, so both diffs are merged instead.
+ */
+async function readNumstat(cwd: string): Promise<Numstat> {
+  const options = { timeout: NUMSTAT_TIMEOUT_MS };
+  const againstHead = await gitOrNull(
+    cwd,
+    ['diff', '--numstat', '-z', '-M', '--no-color', 'HEAD'],
+    options,
+  );
+  if (againstHead !== null) return parseNumstat(againstHead);
+
+  const [worktree, staged] = await Promise.all([
+    gitOrNull(cwd, ['diff', '--numstat', '-z', '--no-color'], options),
+    gitOrNull(cwd, ['diff', '--numstat', '-z', '--no-color', '--cached'], options),
+  ]);
+  const stats: Numstat = new Map();
+  if (staged) mergeNumstat(stats, parseNumstat(staged));
+  if (worktree) mergeNumstat(stats, parseNumstat(worktree));
+  return stats;
+}
+
+/** Untracked files are missing from git diff, so their lines are counted here. */
+async function countUntracked(files: GitFile[], cwd: string): Promise<void> {
+  let budget = MAX_COUNTED_UNTRACKED;
+  await Promise.all(
+    files.map(async (file) => {
+      if (!file.untracked || budget <= 0) return;
+      budget -= 1;
+      const counted = await countLines(path.join(cwd, file.path));
+      if (!counted) return;
+      file.additions = counted.additions;
+      file.deletions = counted.deletions;
+    }),
+  );
+}
+
+async function countLines(
+  absolutePath: string,
+): Promise<{ additions: number; deletions: number } | null> {
+  try {
+    const buffer = await readFile(absolutePath);
+    if (buffer.byteLength > MAX_UNTRACKED_BYTES) return null;
+    if (buffer.subarray(0, BINARY_CHECK_BYTES).includes(0)) return null;
+    const normalized = buffer.toString('utf8').replace(/\r\n/g, '\n');
+    const body = normalized.endsWith('\n') ? normalized.slice(0, -1) : normalized;
+    return { additions: body.length === 0 ? 0 : body.split('\n').length, deletions: 0 };
+  } catch {
+    return null;
+  }
 }
 
 async function buildUntrackedFile(repoPath: string, filePath: string): Promise<DiffFile | null> {

@@ -149,6 +149,14 @@ export function GitPanel({ client, task, refreshKey, onChanged, onNotify }: GitP
             <span className="git-path" title={file.path}>
               {file.path}
             </span>
+            {file.additions !== null && file.deletions !== null ? (
+              <span
+                className="git-stat"
+                title={`${file.additions} added, ${file.deletions} deleted`}
+              >
+                <em>+{file.additions}</em> <del>-{file.deletions}</del>
+              </span>
+            ) : null}
             <button
               className="mini-btn"
               disabled={busy}

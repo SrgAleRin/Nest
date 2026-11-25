@@ -966,6 +966,22 @@ code,
   white-space: nowrap;
 }
 
+.git-stat {
+  flex: 0 0 auto;
+  font: 10px var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.git-stat em {
+  color: var(--green);
+  font-style: normal;
+}
+
+.git-stat del {
+  color: var(--red);
+  text-decoration: none;
+}
+
 .mini-btn {
   display: inline-flex;
   align-items: center;

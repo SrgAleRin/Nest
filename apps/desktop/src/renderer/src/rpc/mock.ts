@@ -138,6 +138,8 @@ export function createMockClient(): NestClient {
         worktreeStatus: 'M',
         staged: false,
         untracked: false,
+        additions: 12,
+        deletions: 4,
       },
       {
         path: 'src/terminal/bus.ts',
@@ -145,6 +147,8 @@ export function createMockClient(): NestClient {
         worktreeStatus: ' ',
         staged: true,
         untracked: false,
+        additions: 48,
+        deletions: 0,
       },
       {
         path: 'docs/notes.md',
@@ -152,6 +156,8 @@ export function createMockClient(): NestClient {
         worktreeStatus: '?',
         staged: false,
         untracked: true,
+        additions: 9,
+        deletions: 0,
       },
     ],
   };

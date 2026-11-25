@@ -6,6 +6,9 @@ export const GitFileSchema = z.object({
   worktreeStatus: z.string(),
   staged: z.boolean(),
   untracked: z.boolean(),
+  /** Lines added/deleted against HEAD; null for binary or unreadable files. */
+  additions: z.number().int().nonnegative().nullable(),
+  deletions: z.number().int().nonnegative().nullable(),
 });
 export type GitFile = z.infer<typeof GitFileSchema>;
 
