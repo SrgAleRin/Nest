@@ -170,18 +170,20 @@ Shared dirs (`node_modules`) остаются в P1.
 
 Сделано в foundation: status/diff/stage/commit/push, inline-комментарии, отправка в сессию, Sessions-панель.
 
-Осталось: `@parcel/watcher`, numstat, подсветка/виртуализация diff, range-комментарии и re-anchor (P1).
+Сделано в Phase 4 (первый заход): watcher файлов и git-каталога (`@parcel/watcher`, debounce 350 мс, `git:changed` на задачу), numstat в списке изменённых файлов (`+N −M`, включая untracked).
 
-- `git status` с watcher;
-- список файлов, numstat;
-- unified diff с подсветкой;
-- stage/unstage;
-- commit/push;
-- branch/ahead/behind;
-- комментарии к строкам diff: создание, inline, resolve, удаление;
-- отправка комментариев в активную сессию (bracketed paste + fallback);
-- Sessions-панель;
-- одинаковый git/diff для worktree и main checkout, с бейджем `main`.
+Осталось: подсветка/виртуализация diff, range-комментарии и re-anchor (P1).
+
+- [x] `git status` с watcher;
+- [x] список файлов, numstat;
+- [ ] unified diff с подсветкой;
+- [x] stage/unstage;
+- [x] commit/push;
+- [x] branch/ahead/behind;
+- [x] комментарии к строкам diff: создание, inline, resolve, удаление;
+- [x] отправка комментариев в активную сессию (bracketed paste + fallback);
+- [x] Sessions-панель;
+- [x] одинаковый git/diff для worktree и main checkout, с бейджем `main`.
 
 **Exit criteria:** полный цикл «изменил → посмотрел → оставил комментарий → отправил агенту → закоммитил → запушил» без терминала и в worktree, и в main checkout.
 

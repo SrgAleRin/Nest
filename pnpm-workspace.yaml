@@ -10,6 +10,7 @@ onlyBuiltDependencies:
   - node-pty
   - esbuild
   - '@tailwindcss/oxide'
+  - '@parcel/watcher'
 
 allowBuilds:
   electron: true
@@ -17,3 +18,6 @@ allowBuilds:
   esbuild: true
   '@tailwindcss/oxide': true
   electron-winstaller: true
+  # The install script only runs node-gyp when npm_config_build_from_source is
+  # set; the win32-x64 prebuild ships in @parcel/watcher-win32-x64.
+  '@parcel/watcher': true

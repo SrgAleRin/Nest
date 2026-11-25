@@ -5,6 +5,7 @@ import { createCore, type Core } from '@nest/core';
 import type { AppInfo, NestEvent } from '@nest/shared';
 import { registerIpc } from './ipc';
 import { resolveProfileName } from './profile';
+import { WorkspaceWatcher } from './watcher';
 
 const TRAY_ICON_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAaUlEQVR4nGNggIKqRd//0xMzIAN6W47iiIGyHO6IQecABjRA1bjGYt6oAwafAwY8EQ5aB3Bw8aHgUQcMuAMI4VEHDH8HUCuRjjpg1AFDxwG0woOvQTLqgAF3wIAnQro7gBrBTJXoGSjLASwWjLvvyC/qAAAAAElFTkSuQmCC';
@@ -32,6 +33,7 @@ const fakeHarnessScript = app.isPackaged
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let core: Core | null = null;
+let watcher: WorkspaceWatcher | null = null;
 let shuttingDown = false;
 let quitting = false;
 
@@ -153,7 +155,17 @@ if (!allowMultipleInstances && !app.requestSingleInstanceLock()) {
       onEvent: broadcast,
     });
 
-    registerIpc({ core, info, getWindow: () => mainWindow });
+    watcher = new WorkspaceWatcher(broadcast);
+    void watcher.sync(core.tasks.list());
+
+    registerIpc({
+      core,
+      info,
+      getWindow: () => mainWindow,
+      onTasksChanged: () => {
+        if (core && watcher) void watcher.sync(core.tasks.list());
+      },
+    });
     createWindow();
     createTray();
 
@@ -173,6 +185,8 @@ if (!allowMultipleInstances && !app.requestSingleInstanceLock()) {
     tray = null;
     if (shuttingDown) return;
     shuttingDown = true;
+    void watcher?.close();
+    watcher = null;
     core?.close();
     core = null;
   });

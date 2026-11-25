@@ -14,10 +14,13 @@ export interface IpcContext {
   core: Core;
   info: () => AppInfo;
   getWindow: () => BrowserWindow | null;
+  /** Called after a project/task mutation so filesystem watches can be reconciled. */
+  onTasksChanged?: () => void;
 }
 
 export function registerIpc(context: IpcContext): void {
   const { core } = context;
+  const tasksChanged = (): void => context.onTasksChanged?.();
 
   const handlers: RpcHandlers = {
     'app.info': () => context.info(),
@@ -50,10 +53,15 @@ export function registerIpc(context: IpcContext): void {
 
     'projects.list': () => core.projects.list(),
 
-    'projects.add': async ({ path }) => core.projects.add(path),
+    'projects.add': async ({ path }) => {
+      const result = await core.projects.add(path);
+      tasksChanged();
+      return result;
+    },
 
     'projects.remove': ({ projectId }) => {
       core.projects.remove(projectId);
+      tasksChanged();
     },
 
     'projects.reveal': async ({ projectId }) => {
@@ -63,10 +71,15 @@ export function registerIpc(context: IpcContext): void {
 
     'tasks.list': ({ projectId }) => core.tasks.list(projectId),
 
-    'tasks.create': async (input) => core.tasks.create(input),
+    'tasks.create': async (input) => {
+      const task = await core.tasks.create(input);
+      tasksChanged();
+      return task;
+    },
 
     'tasks.remove': async ({ taskId, force }) => {
       await core.tasks.remove(taskId, { force });
+      tasksChanged();
     },
 
     'tasks.openCheckout': ({ projectId }) => core.tasks.ensureCheckout(projectId),

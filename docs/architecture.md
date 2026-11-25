@@ -31,7 +31,7 @@ Tauri-заметка: если позже понадобится установ�
 | PTY | `node-pty` (ConPTY на Windows) |
 | БД | SQLite через `node:sqlite` (Node 24 в Electron 45), WAL |
 | Git | системный `git` через `node:child_process` |
-| Watcher | `@parcel/watcher` в Phase 4; в foundation — ручной refresh и события после мутаций |
+| Watcher | `@parcel/watcher` на workspace и git-каталоге проекта; debounce 350 мс, событие `git:changed` на задачу |
 | Diff | `git diff` + собственный парсер и viewer; Shiki/виртуализация — позже |
 | Review comments | SQLite + inline threads в diff; отправка в активную PTY-сессию |
 | PR | не в MVP; GitHub/GitLab и checks — позже |
@@ -82,7 +82,7 @@ Nest — это на 70% терминал и процессы, а не ренд�
 │  │   ├─ SessionService ── node-pty ── harness process         │  │
 │  │   ├─ HarnessRegistry                                       │  │
 │  │   ├─ CommentService                                        │  │
-│  │   ├─ Watcher (@parcel/watcher, Phase 4)                    │  │
+│  │   ├─ Watcher (@parcel/watcher)                              │  │
 │  │   └─ Db (node:sqlite, WAL)                                 │  │
 │  └────────────────────────────────────────────────────────────┘  │
 │          │                                                       │
@@ -123,14 +123,16 @@ Nest — это на 70% терминал и процессы, а не ренд�
 | `sessions` | запуск PTY, lifecycle, статусы, scrollback; без daemon в MVP |
 | `harness` | реестр профилей, detect installed, resume |
 | `hosts` | `HostAdapter`; сейчас только `LocalHost` |
-| `watcher` | debounce-события файлов и `.git` |
 | `rpc` | регистрация методов, валидация, ошибки |
+
+`watcher` живёт в `apps/desktop/src/main`: `@parcel/watcher` — нативный модуль, а main-бандл выносит зависимости наружу, поэтому `packages/core` остаётся чистым Node-кодом без нативных require.
 
 ### `apps/desktop/src/main`
 
 - создание `BrowserWindow`;
 - wiring core-сервисов;
 - IPC-роутер;
+- `WorkspaceWatcher`: `@parcel/watcher` на каждый workspace и на общий git-каталог проекта, debounce и `git:changed`;
 - tray, notifications, deep links (позже);
 - graceful shutdown: остановить PTY, закрыть watcher, checkpoint БД.
 
@@ -265,6 +267,8 @@ export type NestEvent =
   | { type: 'git:changed'; taskId: string }
   | { type: 'notification'; level: 'info' | 'warn' | 'error'; title: string; body: string };
 ```
+
+`git:changed` адресован конкретной задаче. Renderer хранит счётчик версии на `taskId` и перезапрашивает status/diff только для выбранной задачи, поэтому события из чужих worktree не дёргают открытые панели.
 
 Preload:
 
@@ -460,11 +464,11 @@ Rollback:
 | common dir | `git rev-parse --git-common-dir` |
 | current branch | `git rev-parse --abbrev-ref HEAD` (для main checkout) |
 | base ref | `git symbolic-ref refs/remotes/origin/HEAD` → fallback `origin/main` |
-| status | `git status --porcelain=v2 --branch -z` |
-| numstat | `git diff --numstat` + `git diff --cached --numstat` |
+| status | `git status --porcelain=v1 --branch -z --untracked-files=all` |
+| numstat | `git diff --numstat -z -M HEAD`; без коммитов — сумма `git diff --numstat -z` и `--cached` |
 | diff | `git diff --no-ext-diff --no-color --unified=3 -- <path>` |
 | staged diff | `git diff --cached --no-ext-diff --no-color -- <path>` |
-| untracked | читать файл, показывать как added; бинарные — placeholder |
+| untracked | читать файл, показывать как added; бинарные — placeholder, строки считает сам Nest (лимит 1 МБ и первые 200 файлов) |
 | stage | `git add -A -- <path>` |
 | unstage | `git restore --staged -- <path>` |
 | commit | `git commit -m <message>` |
@@ -478,11 +482,17 @@ PR и checks в MVP нет. Если появятся позже, это отд�
 
 ### 7.3 Watcher
 
-- `@parcel/watcher` на workspace (worktree или корень проекта для main checkout);
-- отдельно слушаем `.git/HEAD`, `.git/index`, `.git/refs`;
-- debounce 250 мс;
-- игнорируем `node_modules`, `.git/objects`, `dist`, `.next`, `target`;
-- после события инвалидируем `git.status` и `git.diff` для задачи.
+`WorkspaceWatcher` (main-процесс) держит набор подписок и пересобирает его при каждом изменении списка проектов/задач (`sync(tasks)`), а не при каждом событии:
+
+- **workspace задачи** — рабочее дерево без `node_modules` и `.git`: агент или редактор пишет файл, Nest видит изменение;
+- **git-каталог проекта** один на проект (`git rev-parse --absolute-git-dir`): в нём лежат `index`, `HEAD`, `refs`, `packed-refs`, а также `worktrees/<slug>/…`, поэтому одно наблюдение покрывает и main checkout, и все его worktree. Игнорируем `objects`, `logs`, `lfs` и `*.lock` — от них меняется только служебный шум;
+- debounce 350 мс на задачу: пачка событий от `pnpm install` или сохранения файла даёт одно событие `git:changed` (у события есть `taskId`);
+- renderer по `git:changed` инкрементит версию только этой задачи и перезапрашивает `git.status`/`git.diff`;
+- события не считаются истиной: git остаётся источником правды, watcher лишь говорит «перечитай»;
+- отсутствующий workspace (worktree удалили между sync) просто пропускается, следующий sync уберёт подписку;
+- при выходе `close()` снимает все подписки и таймеры.
+
+`@parcel/watcher` — нативный модуль (N-API, prebuild `@parcel/watcher-win32-x64`), поэтому он объявлен зависимостью desktop-приложения, а не core, и распакован из asar (`asarUnpack`).
 
 ### 7.4 Краевые случаи
 

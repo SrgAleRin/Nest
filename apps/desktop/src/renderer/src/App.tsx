@@ -31,7 +31,7 @@ export function App() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [newTaskProjectId, setNewTaskProjectId] = useState<string | null>(null);
-  const [gitVersion, setGitVersion] = useState(0);
+  const [gitVersions, setGitVersions] = useState<Record<string, number>>({});
   const [busy, setBusy] = useState(false);
   const [taskProgress, setTaskProgress] = useState<{
     projectId: string;
@@ -53,6 +53,7 @@ export function App() {
   );
 
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
+  const gitVersion = selectedTaskId ? (gitVersions[selectedTaskId] ?? 0) : 0;
   const selectedProject =
     projects.find((project) => project.id === selectedTask?.projectId) ?? null;
   const selectedSessions = useMemo(
@@ -131,7 +132,12 @@ export function App() {
           setTaskProgress({ projectId: event.projectId, step: event.step });
           return;
         case 'git:changed':
-          setGitVersion((value) => value + 1);
+          // Changes are reported per task: watching every workspace must not
+          // refetch the panels of the task the user is looking at.
+          setGitVersions((prev) => ({
+            ...prev,
+            [event.taskId]: (prev[event.taskId] ?? 0) + 1,
+          }));
           return;
         case 'notification':
           notify(event.level, event.message);
@@ -353,7 +359,13 @@ export function App() {
     [sessions],
   );
 
-  const bumpGit = useCallback(() => setGitVersion((value) => value + 1), []);
+  const bumpGit = useCallback(() => {
+    if (!selectedTaskId) return;
+    setGitVersions((prev) => ({
+      ...prev,
+      [selectedTaskId]: (prev[selectedTaskId] ?? 0) + 1,
+    }));
+  }, [selectedTaskId]);
 
   if (loading) {
     return (

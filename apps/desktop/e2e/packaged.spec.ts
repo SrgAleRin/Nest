@@ -85,6 +85,13 @@ test('the packaged app starts, runs a PTY and keeps its database', async () => {
   await expect(page.locator('.project-name')).toHaveText('packaged-repo');
   await expect(page.locator('.task-kind-main')).toBeVisible();
 
+  // The workspace watcher is a native module: the packaged build must load it
+  // from the asar and refresh the Git panel after an external file write.
+  writeFileSync(path.join(repoPath, 'packaged-watch.txt'), 'watched\n', 'utf8');
+  await expect(page.locator('.git-file', { hasText: 'packaged-watch.txt' })).toBeVisible({
+    timeout: 30_000,
+  });
+
   // The fake harness is launched from resources/fake-harness.mjs, so a broken
   // extraResources copy fails right here.
   await page.locator('.select').selectOption('fake');
