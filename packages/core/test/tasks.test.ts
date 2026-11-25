@@ -1,17 +1,27 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { NestEvent } from '@nest/shared';
 import { createCore, type Core } from '../src/index.js';
+import './gitEnv.js';
 
 const fakeHarnessScript = fileURLToPath(
   new URL('../../../scripts/fake-harness.mjs', import.meta.url),
 );
 
-const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'nest-tasks-'));
+// realpath expands Windows 8.3 names (RUNNER~1) so paths match git output.
+const tempRoot = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'nest-tasks-')));
 const repoPath = path.join(tempRoot, 'repo');
 const remotePath = path.join(tempRoot, 'origin.git');
 const events: NestEvent[] = [];
