@@ -5,10 +5,20 @@ on:
     branches: [master]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   windows:
     runs-on: windows-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
+    env:
+      ELECTRON_CACHE: ${{ github.workspace }}\.cache\electron
+      ELECTRON_BUILDER_CACHE: ${{ github.workspace }}\.cache\electron-builder
 
     steps:
       - uses: actions/checkout@v4
@@ -21,6 +31,16 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+
+      - name: Cache Electron tooling
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/electron
+            .cache/electron-builder
+          key: ${{ runner.os }}-electron-${{ hashFiles('pnpm-lock.yaml', 'apps/desktop/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-
 
       - name: Install
         run: pnpm install --frozen-lockfile
@@ -39,3 +59,14 @@ jobs:
 
       - name: E2E smoke
         run: pnpm test:e2e
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failure-${{ github.run_number }}
+          path: |
+            apps/desktop/test-results
+            apps/desktop/playwright-report
+          if-no-files-found: ignore
+          retention-days: 7

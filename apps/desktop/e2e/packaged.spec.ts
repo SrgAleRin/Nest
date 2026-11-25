@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
@@ -12,6 +12,7 @@ import { _electron as electron } from 'playwright';
  * itself. Skipped when the release was not built yet.
  */
 const appDir = path.resolve(__dirname, '..');
+const expectedVersion = JSON.parse(readFileSync(path.join(appDir, 'package.json'), 'utf8')).version;
 const unpackedExe = path.join(appDir, 'release', 'win-unpacked', 'Nest.exe');
 // NEST_E2E_EXE lets the same smoke run against an installed copy of Nest.
 const packagedExe = process.env.NEST_E2E_EXE ?? unpackedExe;
@@ -73,7 +74,7 @@ test('the packaged app starts, runs a PTY and keeps its database', async () => {
     if (!result.ok) throw new Error(result.error.message);
     return result.data;
   });
-  expect(info.version).toBe('0.1.0');
+  expect(info.version).toBe(expectedVersion);
   expect(info.dbPath).toBe(path.join(tempRoot, 'nest.db'));
 
   const added = await page.evaluate(async (projectPath) => {

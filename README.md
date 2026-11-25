@@ -59,6 +59,10 @@ pnpm dist        # NSIS-установщик + latest.yml в apps/desktop/releas
 
 `pnpm dist` кладёт рядом с установщиком `Nest-Setup-<version>.exe.blockmap` и `latest.yml`. Выложите эти файлы в статический каталог и укажите его URL в **Settings → Updates** (или задайте `NEST_UPDATE_URL`). Упакованная сборка проверяет feed через 20 секунд после старта и каждые 6 часов, скачивает обновление и ставит его при перезапуске. В dev-сборке и при `NEST_DISABLE_UPDATES=1` проверки выключены. Полный runbook, включая подпись и чек-лист чистой Windows, — в [docs/release.md](docs/release.md).
 
+### CI
+
+GitHub Actions на Windows: `ci.yml` гоняет typecheck, lint, unit, build и e2e на каждый push в `master` и на PR. Тег `v*` запускает `release.yml`: он сверяет тег с версией, собирает установщик, прогоняет packaged-смоук и создаёт **черновик** GitHub Release с `.exe`, `.blockmap` и `latest.yml`. Подпись включается секретами `CSC_LINK` / `CSC_KEY_PASSWORD`. Пошаговый выпуск и настройка feed — в [docs/release.md §3](docs/release.md#3-ci-релиз-github-actions).
+
 ## Структура
 
 ```text

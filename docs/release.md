@@ -33,7 +33,65 @@ win-unpacked/
 
 Если `electron-builder` падает с `EBUSY` на `release\win-unpacked.tmp`, каталог держит другой процесс (антивирус, индексатор, файловый watcher, открытый терминал). Закройте его или перезапустите приложение-держатель; обойти старый лок можно сборкой в свежий output: `electron-builder --config.directories.output=%TEMP%\nest-dist-<timestamp>`, а затем `node scripts/make-latest-yml.mjs` для этого каталога.
 
-## 3. Проверка установщика
+## 3. CI-релиз (GitHub Actions)
+
+В репозитории два workflow:
+
+- [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) — на каждый push в `master` и на pull request: install, typecheck, lint, unit/integration, build и e2e. При падении e2e `test-results` с трейсами уходят артефактом;
+- [`.github/workflows/release.yml`](../.github/workflows/release.yml) — по тегу `v*`: проверка версии, те же проверки, `pnpm dist`, проверка артефактов, packaged-смоук и черновик GitHub Release с `Nest-Setup-<version>.exe`, `.blockmap` и `latest.yml`.
+
+### Что нужно один раз
+
+- репозиторий на GitHub и remote `origin`; Actions включены (по умолчанию);
+- workflow слушает ветку `master`;
+- по желанию: branch protection на `master` с обязательным job `windows` из `ci` и tag protection для `v*`, чтобы релизный тег мог поставить только владелец;
+- **публичный репозиторий**, если feed должен жить на GitHub Releases: ассеты приватного релиза отдаются только с токеном, которого у установленного Nest нет. Для приватного репозитория соберите артефакты в CI и выложите три файла на свой HTTPS-хостинг;
+- секреты **Settings → Secrets and variables → Actions** (необязательно, но нужно для подписи):
+  - `CSC_LINK` — base64 от `.pfx`-сертификата;
+  - `CSC_KEY_PASSWORD` — пароль сертификата.
+
+Без секретов установщик собирается неподписанным: SmartScreen покажет предупреждение, автообновление при этом работает.
+
+`CSC_LINK` можно получить так:
+
+```powershell
+$bytes = [IO.File]::ReadAllBytes("C:\keys\nest.pfx")
+[Convert]::ToBase64String($bytes) | Set-Clipboard
+```
+
+Вставьте значение в секрет `CSC_LINK`, пароль — в `CSC_KEY_PASSWORD`. Альтернатива для публичного релиза — Azure Trusted Signing; тогда в workflow добавляется шаг логина и `win.azureSignOptions` в `electron-builder.yml`.
+
+### Выпуск версии
+
+1. Поднимите `version` в `apps/desktop/package.json` (для порядка и в корневом `package.json`), закоммитьте и запушьте `master`. Дождитесь зелёного `ci`.
+2. Поставьте тег ровно на эту версию и запушьте его:
+
+   ```powershell
+   git tag v0.1.1
+   git push origin v0.1.1
+   ```
+
+   `release.yml` упадёт, если тег не совпадает с версией: это защита от публикации `latest.yml` с чужим номером.
+
+3. Дождитесь job `release`. Установщик, `.blockmap` и `latest.yml` появятся в артефактах и в **черновике** Release.
+4. Откройте черновик, проверьте ассеты и нажмите **Publish release**. Пока релиз черновик, `releases/latest/download` указывает на предыдущую версию — обновление не уйдёт раньше времени.
+5. Feed URL для Settings → Updates:
+
+   ```text
+   https://github.com/<owner>/<repo>/releases/latest/download/
+   ```
+
+   Слеш в конце обязателен для читаемости, хотя `electron-updater` нормализует URL сам. Для приватного хостинга используйте свой HTTPS-каталог с теми же тремя файлами.
+
+Ручной запуск `release.yml` (`workflow_dispatch`) собирает и проверяет установщик, но не создаёт релиз — удобно для репетиции на ветке.
+
+Подпись проверяется на установщике:
+
+```powershell
+Get-AuthenticodeSignature .\apps\desktop\release\Nest-Setup-0.1.1.exe | Format-List Status,SignerCertificate
+```
+
+## 4. Проверка установщика
 
 Тихая установка в отдельный каталог (per-user, без admin):
 
@@ -60,7 +118,7 @@ Start-Process "$dir\Uninstall Nest.exe" -ArgumentList '/S' -Wait
 
 На этой машине проверено: тихая установка, запуск установленной копии (PTY и БД), ярлыки в Start Menu и на рабочем столе, удаление каталога установки и ярлыков, а также `e2e/updates.spec.ts` против локального feed. Чистая Windows без Node.js пока не прогонялась.
 
-## 4. Обновления
+## 5. Обновления
 
 ### Feed
 
@@ -103,7 +161,7 @@ pnpm --filter @nest/desktop exec playwright test e2e/updates.spec.ts
 - сборки без подписи Windows может пометить SmartScreen; для публичного релиза настройте подпись;
 - автообновление не работает в dev-сборке (`app.isPackaged === false`); `NEST_DISABLE_UPDATES=1` отключает его принудительно.
 
-## 5. Чистая Windows
+## 6. Чистая Windows
 
 Чек-лист для машины без Node.js и dev-инструментов:
 
