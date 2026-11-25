@@ -1,0 +1,38 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { NestError } from '../errors.js';
+
+const execFileAsync = promisify(execFile);
+
+export interface GitResult {
+  stdout: string;
+  stderr: string;
+}
+
+export async function git(cwd: string, args: string[]): Promise<GitResult> {
+  try {
+    const { stdout, stderr } = await execFileAsync('git', args, {
+      cwd,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+      windowsHide: true,
+    });
+    return { stdout, stderr };
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException & { stderr?: string; stdout?: string };
+    if (err.code === 'ENOENT') {
+      throw new NestError('git_not_found', 'git is not installed or not on PATH');
+    }
+    const details = (err.stderr || err.stdout || err.message || '').trim();
+    throw new NestError('git_failed', `git ${args.join(' ')} failed`, details);
+  }
+}
+
+export async function gitOrNull(cwd: string, args: string[]): Promise<string | null> {
+  try {
+    const result = await git(cwd, args);
+    return result.stdout.trim();
+  } catch {
+    return null;
+  }
+}

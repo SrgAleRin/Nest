@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM"],
+    "types": ["node", "electron-vite/node"],
+    "moduleResolution": "Bundler"
+  },
+  "include": [
+    "src/main/**/*.ts",
+    "src/preload/**/*.ts",
+    "electron.vite.config.ts",
+    "playwright.config.ts",
+    "e2e/**/*.ts"
+  ]
+}

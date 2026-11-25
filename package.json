@@ -1,0 +1,35 @@
+{
+  "name": "nest",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Nest — desktop workspace for parallel CLI harness sessions",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @nest/desktop dev",
+    "build": "pnpm --filter @nest/desktop build",
+    "start": "pnpm --filter @nest/desktop start",
+    "typecheck": "pnpm -r --workspace-concurrency=1 typecheck",
+    "test": "pnpm -r --workspace-concurrency=1 test",
+    "test:e2e": "pnpm --filter @nest/desktop test:e2e",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "fake-harness": "node scripts/fake-harness.mjs",
+    "db:reset": "pnpm --filter @nest/desktop db:reset",
+    "seed": "pnpm --filter @nest/desktop seed",
+    "dist": "pnpm --filter @nest/desktop dist"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/node": "^24.10.0",
+    "cross-env": "^10.1.0",
+    "eslint": "^9.39.5",
+    "prettier": "^3.6.2",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.74.0"
+  }
+}

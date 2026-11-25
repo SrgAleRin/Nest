@@ -1,0 +1,19 @@
+packages:
+  - apps/*
+  - packages/*
+
+minimumReleaseAgeExclude:
+  - electron@45.5.0
+
+onlyBuiltDependencies:
+  - electron
+  - node-pty
+  - esbuild
+  - '@tailwindcss/oxide'
+
+allowBuilds:
+  electron: true
+  node-pty: true
+  esbuild: true
+  '@tailwindcss/oxide': true
+  electron-winstaller: true

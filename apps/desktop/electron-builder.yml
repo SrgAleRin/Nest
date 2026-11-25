@@ -1,0 +1,22 @@
+appId: dev.nest.desktop
+productName: Nest
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**
+  - package.json
+extraResources:
+  - from: ../../scripts/fake-harness.mjs
+    to: fake-harness.mjs
+asarUnpack:
+  - node_modules/node-pty/**
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
