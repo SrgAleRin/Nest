@@ -3,6 +3,7 @@ import type { IPty } from 'node-pty';
 import {
   newId,
   nowIso,
+  type HarnessProfile,
   type NestEvent,
   type Session,
   type SessionStatus,
@@ -93,74 +94,142 @@ export class SessionService {
       )
       .run(id, task.id, harness.id, title, task.workspacePath, timestamp, timestamp);
 
+    this.spawnRuntime({
+      sessionId: id,
+      taskId: task.id,
+      cwd: task.workspacePath,
+      harness,
+      extraArgs: [],
+      initialBuffer: '',
+      cols: input.cols,
+      rows: input.rows,
+    });
+
+    return this.get(id);
+  }
+
+  async resume(sessionId: string): Promise<Session> {
+    const session = this.get(sessionId);
+    if (
+      this.runtimes.has(sessionId) ||
+      session.status === 'starting' ||
+      session.status === 'running' ||
+      session.status === 'idle'
+    ) {
+      throw new NestError('session_running', 'Session is already running');
+    }
+
+    const harness = this.harnesses.get(session.harnessId);
+    if (harness.resumeArgs.length === 0) {
+      throw new NestError(
+        'resume_unsupported',
+        `${harness.label} has no resume command configured yet. Start a new session instead.`,
+      );
+    }
+
+    const task = this.tasks.get(session.taskId);
+    const marker = `\r\n\x1b[90m── resume ${harness.label} ──\x1b[0m\r\n`;
+    const initialBuffer = `${this.scrollback(sessionId)}${marker}`;
+
+    this.db
+      .prepare(
+        'UPDATE sessions SET status = ?, scrollback = ?, resume_on_start = 0, updated_at = ? WHERE id = ?',
+      )
+      .run('starting', initialBuffer, nowIso(), sessionId);
+    this.emit({ type: 'session:status', session: this.get(sessionId) });
+    this.emit({ type: 'session:data', sessionId, data: marker });
+
+    this.spawnRuntime({
+      sessionId,
+      taskId: task.id,
+      cwd: task.workspacePath,
+      harness,
+      extraArgs: harness.resumeArgs,
+      initialBuffer,
+    });
+
+    return this.get(sessionId);
+  }
+
+  private spawnRuntime(input: {
+    sessionId: string;
+    taskId: string;
+    cwd: string;
+    harness: HarnessProfile;
+    extraArgs: string[];
+    initialBuffer: string;
+    cols?: number;
+    rows?: number;
+  }): void {
     const env: Record<string, string> = {};
     for (const [key, value] of Object.entries(process.env)) {
       if (value !== undefined) env[key] = value;
     }
     env.TERM = 'xterm-256color';
     env.NEST = '1';
-    env.NEST_TASK_ID = task.id;
-    env.NEST_SESSION_ID = id;
-    env.NEST_HARNESS = harness.id;
+    env.NEST_TASK_ID = input.taskId;
+    env.NEST_SESSION_ID = input.sessionId;
+    env.NEST_HARNESS = input.harness.id;
     delete env.ELECTRON_RUN_AS_NODE;
 
+    const { sessionId } = input;
     let child: IPty;
     try {
-      child = spawnHarness(harness.command, harness.args, task.workspacePath, {
-        ...input,
-        env,
-      });
+      child = spawnHarness(
+        input.harness.command,
+        [...input.harness.args, ...input.extraArgs],
+        input.cwd,
+        { cols: input.cols, rows: input.rows, env },
+      );
     } catch (error) {
-      this.setStatus(id, 'failed');
-      this.db
-        .prepare('UPDATE sessions SET exit_code = ? WHERE id = ?')
-        .run(null, id);
+      this.setStatus(sessionId, 'failed');
+      this.db.prepare('UPDATE sessions SET exit_code = NULL WHERE id = ?').run(sessionId);
       throw new NestError(
         'session_spawn_failed',
-        `Failed to start ${harness.label}`,
+        `Failed to start ${input.harness.label}`,
         (error as Error).message,
       );
     }
 
     const runtime: Runtime = {
       pty: child,
-      taskId: task.id,
-      buffer: '',
+      taskId: input.taskId,
+      buffer: input.initialBuffer,
       status: 'running',
       stopping: false,
       idleTimer: null,
     };
-    this.runtimes.set(id, runtime);
+    this.runtimes.set(sessionId, runtime);
 
     child.onData((data) => {
-      const active = this.runtimes.get(id);
+      const active = this.runtimes.get(sessionId);
       if (!active) return;
       active.buffer = (active.buffer + data).slice(-MAX_SCROLLBACK);
-      this.emit({ type: 'session:data', sessionId: id, data });
+      this.emit({ type: 'session:data', sessionId, data });
       if (active.status === 'starting' || active.status === 'idle') {
-        this.setStatus(id, 'running');
+        this.setStatus(sessionId, 'running');
         active.status = 'running';
       }
       if (active.idleTimer) clearTimeout(active.idleTimer);
       active.idleTimer = setTimeout(() => {
-        const current = this.runtimes.get(id);
+        const current = this.runtimes.get(sessionId);
         if (!current || current.status !== 'running') return;
-        this.setStatus(id, 'idle');
+        this.setStatus(sessionId, 'idle');
         current.status = 'idle';
       }, IDLE_AFTER_MS);
     });
 
     child.onExit(({ exitCode }) => {
-      const active = this.runtimes.get(id);
-      if (active?.idleTimer) clearTimeout(active.idleTimer);
-      const status: SessionStatus = active?.stopping || exitCode === 0 ? 'exited' : 'failed';
-      this.persistScrollback(id, active?.buffer ?? '');
-      this.runtimes.delete(id);
-      this.setStatus(id, status, exitCode);
+      const active = this.runtimes.get(sessionId);
+      if (!active) return;
+      if (active.idleTimer) clearTimeout(active.idleTimer);
+      const status: SessionStatus = active.stopping || exitCode === 0 ? 'exited' : 'failed';
+      this.persistScrollback(sessionId, active.buffer);
+      this.runtimes.delete(sessionId);
+      this.setStatus(sessionId, status, exitCode);
     });
 
-    this.setStatus(id, 'running');
-    return this.get(id);
+    this.setStatus(sessionId, 'running');
   }
 
   write(sessionId: string, data: string): void {
@@ -183,6 +252,7 @@ export class SessionService {
   }
 
   stop(sessionId: string): void {
+    this.db.prepare('UPDATE sessions SET resume_on_start = 0 WHERE id = ?').run(sessionId);
     const runtime = this.runtimes.get(sessionId);
     if (!runtime) return;
     runtime.stopping = true;
@@ -218,16 +288,36 @@ export class SessionService {
   recoverStale(): void {
     this.db
       .prepare(
+        `UPDATE sessions SET resume_on_start = 1
+         WHERE status IN ('starting', 'running', 'idle')`,
+      )
+      .run();
+    this.db
+      .prepare(
         `UPDATE sessions SET status = 'exited', exit_code = NULL, updated_at = ?
          WHERE status IN ('starting', 'running', 'idle')`,
       )
       .run(nowIso());
   }
 
+  resumePending(): void {
+    if (process.env.NEST_AUTO_RESUME === '0') return;
+    const rows = this.db
+      .prepare('SELECT id FROM sessions WHERE resume_on_start = 1 ORDER BY updated_at')
+      .all() as Array<{ id: string }>;
+
+    for (const row of rows) {
+      void this.resume(row.id).catch(() => {
+        this.db.prepare('UPDATE sessions SET resume_on_start = 0 WHERE id = ?').run(row.id);
+      });
+    }
+  }
+
   shutdownAll(): void {
     for (const [id, runtime] of this.runtimes) {
       if (runtime.idleTimer) clearTimeout(runtime.idleTimer);
       this.persistScrollback(id, runtime.buffer);
+      this.db.prepare('UPDATE sessions SET resume_on_start = 1 WHERE id = ?').run(id);
       runtime.stopping = true;
       try {
         runtime.pty.kill();

@@ -94,6 +94,7 @@ export function createMockClient(): NestClient {
       description: 'Anthropic Claude Code CLI',
       command: 'claude',
       args: [],
+      resumeArgs: ['--continue'],
       available: false,
       source: 'builtin',
     },
@@ -103,6 +104,7 @@ export function createMockClient(): NestClient {
       description: 'OpenAI Codex CLI',
       command: 'codex',
       args: [],
+      resumeArgs: ['resume', '--last'],
       available: false,
       source: 'builtin',
     },
@@ -112,6 +114,7 @@ export function createMockClient(): NestClient {
       description: 'Built-in deterministic harness for development and e2e',
       command: 'node',
       args: ['scripts/fake-harness.mjs'],
+      resumeArgs: ['--continue'],
       available: true,
       source: 'builtin',
     },
@@ -315,6 +318,24 @@ export function createMockClient(): NestClient {
           emit({ type: 'session:status', session: { ...session } });
         }
         return undefined;
+      }
+      case 'sessions.resume': {
+        const session = sessions.find((candidate) => candidate.id === params.sessionId);
+        if (!session) throw new Error('session not found');
+        const harness = harnesses.find((candidate) => candidate.id === session.harnessId);
+        session.status = 'running';
+        session.exitCode = null;
+        session.updatedAt = new Date().toISOString();
+        const updated = { ...session };
+        emit({ type: 'session:status', session: updated });
+        setTimeout(() => {
+          emit({
+            type: 'session:data',
+            sessionId: session.id,
+            data: `\r\n── resume ${harness?.label ?? session.harnessId} ──\r\n${GREETING}`,
+          });
+        }, 80);
+        return updated;
       }
       case 'sessions.resize':
         return undefined;

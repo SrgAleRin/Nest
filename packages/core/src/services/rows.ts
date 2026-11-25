@@ -40,6 +40,7 @@ export interface SessionRow {
   cwd: string;
   exit_code: number | null;
   scrollback: string;
+  resume_on_start: number;
   created_at: string;
   updated_at: string;
 }

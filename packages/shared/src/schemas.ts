@@ -49,6 +49,7 @@ export const HarnessProfileSchema = z.object({
   description: z.string(),
   command: z.string(),
   args: z.array(z.string()),
+  resumeArgs: z.array(z.string()),
   available: z.boolean(),
   source: z.enum(['builtin', 'custom']),
 });

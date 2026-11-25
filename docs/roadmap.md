@@ -62,6 +62,7 @@ Phase 5 Integration / release
 - [x] `packages/shared`: zod-схемы и RPC для projects/tasks/sessions/git/comments/harness;
 - [x] `packages/core`: SQLite baseline, миграции, project/task/git/session/comment services;
 - [x] PTY + xterm, scrollback в SQLite, восстановление `exited` после рестарта;
+- [x] Resume завершённой сессии в той же вкладке (`--continue` / `resume --last`);
 - [x] git status/diff/stage/commit/push, inline-комментарии, отправка в сессию;
 - [x] `MockRpcClient` и `FakeHarness`;
 - [x] `NEST_PROFILE` изолирует userData, БД, worktree-root;
@@ -163,7 +164,7 @@ Phase 2–4 — это milestones, а не отдельные ветки. Их �
 
 - системные уведомления + бейдж;
 - command palette;
-- resume harness-сессии;
+- точный resume по harness session id (сейчас — последняя беседа в workspace);
 - комментарии к диапазону строк (range) и re-anchor при изменении diff;
 - shared dirs (`node_modules`) через junction/symlink;
 - архив задач и очистка старых worktree;

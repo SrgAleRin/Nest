@@ -7,8 +7,7 @@ export interface Migration {
 export const migrations: Migration[] = [
   {
     id: 1,
-    name: 'baseline',
-    sql: `
+    name: 'baseline',    sql: `
       CREATE TABLE projects (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -66,6 +65,14 @@ export const migrations: Migration[] = [
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
+    `,
+  },
+  {
+    id: 2,
+    name: 'session_resume_on_start',
+    sql: `
+      ALTER TABLE sessions
+        ADD COLUMN resume_on_start INTEGER NOT NULL DEFAULT 0;
     `,
   },
 ];

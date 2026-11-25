@@ -865,6 +865,12 @@ code,
   border-color: #5a2733;
 }
 
+.mini-btn.primary {
+  border-color: #3d63a0;
+  background: #17233a;
+  color: #cfe0ff;
+}
+
 .mini-btn:disabled {
   opacity: 0.45;
   cursor: default;

@@ -14,6 +14,7 @@ interface Definition {
   description: string;
   command: string;
   args: string[];
+  resumeArgs: string[];
   source: 'builtin' | 'custom';
 }
 
@@ -32,6 +33,7 @@ export class HarnessRegistry {
         description: 'Anthropic Claude Code CLI',
         command: 'claude',
         args: [],
+        resumeArgs: ['--continue'],
         source: 'builtin',
       },
       {
@@ -40,6 +42,7 @@ export class HarnessRegistry {
         description: 'OpenAI Codex CLI',
         command: 'codex',
         args: [],
+        resumeArgs: ['resume', '--last'],
         source: 'builtin',
       },
       {
@@ -48,6 +51,7 @@ export class HarnessRegistry {
         description: 'DeepSeek harness CLI',
         command: 'dsh',
         args: [],
+        resumeArgs: [],
         source: 'builtin',
       },
       {
@@ -56,6 +60,7 @@ export class HarnessRegistry {
         description: 'OpenCode CLI',
         command: 'opencode',
         args: [],
+        resumeArgs: ['--continue'],
         source: 'builtin',
       },
       {
@@ -64,6 +69,7 @@ export class HarnessRegistry {
         description: 'pi coding agent CLI',
         command: 'pi',
         args: [],
+        resumeArgs: ['--continue'],
         source: 'builtin',
       },
       {
@@ -72,6 +78,7 @@ export class HarnessRegistry {
         description: 'GitHub Copilot CLI',
         command: 'copilot',
         args: [],
+        resumeArgs: ['--continue'],
         source: 'builtin',
       },
       {
@@ -80,6 +87,7 @@ export class HarnessRegistry {
         description: 'Built-in deterministic harness for development and e2e',
         command: fakeCommand,
         args: [options.fakeHarnessScript],
+        resumeArgs: ['--continue'],
         source: 'builtin',
       },
       {
@@ -88,6 +96,7 @@ export class HarnessRegistry {
         description: 'Command from NEST_CUSTOM_COMMAND',
         command: customCommand,
         args: [],
+        resumeArgs: [],
         source: 'custom',
       },
     ];
@@ -100,6 +109,7 @@ export class HarnessRegistry {
       description: definition.description,
       command: definition.command,
       args: definition.args,
+      resumeArgs: definition.resumeArgs,
       available: this.isAvailable(definition),
       source: definition.source,
     }));

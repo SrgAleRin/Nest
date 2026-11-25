@@ -13,14 +13,29 @@ Nest запускает harness как обычный CLI в PTY. Поэтому
 
 | Harness | id | Команда | Запуск | Resume | Hooks / статус | Тест |
 |---|---|---|---|---|---|---|
-| Claude Code | `claude` | `claude` | PTY | `claude --resume <id>` (best effort) | best effort по docs | supported; реальный smoke — после MVP, коллеги |
-| Codex | `codex` | `codex` | PTY | `codex resume <id>` | `notify` | tested |
-| DeepSeek Harness | `dsh` | `dsh` | PTY | по возможностям CLI | generic | tested |
-| OpenCode | `opencode` | `opencode` | PTY | по возможностям CLI | generic | tested |
-| pi | `pi` | `pi` | PTY | по возможностям CLI | generic | supported |
-| GitHub Copilot CLI | `copilot` | `copilot` | PTY | по возможностям CLI | generic | supported |
+| Claude Code | `claude` | `claude` | PTY | `claude --continue` / `claude --resume <id>` (best effort) | best effort по docs | supported; реальный smoke — после MVP, коллеги |
+| Codex | `codex` | `codex` | PTY | `codex resume --last` | `notify` | tested |
+| DeepSeek Harness | `dsh` | `dsh` | PTY | `dsh tui --resume <session>` (нужен id; пока не подключено) | generic | tested |
+| OpenCode | `opencode` | `opencode` | PTY | `opencode --continue` | generic | tested |
+| pi | `pi` | `pi` | PTY | `pi --continue` | generic | supported |
+| GitHub Copilot CLI | `copilot` | `copilot` | PTY | `copilot --continue` | generic | supported |
 | Blank terminal | `shell` | `$SHELL` / `pwsh` | PTY | — | — | tested |
 | Custom | `custom` | любая | PTY | — | — | generic |
+
+## Resume в Nest
+
+Завершённая сессия продолжается **в той же вкладке и той же строке БД**, новая сессия не создаётся:
+
+1. если сессия была жива при закрытии приложения, при следующем запуске она **возобновляется автоматически**;
+2. для остальных завершённых сессий есть кнопка **Resume**;
+3. запуск идёт с resume-аргументами профиля (`--continue` / `resume --last`);
+4. в scrollback добавляется маркер `── resume <harness> ──`, дальше идёт вывод продолженной сессии;
+5. `session id`, заголовок и позиция вкладки сохраняются;
+6. если harness не умеет resume, остаётся только **New session**.
+
+`NEST_AUTO_RESUME=0` отключает автозапуск.
+
+Ограничение: `--continue` продолжает **последнюю** беседу в рабочей директории. Если в одной задаче было несколько сессий одного harness, Resume может поднять не ту беседу. Точные session id и resume по id — следующий шаг.
 
 > Важно: «supported» не значит «проверено на всех версиях». Версию CLI фиксируем в отчёте о smoke-тесте.
 

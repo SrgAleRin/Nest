@@ -16,7 +16,9 @@ interface RightPanelProps {
   onNotify: (level: 'info' | 'warn' | 'error', message: string) => void;
   onSelectSession: (sessionId: string) => void;
   onStopSession: (sessionId: string) => void;
-  onRestartSession: (session: Session) => void;
+  onResumeSession: (session: Session) => void;
+  onNewSession: (session: Session) => void;
+  resumableHarnesses: ReadonlySet<string>;
 }
 
 export function RightPanel(props: RightPanelProps) {
@@ -70,9 +72,11 @@ export function RightPanel(props: RightPanelProps) {
           <SessionsPanel
             sessions={props.sessions}
             selectedSessionId={props.selectedSessionId}
+            resumableHarnesses={props.resumableHarnesses}
             onSelect={props.onSelectSession}
             onStop={props.onStopSession}
-            onRestart={props.onRestartSession}
+            onResume={props.onResumeSession}
+            onNewSession={props.onNewSession}
           />
         ) : null}
       </div>

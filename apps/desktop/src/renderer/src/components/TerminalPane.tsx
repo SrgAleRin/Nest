@@ -16,7 +16,9 @@ interface TerminalPaneProps {
   busy: boolean;
   onSelectSession: (sessionId: string) => void;
   onStart: (harnessId: string) => void;
-  onRestart: (session: Session) => void;
+  onResume: (session: Session) => void;
+  onNewSession: (session: Session) => void;
+  resumableHarnesses: ReadonlySet<string>;
   onError: (message: string) => void;
 }
 
@@ -85,8 +87,10 @@ export function TerminalPane(props: TerminalPaneProps) {
             client={props.client}
             session={session}
             active={session.id === activeSession?.id}
+            canResume={props.resumableHarnesses.has(session.harnessId)}
+            onResume={props.onResume}
+            onNewSession={props.onNewSession}
             onError={props.onError}
-            onRestart={props.onRestart}
           />
         ))}
       </div>
@@ -142,14 +146,18 @@ function TerminalView({
   client,
   session,
   active,
+  canResume,
   onError,
-  onRestart,
+  onResume,
+  onNewSession,
 }: {
   client: NestClient;
   session: Session;
   active: boolean;
+  canResume: boolean;
   onError: (message: string) => void;
-  onRestart: (session: Session) => void;
+  onResume: (session: Session) => void;
+  onNewSession: (session: Session) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -202,7 +210,9 @@ function TerminalView({
         if (!warnedRef.current) {
           warnedRef.current = true;
           onErrorRef.current(
-            'This session ended when Nest closed. Scrollback is read-only — press Restart to start a new session with the same harness.',
+            canResume
+              ? 'This session is paused. Press Resume to continue it in this tab.'
+              : 'This session ended when Nest closed. Scrollback is read-only — start a new session.',
           );
         }
         return;
@@ -272,6 +282,20 @@ function TerminalView({
     applyFitRef.current();
   }, [active]);
 
+  const previousStatusRef = useRef(session.status);
+  useEffect(() => {
+    const previous = previousStatusRef.current;
+    previousStatusRef.current = session.status;
+    if (
+      (previous === 'exited' || previous === 'failed') &&
+      (session.status === 'starting' || session.status === 'running')
+    ) {
+      lastSizeRef.current = null;
+      termRef.current?.focus();
+      applyFitRef.current();
+    }
+  }, [session.status]);
+
   return (
     <div className={`terminal-view ${active ? 'active' : ''}`}>
       <div className="terminal-host" ref={hostRef} />
@@ -281,8 +305,13 @@ function TerminalView({
             session {session.status}
             {session.exitCode === null ? '' : ` · exit ${session.exitCode}`}
           </span>
-          <button className="mini-btn" onClick={() => onRestart(session)}>
-            Restart
+          {canResume ? (
+            <button className="mini-btn primary" onClick={() => onResume(session)}>
+              Resume
+            </button>
+          ) : null}
+          <button className="mini-btn" onClick={() => onNewSession(session)}>
+            New session
           </button>
         </div>
       ) : null}

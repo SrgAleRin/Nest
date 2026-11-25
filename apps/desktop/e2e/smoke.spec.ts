@@ -101,32 +101,50 @@ test('runs the fake harness, persists scrollback and recovers after restart', as
   page = await app.firstWindow();
   await page.waitForSelector('.app', { timeout: 60_000 });
 
+  // Sessions that were live at shutdown resume automatically, in the same tab.
   const after = await page.evaluate(async () => {
     const list = await window.nest!.invoke('sessions.list', {});
     if (!list.ok) throw new Error(list.error.message);
     return list.data;
   });
   expect(after).toHaveLength(1);
-  expect(after[0]?.status).toBe('exited');
+  expect(['running', 'idle']).toContain(after[0]?.status ?? '');
+  await expect(page.locator('.terminal-tab')).toHaveCount(1);
 
-  await page.locator('.session-row').first().click();
-  await expect(page.locator('.terminal-exit')).toContainText('exited', { timeout: 30_000 });
-  await expect(page.locator('.terminal-view.active .xterm-rows')).toContainText('hello-e2e', {
-    timeout: 30_000,
+  // Previous output is kept in scrollback above the resumed PTY's fresh screen.
+  const restored = await page.evaluate(async () => {
+    const list = await window.nest!.invoke('sessions.list', {});
+    if (!list.ok) throw new Error(list.error.message);
+    const scroll = await window.nest!.invoke('sessions.scrollback', {
+      sessionId: list.data[0]!.id,
+    });
+    if (!scroll.ok) throw new Error(scroll.error.message);
+    return scroll.data.data;
   });
-
-  // The old PTY is dead. Restart must start a fresh session with the same harness
-  // and the new terminal must accept input.
-  await page.locator('.terminal-exit .mini-btn').click();
-  await expect(page.locator('.terminal-tab')).toHaveCount(2, { timeout: 30_000 });
-  await expect(page.locator('.terminal-view.active .xterm-rows')).toContainText('FakeHarness', {
-    timeout: 30_000,
-  });
+  expect(restored).toContain('hello-e2e');
+  expect(restored).toContain('resume Fake harness');
 
   await page.locator('.terminal-view.active .xterm-helper-textarea').focus();
-  await page.keyboard.type('echo restarted');
+  await page.keyboard.type('echo after-reopen');
   await page.keyboard.press('Enter');
-  await expect(page.locator('.terminal-view.active .xterm-rows')).toContainText('restarted', {
+  await expect(page.locator('.terminal-view.active .xterm-rows')).toContainText('after-reopen', {
+    timeout: 30_000,
+  });
+
+  // Manual Resume covers sessions stopped during the current run.
+  await page.evaluate(async () => {
+    const list = await window.nest!.invoke('sessions.list', {});
+    if (!list.ok) throw new Error(list.error.message);
+    await window.nest!.invoke('sessions.stop', { sessionId: list.data[0]!.id });
+  });
+  await expect(page.locator('.terminal-exit')).toContainText('exited', { timeout: 30_000 });
+  await page.getByRole('button', { name: 'Resume', exact: true }).click();
+  await expect(page.locator('.terminal-tab')).toHaveCount(1);
+
+  await page.locator('.terminal-view.active .xterm-helper-textarea').focus();
+  await page.keyboard.type('echo manual-resume');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.terminal-view.active .xterm-rows')).toContainText('manual-resume', {
     timeout: 30_000,
   });
 

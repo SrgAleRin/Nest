@@ -104,4 +104,24 @@ describe('core vertical slice', () => {
     expect(stored).toContain('hello-core');
     expect(core.sessions.activeForTask(checkout.id)).toBeNull();
   });
+
+  it('resumes an ended session in the same row without creating a tab', async () => {
+    if (!core) throw new Error('core was not created');
+    const sessions = core.sessions.list();
+    const previous = sessions[sessions.length - 1];
+    if (!previous) throw new Error('session missing');
+    expect(previous.status).toBe('exited');
+
+    const resumed = await core.sessions.resume(previous.id);
+    expect(resumed.id).toBe(previous.id);
+    expect(resumed.title).toBe(previous.title);
+
+    await waitFor(() => ['running', 'idle'].includes(core!.sessions.get(previous.id).status));
+    await waitFor(() => core!.sessions.scrollback(previous.id).includes('resume Fake harness'));
+
+    expect(core.sessions.list()).toHaveLength(sessions.length);
+
+    core.sessions.stop(previous.id);
+    await waitFor(() => core!.sessions.get(previous.id).status !== 'running', 20_000);
+  });
 });

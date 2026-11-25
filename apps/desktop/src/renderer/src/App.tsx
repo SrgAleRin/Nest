@@ -56,6 +56,13 @@ export function App() {
     [sessions, selectedTaskId],
   );
   const newTaskProject = projects.find((project) => project.id === newTaskProjectId) ?? null;
+  const resumableHarnesses = useMemo(
+    () =>
+      new Set(
+        harnesses.filter((harness) => harness.resumeArgs.length > 0).map((harness) => harness.id),
+      ),
+    [harnesses],
+  );
 
   const refreshAll = useCallback(async () => {
     try {
@@ -241,6 +248,23 @@ export function App() {
     [startSession],
   );
 
+  const resumeSession = useCallback(
+    async (session: Session) => {
+      setBusy(true);
+      try {
+        const resumed = await client.invoke('sessions.resume', { sessionId: session.id });
+        setSessions((prev) => upsert(prev, resumed));
+        setSelectedTaskId(session.taskId);
+        setSelectedSessionId(session.id);
+      } catch (error) {
+        notify('error', errorMessage(error));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [client, notify],
+  );
+
   const stopSession = useCallback(
     async (sessionId: string) => {
       try {
@@ -345,7 +369,9 @@ export function App() {
           busy={busy}
           onSelectSession={setSelectedSessionId}
           onStart={(harnessId) => void startSession(harnessId)}
-          onRestart={restartSession}
+          onResume={(session) => void resumeSession(session)}
+          onNewSession={restartSession}
+          resumableHarnesses={resumableHarnesses}
           onError={reportError}
         />
 
@@ -359,7 +385,9 @@ export function App() {
           onNotify={notify}
           onSelectSession={selectSession}
           onStopSession={(sessionId) => void stopSession(sessionId)}
-          onRestartSession={restartSession}
+          onResumeSession={(session) => void resumeSession(session)}
+          onNewSession={restartSession}
+          resumableHarnesses={resumableHarnesses}
         />
       </main>
 

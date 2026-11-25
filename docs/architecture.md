@@ -9,7 +9,7 @@
 | ADR-001 | **Electron**, не Tauri | проверенный `node-pty` + `xterm` на Windows; Tauri 2 остаётся future experiment, не MVP |
 | ADR-002 | **Windows-first** | Windows 11 — основной таргет CI и ручных тестов; macOS вторичен; Linux best effort |
 | ADR-003 | **Main checkout — singleton-workspace проекта** | можно работать без worktree; один на проект, не удаляется, сессии и git доступны |
-| ADR-004 | **Без daemon в MVP** | PTY-сессии завершаются вместе с приложением; метаданные и scrollback сохраняются |
+| ADR-004 | **Без daemon в MVP** | PTY-сессии завершаются вместе с приложением; сессии, живые при закрытии, автоматически возобновляются через resume harness; scrollback сохраняется |
 | ADR-005 | **Harness-профили MVP** | Claude Code, Codex, DeepSeek Harness, OpenCode, pi, GitHub Copilot CLI, custom |
 | ADR-006 | **Комментарии к diff — в MVP** | хранятся в SQLite, привязаны к task/file/line, отправляются в активную PTY-сессию |
 | ADR-007 | **PR-провайдеров нет в MVP** | только commit/push; GitHub/GitLab PR и checks — позже |
@@ -40,7 +40,7 @@ Tauri-заметка: если позже понадобится установ�
 | Тесты | Vitest + Playwright |
 | Платформы | Windows-first; macOS вторичен; Linux best effort |
 | Task kinds | `worktree` (по умолчанию) + `checkout` (singleton main checkout) |
-| Сессии | без daemon в MVP: PTY умирает вместе с приложением, scrollback сохраняется |
+| Сессии | без daemon в MVP: PTY умирает вместе с приложением; живые сессии автоматически возобновляются через `--continue`/`resume` |
 
 Монорепозиторий на pnpm. Ядро (`packages/core`) — обычный Node-код, который сейчас живёт в main-процессе, а позже может быть вынесен в отдельный daemon без переписывания UI.
 
@@ -382,11 +382,14 @@ pty.onData(chunk)
 В MVP **нет фонового daemon**:
 
 - при закрытии приложения все PTY-процессы завершаются;
-- в БД сессии помечаются `exited` (или `failed`, если известен код);
-- snapshot/scrollback сохраняется и восстанавливается при следующем запуске;
-- harness-сессия может быть предложена к `Resume`, если CLI это умеет.
+- сессии, которые были живы в этот момент, помечаются `resume_on_start = 1`;
+- при следующем запуске они автоматически возобновляются в тех же вкладках через resume-команду harness (`--continue` / `resume --last`);
+- в БД сессии, завершившиеся сами или остановленные пользователем, помечаются `exited`/`failed`;
+- snapshot/scrollback сохраняется, новый вывод дописывается после маркера `── resume <harness> ──`;
+- для остальных завершённых сессий доступна кнопка `Resume`;
+- `NEST_AUTO_RESUME=0` отключает автозапуск.
 
-Это осознанное упрощение. Полное выживание сессий — отдельный этап с `nestd`, после MVP.
+Это осознанное упрощение: PTY не переживает закрытие процесса, но разговор harness продолжается. Полное выживание PTY без перезапуска CLI — отдельный этап с `nestd`, после MVP.
 
 ### 6.7 Безопасность терминала
 
@@ -555,12 +558,12 @@ export interface HarnessProfile {
 
 | id | command | resume | примечание |
 |---|---|---|---|
-| `claude` | `claude` | `claude --resume <id>` | поддержка есть; у автора нет доступа для ручного теста |
-| `codex` | `codex` | `codex resume <id>` | ручной тест |
-| `dsh` | `dsh` | по возможностям CLI | ручной тест |
-| `opencode` | `opencode` | по возможностям CLI | ручной тест |
-| `pi` | `pi` | по возможностям CLI | базовый PTY-профиль |
-| `copilot` | `copilot` | по возможностям CLI | GitHub Copilot CLI |
+| `claude` | `claude` | `claude --continue` | поддержка есть; у автора нет доступа для ручного теста |
+| `codex` | `codex` | `codex resume --last` | ручной тест |
+| `dsh` | `dsh` | `dsh tui --resume <session>` (нужен id) | ручной тест |
+| `opencode` | `opencode` | `opencode --continue` | ручной тест |
+| `pi` | `pi` | `pi --continue` | базовый PTY-профиль |
+| `copilot` | `copilot` | `copilot --continue` | GitHub Copilot CLI |
 | `shell` | `$SHELL` / `pwsh` | — | blank terminal |
 
 Claude Code не требует отдельной API-интеграции: базовый запуск — обычный PTY. Всё, что зависит от версии CLI (resume, hooks, точный `needs_input`), делаем best-effort и проверяем на сообществе. Если `claude` не установлен, профиль просто помечается `not found`; приложение не падает.

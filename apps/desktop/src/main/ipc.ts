@@ -95,6 +95,8 @@ export function registerIpc(context: IpcContext): void {
       core.sessions.stop(sessionId);
     },
 
+    'sessions.resume': async ({ sessionId }) => core.sessions.resume(sessionId),
+
     'sessions.resize': ({ sessionId, cols, rows }) => {
       core.sessions.resize(sessionId, cols, rows);
     },

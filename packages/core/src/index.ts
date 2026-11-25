@@ -50,6 +50,7 @@ export function createCore(options: CoreOptions): Core {
   const git = new GitService(db, tasks, emit);
   const sessions = new SessionService(db, tasks, harnesses, emit);
   sessions.recoverStale();
+  sessions.resumePending();
   const comments = new CommentsService(db, tasks, sessions);
 
   tasks.onBeforeRemove((task) => sessions.stopForTask(task.id));

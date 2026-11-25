@@ -6,17 +6,21 @@ import { relativeTime } from '../utils';
 interface SessionsPanelProps {
   sessions: Session[];
   selectedSessionId: string | null;
+  resumableHarnesses: ReadonlySet<string>;
   onSelect: (sessionId: string) => void;
   onStop: (sessionId: string) => void;
-  onRestart: (session: Session) => void;
+  onResume: (session: Session) => void;
+  onNewSession: (session: Session) => void;
 }
 
 export function SessionsPanel({
   sessions,
   selectedSessionId,
+  resumableHarnesses,
   onSelect,
   onStop,
-  onRestart,
+  onResume,
+  onNewSession,
 }: SessionsPanelProps) {
   if (sessions.length === 0) {
     return (
@@ -57,9 +61,16 @@ export function SessionsPanel({
                   Stop
                 </button>
               ) : (
-                <button className="mini-btn" onClick={() => onRestart(session)}>
-                  Restart
-                </button>
+                <>
+                  {resumableHarnesses.has(session.harnessId) ? (
+                    <button className="mini-btn primary" onClick={() => onResume(session)}>
+                      Resume
+                    </button>
+                  ) : null}
+                  <button className="mini-btn" onClick={() => onNewSession(session)}>
+                    New session
+                  </button>
+                </>
               )}
             </div>
           </div>
