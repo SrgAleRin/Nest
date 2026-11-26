@@ -6,6 +6,11 @@ export function errorMessage(error: unknown): string {
   return 'Unexpected error';
 }
 
+/** Stable code of an RPC failure; the IPC client keeps it on `error.name`. */
+export function errorCode(error: unknown): string {
+  return error instanceof Error ? error.name : '';
+}
+
 export function upsert<T extends { id: string }>(list: T[], item: T): T[] {
   const index = list.findIndex((candidate) => candidate.id === item.id);
   if (index === -1) return [...list, item];
@@ -36,6 +41,7 @@ export function statusTone(file: GitFile): string {
   if (file.indexStatus === 'A' || file.worktreeStatus === 'A') return 'tone-added';
   if (file.indexStatus === 'D' || file.worktreeStatus === 'D') return 'tone-deleted';
   if (file.indexStatus === 'R' || file.worktreeStatus === 'R') return 'tone-renamed';
+  if (file.copied) return 'tone-renamed';
   return 'tone-modified';
 }
 

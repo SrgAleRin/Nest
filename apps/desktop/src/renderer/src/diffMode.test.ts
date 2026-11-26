@@ -28,6 +28,8 @@ function diffFile(patch: Partial<DiffFile> = {}): DiffFile {
 function gitFile(patch: Partial<GitFile> = {}): GitFile {
   return {
     path: 'src/a.ts',
+    oldPath: null,
+    copied: false,
     indexStatus: ' ',
     worktreeStatus: ' ',
     staged: false,

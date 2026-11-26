@@ -2,6 +2,14 @@ import { z } from 'zod';
 
 export const GitFileSchema = z.object({
   path: z.string(),
+  /**
+   * Source path of a rename or copy reported by porcelain status; null for
+   * every other kind of change. Both paths belong to the entry: git actions
+   * must receive the pair, or only half of the change is undone.
+   */
+  oldPath: z.string().nullable(),
+  /** True when the entry is a detected copy (C) rather than a rename (R). */
+  copied: z.boolean(),
   indexStatus: z.string(),
   worktreeStatus: z.string(),
   staged: z.boolean(),

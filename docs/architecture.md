@@ -237,7 +237,7 @@ export const rpcContract = {
   'git.stage':  { input: z.object({ taskId: z.string(), paths: z.array(z.string()) }), output: GitStatusSchema },
   'git.unstage':{ input: z.object({ taskId: z.string(), paths: z.array(z.string()) }), output: GitStatusSchema },
   'git.commit': { input: z.object({ taskId: z.string(), message: z.string().min(1), stageAll: z.boolean().optional(), amend: z.boolean().optional() }), output: z.object({ hash: z.string(), summary: z.string() }) },
-  'git.push':   { input: z.object({ taskId: z.string(), force: z.boolean().optional() }), output: z.object({ output: z.string() }) },
+  'git.push':   { input: z.object({ taskId: z.string(), force: z.boolean().optional(), publish: z.boolean().optional() }), output: z.object({ output: z.string() }) },
   'git.log':    { input: z.object({ taskId: z.string(), ref: z.string().optional(), limit: z.number().int().optional(), skip: z.number().int().optional() }), output: GitLogSchema },
   'git.commitDetail': { input: z.object({ taskId: z.string(), hash: z.string() }), output: GitCommitDetailSchema },
   'git.branches': { input: z.object({ taskId: z.string() }), output: GitBranchesSchema },
@@ -498,7 +498,7 @@ finished после Quit/рестарта.
 
 | kind | path | branch | setup | delete |
 |---|---|---|---|---|
-| `worktree` | `~/Nest/worktrees/<project>/<task>` | `nest/<slug>` | да | да, с проверкой dirty |
+| `worktree` | `~/Nest/worktrees/<project>-<id8>/<task>` | `nest/<slug>` | да | да, с проверкой dirty |
 | `checkout` | корень проекта | текущая ветка | нет | нет, только вместе с проектом |
 
 `checkout` — singleton: один на проект. Он создаётся автоматически при добавлении проекта и не участвует в `git worktree add/remove`. Все git-операции для него выполняются в корне проекта.
@@ -511,7 +511,7 @@ finished после Quit/рестарта.
 1. validate project path
 2. save setup script on the project (если пришёл из модалки)
 3. git fetch --prune            (best effort: 60 с, пропускается без remotes)
-4. git worktree add -b <branch> <path> <base>
+4. git worktree add --no-track -b <branch> <path> <base>
 5. insert task row (kind=worktree, status=active)
 6. setup:
    - copy .env / .env.local    (только если файла ещё нет в worktree)
@@ -521,6 +521,8 @@ finished после Quit/рестарта.
 ```
 
 `base` — локальная ветка (`main`) или remote-tracking (`origin/main`); вторая разрешается после `git fetch`, поэтому задача может стартовать от свежего upstream. Setup script хранится в `projects.setup_script`, запоминается при создании задачи и подставляется в модалку New task.
+
+`--no-track` держит базу и upstream раздельно: `nest/<slug>` стартует от `origin/main`, но не наследует его как свой upstream, поэтому первый push публикует саму задачу. Если у существующей задачи upstream указывает на другую ветку, `git.push` возвращает `upstream_mismatch` и путь публикации (`push -u <remote> <branch>`); чужой upstream перезаписывается только с `publish: true`. Создание задач сериализуется внутри проекта, поэтому две одновременные задачи не делят ни slug, ни путь, ни ветку. Откат после неудачного INSERT убирает только созданные этой операцией worktree и ветку (ветку — если её не использует другой worktree).
 
 Создание остаётся одним синхронным RPC, но по пути core шлёт события `task:progress` (`fetch` → `worktree` → `setup`); модалка показывает текущий шаг, а не просто «Creating…».
 
@@ -540,7 +542,7 @@ Rollback:
 
 - если worktree создан, а setup упал — задача остаётся, причина лежит в `tasks.setup_error`, worktree не удаляем автоматически (пользователь может зайти и посмотреть, в сайдбаре горит бейдж `setup`);
 - если worktree не создан — ничего не пишем в БД, показываем ошибку;
-- branch создаётся только вместе с worktree; при откате удаляем, если она пустая;
+- branch создаётся только вместе с worktree; при откате удаляем только ветку, созданную этой операцией, и только если её не использует ни один worktree (чужой worktree или ветку не трогаем);
 - для checkout rollback не нужен: мы не создаём файлов и не меняем ветку.
 
 ### 7.2 Команды
@@ -559,10 +561,10 @@ Rollback:
 | diff `base` | `git diff <base_ref>` где `base_ref` — записанный при создании задачи ref (`tasks.base_ref`), иначе compare-base; рабочая сторона включает индекс |
 | untracked | читать файл, показывать как added; бинарные — placeholder, строки считает сам Nest (лимит 1 МБ и первые 200 файлов) |
 | stage | `git add -A -- <path>` |
-| unstage | `git restore --staged -- <path>` |
-| discard | `git restore --source=HEAD --staged --worktree -- <path>`; untracked — `git clean -f -- <path>` |
+| unstage | `git restore --staged -- <path>`; у rename/copy передаются оба пути (источник — только для rename) |
+| discard | `git restore --source=HEAD --staged --worktree -- <path>`; у rename — оба пути, у copy — только новый; untracked — `git clean -f -- <path>` |
 | commit | `git commit -m <message>`; с `amend` — `git commit --amend -m <message>` |
-| push | `git push -u origin HEAD`; force — `git push --force-with-lease` после подтверждения |
+| push | без upstream — `git push -u <remote> <branch>`; со своим upstream — `git push`; force — `--force-with-lease` после подтверждения; чужой upstream — `upstream_mismatch` и публикация только с `publish` |
 | log | `git log --max-count=<n+1> --skip=<m> --format=<NUL-поля>`; без HEAD — пустая страница |
 | commit detail | `git log -1 --format=<meta>` + `git diff <parent> <hash>` (корневой — `git show`, merge — первый parent) |
 | branches | `git for-each-ref --format=... refs/heads refs/remotes` + `git symbolic-ref --short -q HEAD`, `git remote -v` |
@@ -787,7 +789,7 @@ nest hook --event stop --session $NEST_SESSION_ID
 | Что | Где |
 |---|---|
 | БД | `app.getPath('userData')/nest.db` |
-| Worktrees | `~/Nest/worktrees/<project-slug>/<task-slug>` (настраивается) |
+| Worktrees | `~/Nest/worktrees/<project>-<id8>/<task-slug>` (настраивается; суффикс — первые 8 hex id проекта, старые пути не мигрируются) |
 | Main checkout | путь самого проекта (без копии) |
 | Логи сессий | `userData/sessions/<session-id>.log` |
 | Snapshots | `userData/sessions/<session-id>.snapshot` |
