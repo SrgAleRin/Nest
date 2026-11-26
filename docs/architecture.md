@@ -1076,7 +1076,7 @@ Windows-first:
 - `node-pty` — native module; prebuilds для Electron win32-x64 уже входят в пакет, `@electron/rebuild` нужен только при смене ABI/архитектуры, поэтому в конфиге стоит `npmRebuild: false` и Visual Studio на сборочной машине не требуется;
 - `node:sqlite` — встроен в Node 24, отдельной native-сборки нет;
 - `pnpm dist` собирает NSIS x64 и `latest.yml`; `apps/desktop/e2e/packaged.spec.ts` проверяет упакованную и установленную сборку (asar, распакованный `node-pty`, ресурсный `fake-harness.mjs`, PTY, БД);
-- CI: Windows обязателен; `.github/workflows/ci.yml` гоняет проверки на push/PR, `.github/workflows/release.yml` по тегу `v*` собирает установщик и создаёт черновик GitHub Release;
+- CI: Windows обязателен; `.github/workflows/ci.yml` гоняет проверки на push/PR, `.github/workflows/release.yml` по тегу `v*` (или ручному запуску с этим тегом) собирает установщик и создаёт черновик GitHub Release;
 - auto-update: `electron-updater` + generic feed (см. ниже);
 - crash reporting — opt-in, локальные логи по умолчанию.
 

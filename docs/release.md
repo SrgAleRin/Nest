@@ -37,7 +37,7 @@ win-unpacked/
 В репозитории два workflow:
 
 - [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) — на каждый push в `main` и на pull request: install, typecheck, lint, unit/integration, build и e2e. При падении e2e `test-results` с трейсами уходят артефактом;
-- [`.github/workflows/release.yml`](../.github/workflows/release.yml) — по тегу `v*`: проверка версии, typecheck, lint, unit/integration, `pnpm dist`, проверка артефактов, packaged-смоук и черновик GitHub Release с `Nest-Setup-<version>.exe`, `.blockmap` и `latest.yml`. Полный e2e остаётся блокирующим в `ci` на `main`; релиз не дублирует его, чтобы не удлинять сборку и не зависеть от таймингов UI-тестов.
+- [`.github/workflows/release.yml`](../.github/workflows/release.yml) — по тегу `v*` или ручным запуском с указанием тега: проверка версии, typecheck, lint, unit/integration, `pnpm dist`, проверка артефактов, packaged-смоук и черновик GitHub Release с `Nest-Setup-<version>.exe`, `.blockmap` и `latest.yml`. Полный e2e остаётся блокирующим в `ci` на `main`; релиз не дублирует его, чтобы не удлинять сборку и не зависеть от таймингов UI-тестов.
 
 ### Что нужно один раз
 
@@ -62,7 +62,9 @@ win-unpacked/
 4. Откройте черновик, проверьте ассеты и нажмите **Publish release**. Пока релиз черновик, `releases/latest/download` указывает на предыдущую версию — обновление не уйдёт раньше времени.
 5. Feed URL уже встроен в приложение: `https://github.com/SrgAleRin/Nest/releases/latest/download/`. В **Settings → Updates** можно указать другой адрес; `NEST_UPDATE_URL` перекрывает и его. Для приватного хостинга используйте свой HTTPS-каталог с теми же тремя файлами.
 
-Ручной запуск `release.yml` (`workflow_dispatch`) собирает и проверяет установщик, но не создаёт релиз — удобно для репетиции на ветке.
+Ручной запуск `release.yml` (`workflow_dispatch`) даёт тот же релиз, но тег нужно указать во входе `tag` (например `v0.1.3`): workflow чекаутит `refs/tags/<tag>`, а не `main`, поэтому перезапуск после падения собирает ровно тот коммит, что помечен. Без тега опубликовать нельзя — иначе `latest.yml` описывал бы не тот код, что помечен.
+
+Если тег запушен, а ран упал на тестах и фикс приехал позже — переставьте тег на исправленный коммит (`git tag -f v0.1.3 <sha>`, `git push -f origin v0.1.3`) и запустите workflow вручную с этим тегом. Повторный запуск упавшего рана бесполезен: он чекаутит старый коммит.
 
 ## 4. Проверка установщика
 

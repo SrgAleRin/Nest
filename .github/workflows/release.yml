@@ -1,19 +1,26 @@
 name: release
 
 # A tag is the only thing that produces a release: `git tag v0.1.0 && git push
-# origin v0.1.0`. The workflow builds and tests the exact tagged commit, then
+# origin v0.1.0`. A manual run must name the tag too (Run workflow → tag =
+# v0.1.0), so it builds the tagged commit instead of whatever is on the default
+# branch. Either way the workflow builds and tests that exact commit, then
 # attaches the installer, blockmap and latest.yml to a **draft** GitHub Release.
 # Review the draft and publish it to make the feed live.
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build and publish, for example v0.1.3
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -23,9 +30,23 @@ jobs:
     env:
       ELECTRON_CACHE: ${{ github.workspace }}\.cache\electron
       ELECTRON_BUILDER_CACHE: ${{ github.workspace }}\.cache\electron-builder
+      # A tag push knows its tag from the ref; a manual run has to be told.
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
     steps:
+      - name: Resolve release tag
+        shell: pwsh
+        run: |
+          if (-not $env:RELEASE_TAG) {
+            throw 'No release tag: push a v* tag or pass the `tag` input.'
+          }
+          "Building $env:RELEASE_TAG from refs/tags/$env:RELEASE_TAG" >> $env:GITHUB_STEP_SUMMARY
+
+      # Check out the tag itself, not the default branch, so a manual run
+      # publishes the commit the tag points at.
       - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
 
       - uses: pnpm/action-setup@v4
         with:
@@ -52,8 +73,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Check tag matches package version
-        if: startsWith(github.ref, 'refs/tags/')
-        run: node scripts/check-release-version.mjs $env:GITHUB_REF_NAME
+        run: node scripts/check-release-version.mjs $env:RELEASE_TAG
 
       - name: Typecheck
         run: pnpm typecheck
@@ -103,7 +123,7 @@ jobs:
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: nest-windows-${{ github.ref_name }}-${{ github.run_number }}
+          name: nest-windows-${{ env.RELEASE_TAG }}-${{ github.run_number }}
           path: |
             apps/desktop/release/Nest-Setup-*.exe
             apps/desktop/release/Nest-Setup-*.exe.blockmap
@@ -115,11 +135,10 @@ jobs:
       # seeing the new version through `releases/latest/download`. Reruns update
       # the same draft instead of creating duplicates.
       - name: Create draft GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: Nest ${{ github.ref_name }}
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: Nest ${{ env.RELEASE_TAG }}
           draft: true
           generate_release_notes: true
           fail_on_unmatched_files: true
@@ -134,7 +153,6 @@ jobs:
           $version = (Get-Content apps/desktop/package.json -Raw | ConvertFrom-Json).version
           "## Nest $version" >> $env:GITHUB_STEP_SUMMARY
           "Installer: ``Nest-Setup-$version.exe``" >> $env:GITHUB_STEP_SUMMARY
-          if ($env:GITHUB_REF -like 'refs/tags/*') {
-            "Release created as a **draft**. Publish it to make ``latest.yml`` live." >> $env:GITHUB_STEP_SUMMARY
-          }
+          "Tag: ``$env:RELEASE_TAG``" >> $env:GITHUB_STEP_SUMMARY
+          "Release created as a **draft**. Publish it to make ``latest.yml`` live." >> $env:GITHUB_STEP_SUMMARY
           "Feed: https://github.com/${{ github.repository }}/releases/latest/download/" >> $env:GITHUB_STEP_SUMMARY
