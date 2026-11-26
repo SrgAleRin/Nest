@@ -16,6 +16,7 @@ import {
 import { Button, EmptyState } from '@nest/ui';
 import { ChevronIcon, CloseIcon, PlayIcon, PlusIcon, TerminalIcon } from './Icons';
 import { onSessionData } from '../state/terminalBus';
+import { hasOverflow, revealTab, scrollTabsBy } from '../tabScroll';
 import { errorMessage, resumeActionLabel, resumeShortLabel, resumeTone } from '../utils';
 
 const SEARCH_DECORATIONS = {
@@ -116,6 +117,35 @@ export function TerminalPane(props: TerminalPaneProps) {
   const { task, sessions, selectedSessionId } = props;
   const activeSession = sessions.find((session) => session.id === selectedSessionId) ?? null;
   const [mounted, setMounted] = useState<string[]>([]);
+  const tabListRef = useRef<HTMLDivElement>(null);
+
+  // The strip hides its scrollbar, so a tab that overflows on the right (a
+  // freshly opened one especially) would stay half cut off and its close
+  // button unreachable. Keep the selected tab in view instead.
+  useEffect(() => {
+    const list = tabListRef.current;
+    if (!list || !selectedSessionId) return;
+    const tab = list.querySelector<HTMLElement>(
+      `[data-session-id="${CSS.escape(selectedSessionId)}"]`,
+    );
+    if (!tab) return;
+    // `offsetLeft` is measured from the offset parent, not the strip, so the
+    // tab's content offset comes from the two client rects instead.
+    const listRect = list.getBoundingClientRect();
+    const tabRect = tab.getBoundingClientRect();
+    const scrollLeft = revealTab(
+      {
+        scrollLeft: list.scrollLeft,
+        scrollWidth: list.scrollWidth,
+        clientWidth: list.clientWidth,
+      },
+      {
+        left: tabRect.left - listRect.left + list.scrollLeft,
+        width: tabRect.width,
+      },
+    );
+    if (scrollLeft !== list.scrollLeft) list.scrollLeft = scrollLeft;
+  }, [selectedSessionId, sessions]);
 
   useEffect(() => {
     if (!selectedSessionId) return;
@@ -138,13 +168,33 @@ export function TerminalPane(props: TerminalPaneProps) {
   return (
     <section className="center">
       <div className="terminal-tabs">
-        <div className="terminal-tab-list">
+        <div
+          className="terminal-tab-list"
+          ref={tabListRef}
+          // A vertical wheel is the only gesture most users try, and a
+          // horizontal box ignores it; translate it instead of hiding the
+          // overflow behind an invisible scrollbar.
+          onWheel={(event) => {
+            const list = event.currentTarget;
+            const metrics = {
+              scrollLeft: list.scrollLeft,
+              scrollWidth: list.scrollWidth,
+              clientWidth: list.clientWidth,
+            };
+            if (!hasOverflow(metrics)) return;
+            const next = scrollTabsBy(metrics, event.deltaY || event.deltaX);
+            if (next === list.scrollLeft) return;
+            list.scrollLeft = next;
+            event.preventDefault();
+          }}
+        >
           {sessions.map((session) => (
             <div
               key={session.id}
               role="tab"
               aria-selected={session.id === selectedSessionId}
               tabIndex={0}
+              data-session-id={session.id}
               className={`terminal-tab ${session.id === selectedSessionId ? 'selected' : ''}`}
               onClick={() => props.onSelectSession(session.id)}
               onKeyDown={(event) => {

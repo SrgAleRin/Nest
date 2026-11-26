@@ -613,7 +613,11 @@ code,
   min-width: 0;
   display: flex;
   gap: 2px;
+  /* The strip scrolls sideways instead of squeezing tabs, and the scrollbar is
+     hidden: `TerminalPane` reveals the selected tab and turns the wheel into a
+     horizontal scroll. */
   overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: none;
 }
 
@@ -622,6 +626,7 @@ code,
 }
 
 .terminal-tab {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 6px;
