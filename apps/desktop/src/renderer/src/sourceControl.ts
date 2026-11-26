@@ -1,4 +1,5 @@
 import type { GitFile } from '@nest/shared';
+import type { ConfirmRequest } from './confirm';
 
 /**
  * The side of a change. `staged` is the index (HEAD → index), `unstaged` is the
@@ -191,28 +192,83 @@ export function changedPathCount(files: readonly GitFile[]): number {
   return new Set(files.map((file) => file.path)).size;
 }
 
+/** `old → new` for a rename or a copy, the plain path otherwise. */
+export function rowTarget(row: ChangeRow | ConflictRow): string {
+  return row.oldPath ? `${row.oldPath} → ${row.path}` : row.path;
+}
+
+/** True for a row whose letter is the untracked `?`. */
+export function isUntrackedRow(row: ChangeRow | ConflictRow): boolean {
+  return row.letter === '?' || row.letter === '';
+}
+
 /**
- * The scope of `Discard` in words. Core restores tracked paths from HEAD with
+ * The confirmation of `Discard`. Core restores tracked paths from HEAD with
  * `git restore --source=HEAD --staged --worktree`, so it drops the staged and
  * the unstaged side of that path; untracked files are deleted instead. Without
- * HEAD the restore cannot run at all.
+ * HEAD the restore cannot run at all, so the text says the action fails.
+ */
+export function discardConfirmation(
+  row: ChangeRow | ConflictRow,
+  options: { hasHead: boolean },
+): ConfirmRequest {
+  const target = rowTarget(row);
+  if (!options.hasHead) {
+    return {
+      title: `Discard ${target}`,
+      body: [
+        'This branch has no commits yet, so there is no HEAD to restore from: the discard fails and nothing on disk changes.',
+      ],
+      acceptLabel: 'Discard',
+      destructive: true,
+    };
+  }
+  if (isUntrackedRow(row)) {
+    return {
+      title: `Delete ${target}`,
+      body: ['This deletes the untracked file from disk. This cannot be undone.'],
+      acceptLabel: 'Delete file',
+      destructive: true,
+    };
+  }
+  return {
+    title: `Discard ${target}`,
+    body: [
+      'Restores the path from HEAD (git restore --source=HEAD --staged --worktree), so it drops the staged and the unstaged changes of this path, not only the unstaged side.',
+      'This cannot be undone.',
+    ],
+    acceptLabel: 'Discard changes',
+    destructive: true,
+  };
+}
+
+/**
+ * The same scope in one plain string, for the tooltip of the row action. It is
+ * derived from `discardConfirmation`, so the warning and the dialog can never
+ * disagree about what a discard drops.
  */
 export function discardWarning(
   row: ChangeRow | ConflictRow,
   options: { hasHead: boolean },
 ): string {
-  const target = row.oldPath ? `${row.oldPath} → ${row.path}` : row.path;
-  if (!options.hasHead) {
-    return `Discard ${target}? This branch has no commits yet, so there is no HEAD to restore from and the operation will fail.`;
-  }
-  if (row.letter === '?' || row.letter === '') {
-    return `Discard ${target}? This deletes the untracked file from disk. This cannot be undone.`;
-  }
-  return [
-    `Discard ${target}?`,
-    '',
-    'Restores the path from HEAD (git restore --source=HEAD --staged --worktree),',
-    'so it drops the staged and the unstaged changes of this path, not only the',
-    'unstaged side. This cannot be undone.',
-  ].join('\n');
+  const confirmation = discardConfirmation(row, options);
+  return [confirmation.title, ...confirmation.body].join('\n\n');
+}
+
+/**
+ * Whether the row a confirmation named still holds its own change in a fresh
+ * status. A row that moved to another side, or lost its change, means the state
+ * changed under the confirmation, so the action must not run.
+ */
+export function rowStillChanged(row: ChangeRow | ConflictRow, files: readonly GitFile[]): boolean {
+  const file = files.find((candidate) => candidate.path === row.path);
+  if (!file) return false;
+  if (!('side' in row)) return file.conflict;
+  if (row.side === 'staged') return file.staged;
+  return file.untracked || file.unstaged;
+}
+
+/** The inline note of a destructive action that the fresh read refused. */
+export function staleAbortNote(row: ChangeRow | ConflictRow): string {
+  return `Nothing was discarded: ${rowTarget(row)} no longer matches the row you confirmed, so the git state changed while it was read. Check the list and try again.`;
 }

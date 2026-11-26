@@ -3,13 +3,16 @@ import type { GitFile } from '@nest/shared';
 import {
   changedPathCount,
   countPaths,
+  discardConfirmation,
   discardWarning,
   filterSections,
   matchesFilter,
   projectChanges,
+  rowStillChanged,
   rowTone,
   sideLetter,
   stageablePaths,
+  staleAbortNote,
 } from './sourceControl';
 
 function file(overrides: Partial<GitFile> = {}): GitFile {
@@ -201,5 +204,77 @@ describe('row helpers', () => {
       file({ path: 'notes.md', indexStatus: '?', worktreeStatus: '?', untracked: true }),
     ]).untracked;
     expect(discardWarning(untracked!, { hasHead: true })).toContain('deletes the untracked file');
+  });
+});
+
+describe('discard confirmation', () => {
+  it('names the path and the restore-from-HEAD scope of a tracked change', () => {
+    const [row] = projectChanges([partiallyStaged]).unstaged;
+    const request = discardConfirmation(row!, { hasHead: true });
+    expect(request.title).toBe('Discard src/login.ts');
+    expect(request.title).not.toContain('you sure');
+    expect(request.body.join(' ')).toContain('git restore --source=HEAD --staged --worktree');
+    expect(request.body.join(' ')).toContain('staged and the unstaged');
+    expect(request.destructive).toBe(true);
+    expect(request.acceptLabel).toBe('Discard changes');
+  });
+
+  it('names a rename by both paths', () => {
+    const [row] = projectChanges([
+      file({
+        path: 'src/new.ts',
+        oldPath: 'src/old.ts',
+        indexStatus: 'R',
+        worktreeStatus: ' ',
+        staged: true,
+      }),
+    ]).staged;
+    expect(discardConfirmation(row!, { hasHead: true }).title).toBe(
+      'Discard src/old.ts → src/new.ts',
+    );
+  });
+
+  it('says an untracked file is deleted', () => {
+    const [row] = projectChanges([
+      file({ path: 'notes.md', indexStatus: '?', worktreeStatus: '?', untracked: true }),
+    ]).untracked;
+    const request = discardConfirmation(row!, { hasHead: true });
+    expect(request.title).toBe('Delete notes.md');
+    expect(request.body.join(' ')).toContain('deletes the untracked file from disk');
+  });
+
+  it('says the discard fails without a HEAD', () => {
+    const [row] = projectChanges([partiallyStaged]).staged;
+    const request = discardConfirmation(row!, { hasHead: false });
+    expect(request.body.join(' ')).toContain('no HEAD to restore from');
+    expect(request.body.join(' ')).toContain('fails');
+  });
+});
+
+describe('stale guard', () => {
+  it('accepts a row that still holds its own side', () => {
+    const files = [partiallyStaged];
+    const sections = projectChanges(files);
+    expect(rowStillChanged(sections.staged[0]!, files)).toBe(true);
+    expect(rowStillChanged(sections.unstaged[0]!, files)).toBe(true);
+  });
+
+  it('refuses a row that moved to another side or lost its change', () => {
+    const [unstagedRow] = projectChanges([partiallyStaged]).unstaged;
+    // The worktree side was staged while the confirmation was open.
+    const nowStagedOnly = [file({ path: 'src/login.ts', indexStatus: 'M', staged: true })];
+    expect(rowStillChanged(unstagedRow!, nowStagedOnly)).toBe(false);
+    expect(rowStillChanged(unstagedRow!, [])).toBe(false);
+    expect(staleAbortNote(unstagedRow!)).toContain('Nothing was discarded');
+    expect(staleAbortNote(unstagedRow!)).toContain('src/login.ts');
+  });
+
+  it('refuses an untracked row that became tracked', () => {
+    const [untrackedRow] = projectChanges([
+      file({ path: 'notes.md', indexStatus: '?', worktreeStatus: '?', untracked: true }),
+    ]).untracked;
+    expect(
+      rowStillChanged(untrackedRow!, [file({ path: 'notes.md', indexStatus: 'A', staged: true })]),
+    ).toBe(false);
   });
 });

@@ -18,7 +18,7 @@ interface ChangeSectionsProps {
   view: GitFileView;
   selection: GitSelection | null;
   busy: boolean;
-  /** A stale snapshot must not be used for a destructive action. */
+  /** The snapshot is stale: a discard reads the status again before it runs. */
   stale: boolean;
   onOpen: (path: string, mode: ChangeSide) => void;
   onStage: (paths: string[]) => void;
@@ -265,10 +265,10 @@ function ChangeRowView({
             <button
               type="button"
               className="mini-btn danger git-discard"
-              disabled={busy || stale}
+              disabled={busy}
               title={
                 stale
-                  ? 'Waiting for a fresh git status: a stale snapshot must not be used to discard'
+                  ? 'Discard this path: the snapshot is stale, so the git status is read again first and the discard stops if the path changed'
                   : 'Discard this path (restores it from HEAD, deletes untracked files)'
               }
               onClick={() => onDiscard(row)}

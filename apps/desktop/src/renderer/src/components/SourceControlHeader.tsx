@@ -3,7 +3,13 @@ import { Badge } from '@nest/ui';
 import { BranchSwitcher } from './BranchSwitcher';
 import { PanelMenu } from './PanelMenu';
 import { RefreshIcon } from './Icons';
-import { trackSummary, upstreamLabel, type SyncKind, type SyncPlan } from '../gitSync';
+import {
+  syncBusyLabel,
+  trackSummary,
+  upstreamLabel,
+  type SyncKind,
+  type SyncPlan,
+} from '../gitSync';
 
 interface SourceControlHeaderProps {
   task: Task | null;
@@ -13,6 +19,8 @@ interface SourceControlHeaderProps {
   branchesLoading: boolean;
   plan: SyncPlan;
   busy: boolean;
+  /** The remote action in flight: the control says what it is doing. */
+  pendingSync: SyncKind | null;
   stale: boolean;
   hasSelection: boolean;
   onSync: (kind: SyncKind) => void;
@@ -37,6 +45,7 @@ export function SourceControlHeader({
   branchesLoading,
   plan,
   busy,
+  pendingSync,
   stale,
   hasSelection,
   onSync,
@@ -83,11 +92,12 @@ export function SourceControlHeader({
           <button
             type="button"
             className="mini-btn primary sync-action"
+            data-testid="sync-action"
             disabled={busy || plan.disabledReason !== null || plan.kind === null}
             title={plan.disabledReason ?? (plan.detail || plan.label)}
             onClick={() => plan.kind && onSync(plan.kind)}
           >
-            {plan.label}
+            {pendingSync ? syncBusyLabel(pendingSync) : plan.label}
           </button>
           <button
             type="button"

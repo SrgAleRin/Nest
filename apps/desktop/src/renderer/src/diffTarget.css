@@ -42,6 +42,14 @@
   font-size: 12px;
 }
 
+/* The other side of the open file, and the way back to the list. */
+.diff-missing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
 .diff-missing-back {
   padding: 0;
   border: 0;

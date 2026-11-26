@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import type { GitBranches, GitStatus } from '@nest/shared';
-import { planSync, trackSummary, upstreamLabel } from './gitSync';
+import {
+  forcePushConfirmation,
+  freshGuardReason,
+  isRejectedPush,
+  planSync,
+  planSyncFailure,
+  publishTargetConfirmation,
+  publishTargetFor,
+  syncBusyLabel,
+  trackSummary,
+  upstreamLabel,
+} from './gitSync';
 
 function status(overrides: Partial<GitStatus> = {}): GitStatus {
   return {
@@ -143,5 +154,159 @@ describe('head labels', () => {
     expect(upstreamLabel(null)).toBe('no upstream');
     expect(trackSummary(status({ ahead: 2, behind: 1 }))).toEqual(['↑2', '↓1']);
     expect(trackSummary(status())).toEqual([]);
+  });
+});
+
+describe('publish target', () => {
+  it('names the remote and the remote branch of a publish', () => {
+    const target = publishTargetFor(branches(), status({ upstream: null }));
+    expect(target).toEqual({
+      remote: 'origin',
+      branch: 'feature/login',
+      target: 'origin/feature/login',
+    });
+  });
+
+  it('keeps the remote the branch already tracks', () => {
+    const target = publishTargetFor(
+      branches({
+        remotes: [
+          { name: 'fork', fetchUrl: 'a', pushUrl: 'a' },
+          { name: 'origin', fetchUrl: 'b', pushUrl: 'b' },
+        ],
+      }),
+      status({ upstream: 'fork/feature/login' }),
+    );
+    expect(target?.target).toBe('fork/feature/login');
+  });
+
+  it('has nothing to name without a branch or without a remote', () => {
+    expect(publishTargetFor(branches({ remotes: [] }), status())).toBeNull();
+    expect(
+      publishTargetFor(branches({ current: null, detached: true }), status({ branch: 'HEAD' })),
+    ).toBeNull();
+    expect(publishTargetFor(null, status())).toBeNull();
+  });
+
+  it('confirms the upstream switch with both names and the untouched upstream', () => {
+    const target = publishTargetFor(branches(), status({ upstream: 'origin/main' }))!;
+    const request = publishTargetConfirmation({
+      branch: 'feature/login',
+      upstream: 'origin/main',
+      target,
+    });
+    expect(request.title).toBe('Publish feature/login as origin/feature/login');
+    const body = request.body.join(' ');
+    expect(body).toContain('tracks origin/main');
+    expect(body).toContain('git push -u origin feature/login');
+    expect(body).toContain('origin/main is not touched');
+    expect(request.acceptLabel).toBe('Publish branch');
+    expect(request.destructive).toBe(false);
+  });
+});
+
+describe('force with lease', () => {
+  it('explains the lease and starts on cancel', () => {
+    const request = forcePushConfirmation({
+      branch: 'feature/login',
+      target: 'origin/feature/login',
+    });
+    expect(request.title).toBe('Force push origin/feature/login');
+    expect(request.body.join(' ')).toContain('--force-with-lease');
+    expect(request.body.join(' ')).toContain('since your last fetch');
+    expect(request.acceptLabel).toBe('Force push with lease');
+    expect(request.destructive).toBe(true);
+  });
+});
+
+describe('failed sync by state', () => {
+  const mismatchCode = 'upstream_mismatch';
+  const rejected = [
+    'git push origin feature/login failed',
+    '! [rejected] feature/login -> feature/login (non-fast-forward)',
+    'error: failed to push some refs',
+  ].join('\n');
+
+  it('offers only an explicit publish when the upstream points elsewhere', () => {
+    const failure = planSyncFailure({
+      kind: 'push',
+      code: mismatchCode,
+      message: 'git push origin feature/login failed',
+      status: status({ upstream: 'origin/main' }),
+      branches: branches(),
+    });
+    expect(failure.publishTarget?.target).toBe('origin/feature/login');
+    expect(failure.summary).toContain('tracks origin/main');
+    expect(failure.summary).toContain('Publish it as origin/feature/login');
+    expect(failure.savedLocally).toBe(true);
+    expect(failure.canForcePush).toBe(false);
+  });
+
+  it('keeps a rejected push retryable and offers the lease separately', () => {
+    expect(isRejectedPush('git_failed', rejected)).toBe(true);
+    expect(isRejectedPush('git_failed', 'nothing staged')).toBe(false);
+    expect(isRejectedPush('upstream_mismatch', rejected)).toBe(false);
+
+    const failure = planSyncFailure({
+      kind: 'push',
+      code: 'git_failed',
+      message: rejected,
+      status: status(),
+      branches: branches(),
+    });
+    expect(failure.savedLocally).toBe(true);
+    expect(failure.canForcePush).toBe(true);
+    expect(failure.publishTarget).toBeNull();
+    expect(failure.summary).toContain('commit is saved locally');
+    expect(failure.summary).toContain('nothing is committed again');
+  });
+
+  it('never turns another push failure into a force', () => {
+    const failure = planSyncFailure({
+      kind: 'push',
+      code: 'git_failed',
+      message: 'git push failed\nfatal: unable to access the remote',
+      status: status(),
+      branches: branches(),
+    });
+    expect(failure.savedLocally).toBe(true);
+    expect(failure.canForcePush).toBe(false);
+  });
+
+  it('explains a pull that refused to fast-forward', () => {
+    const failure = planSyncFailure({
+      kind: 'pull',
+      code: 'pull_not_fast_forward',
+      message: 'The branch has diverged from its upstream',
+      status: status({ behind: 1 }),
+      branches: branches(),
+    });
+    expect(failure.summary).toContain('only fast-forwards');
+    expect(failure.canForcePush).toBe(false);
+    expect(failure.savedLocally).toBe(false);
+  });
+
+  it('labels the control while a remote action runs', () => {
+    expect(syncBusyLabel('publish')).toBe('Publishing…');
+    expect(syncBusyLabel('push')).toBe('Pushing…');
+    expect(syncBusyLabel('pull')).toBe('Pulling…');
+    expect(syncBusyLabel('fetch')).toBe('Fetching…');
+  });
+});
+
+describe('destructive guard on a fresh read', () => {
+  it('accepts a read that proves the state did not move', () => {
+    expect(freshGuardReason({ error: null, stale: false, behind: 0 })).toBeNull();
+  });
+
+  it('stops the action when the read failed, stayed stale or moved the branch', () => {
+    expect(freshGuardReason({ error: 'git failed', stale: false, behind: 0 })).toContain(
+      'git failed',
+    );
+    expect(freshGuardReason({ error: null, stale: true, behind: 0 })).toContain('kept changing');
+    expect(freshGuardReason({ error: null, stale: false, behind: 2 })).toContain(
+      '2 commits behind its upstream',
+    );
+    expect(freshGuardReason({ error: null, stale: false, behind: 1 })).toContain('1 commit behind');
   });
 });

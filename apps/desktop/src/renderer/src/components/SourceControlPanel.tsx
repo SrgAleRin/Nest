@@ -3,24 +3,38 @@ import type { GitStatus, NestClient, Task } from '@nest/shared';
 import { EmptyState, ErrorState } from '@nest/ui';
 import { ChangeList } from './ChangeSections';
 import { CommitBox } from './CommitBox';
+import { ConfirmAction } from './ConfirmAction';
 import { SourceControlHeader } from './SourceControlHeader';
 import { SourceControlSkeleton } from './PanelSkeletons';
 import {
-  discardWarning,
+  discardConfirmation,
   filterSections,
   projectChanges,
+  rowStillChanged,
+  rowTarget,
   stageablePaths,
+  staleAbortNote,
   type ChangeRow,
   type ConflictRow,
 } from '../sourceControl';
+import type { ConfirmRequest } from '../confirm';
 import type { GitSelection, GitSide } from '../state/gitSnapshot';
 import {
   useGitSnapshot,
   useGitSnapshotStore,
   useGitTaskMemory,
 } from '../state/GitSnapshotProvider';
-import { planSync, type SyncKind } from '../gitSync';
-import { errorMessage } from '../utils';
+import {
+  forcePushConfirmation,
+  freshGuardReason,
+  planSync,
+  planSyncFailure,
+  publishTargetConfirmation,
+  publishTargetFor,
+  type SyncFailure,
+  type SyncKind,
+} from '../gitSync';
+import { errorCode, errorMessage } from '../utils';
 
 interface SourceControlPanelProps {
   client: NestClient;
@@ -38,10 +52,28 @@ interface SourceControlPanelProps {
   initialFocus: GitSelection | null;
 }
 
+/** One action a failed operation offers inline; nothing here runs by itself. */
+interface PanelNoteAction {
+  id: string;
+  label: string;
+  run: () => void;
+}
+
+/** What the panel says in place of a toast when an operation fails. */
+interface PanelNote {
+  tone: 'warn' | 'error';
+  text: string;
+  /** The operation's own reason, e.g. git's rejection text. */
+  detail?: string;
+  actions: PanelNoteAction[];
+}
+
 /**
  * `Source Control`: branch head, the change list and the commit block. The
  * status comes from the one store the app already reads; branches load on their
  * own and their failure only explains the sync button, never the change list.
+ * Every step that cannot be taken back asks first, in the panel, naming its
+ * exact target.
  */
 export function SourceControlPanel({
   client,
@@ -60,6 +92,16 @@ export function SourceControlPanel({
   const snapshot = useGitSnapshot(taskId);
   const memory = useGitTaskMemory(taskId);
   const [busy, setBusy] = useState(false);
+  /** The remote action in flight; the control shows what it is doing. */
+  const [pendingSync, setPendingSync] = useState<SyncKind | null>(null);
+  /** A failed remote action: its reason and the actions it allows. */
+  const [failure, setFailure] = useState<SyncFailure | null>(null);
+  const [note, setNote] = useState<PanelNote | null>(null);
+  const [confirm, setConfirm] = useState<{
+    request: ConfirmRequest;
+    /** The accepted action; `null` keeps the dialog while an accept runs. */
+    accept: () => void;
+  } | null>(null);
 
   const status: GitStatus | null = snapshot?.status.data ?? null;
   const branches = snapshot?.branches.data ?? null;
@@ -146,13 +188,199 @@ export function SourceControlPanel({
     [run, store, taskId],
   );
 
+  /**
+   * A remote action and what the panel offers when it fails. The reason and the
+   * retry stay inline: the change list, the commit block and the draft keep
+   * their data, and nothing is committed again to fix a push.
+   */
+  const runSync = useCallback(
+    async (kind: SyncKind, options: { force?: boolean } = {}) => {
+      if (!taskId) return;
+      setBusy(true);
+      setPendingSync(kind);
+      setNote(null);
+      setFailure(null);
+      try {
+        if (kind === 'fetch') {
+          const result = await client.invoke('git.fetch', { taskId });
+          onNotify('info', result.output || 'Fetched');
+        } else if (kind === 'pull') {
+          const result = await client.invoke('git.pull', { taskId });
+          onNotify('info', result.output || 'Already up to date');
+        } else {
+          const result = await client.invoke('git.push', {
+            taskId,
+            ...(kind === 'publish' ? { publish: true } : {}),
+            ...(options.force ? { force: true } : {}),
+          });
+          onNotify('info', result.output || (kind === 'publish' ? 'Published' : 'Pushed'));
+        }
+        onChanged();
+      } catch (error) {
+        const syncFailure = planSyncFailure({
+          kind,
+          code: errorCode(error),
+          message: errorMessage(error),
+          status,
+          branches,
+        });
+        setFailure(syncFailure);
+      } finally {
+        // The operation may have moved the upstream or created a remote branch:
+        // read both slices again, and keep the failure note on screen.
+        await store.requestStatus(taskId).catch(() => undefined);
+        void store.requestBranches(taskId);
+        setBusy(false);
+        setPendingSync(null);
+      }
+    },
+    [branches, client, onChanged, onNotify, status, store, taskId],
+  );
+
+  /** The upstream switch: named, confirmed, and only then retried as publish. */
+  const askPublishTarget = useCallback(
+    (failure: SyncFailure) => {
+      const target = failure.publishTarget;
+      if (!target) return;
+      setConfirm({
+        request: publishTargetConfirmation({
+          branch: target.branch,
+          upstream: status?.upstream ?? null,
+          target,
+        }),
+        accept: () => {
+          setConfirm(null);
+          void runSync('publish');
+        },
+      });
+    },
+    [runSync, status?.upstream],
+  );
+
+  /**
+   * A destructive remote action never runs on a stale snapshot: the status is
+   * read again, and the action stops when that read cannot vouch for the state.
+   */
+  const canRunDestructive = useCallback(async (): Promise<boolean> => {
+    if (!stale || !taskId) return true;
+    await store.requestStatus(taskId);
+    const fresh = store.getTask(taskId);
+    const reason = freshGuardReason({
+      error: fresh?.status.error ?? null,
+      stale: fresh?.stale ?? false,
+      behind: fresh?.status.data?.behind ?? 0,
+    });
+    if (!reason) return true;
+    setFailure(null);
+    setNote({
+      tone: 'warn',
+      text: `Nothing was pushed: ${reason}. Read the state again and retry when it is current.`,
+      actions: [],
+    });
+    return false;
+  }, [stale, store, taskId]);
+
+  /** The lease-guarded force: its own confirmation, never an automatic retry. */
+  const askForcePush = useCallback(() => {
+    const target = publishTargetFor(branches, status);
+    const branch = target?.branch ?? status?.branch ?? 'this branch';
+    setConfirm({
+      request: forcePushConfirmation({
+        branch,
+        target: target?.target ?? status?.upstream ?? 'the remote branch',
+      }),
+      accept: () => {
+        setConfirm(null);
+        void (async () => {
+          if (!(await canRunDestructive())) return;
+          await runSync('push', { force: true });
+        })();
+      },
+    });
+  }, [branches, canRunDestructive, runSync, status]);
+
+  const noteOfFailure = useCallback(
+    (syncFailure: SyncFailure): PanelNote => {
+      const actions: PanelNoteAction[] = [
+        syncFailure.publishTarget
+          ? {
+              id: 'publish-target',
+              label: 'Publish branch',
+              run: () => askPublishTarget(syncFailure),
+            }
+          : {
+              id: 'retry',
+              label: `Retry ${syncFailure.kind}`,
+              run: () => void runSync(syncFailure.kind),
+            },
+      ];
+      if (syncFailure.canForcePush) {
+        actions.push({ id: 'force', label: 'Force push with lease', run: askForcePush });
+      }
+      return {
+        tone: 'error',
+        text: syncFailure.summary,
+        ...(syncFailure.message ? { detail: syncFailure.message } : {}),
+        actions,
+      };
+    },
+    [askForcePush, askPublishTarget, runSync],
+  );
+
+  /** One inline note: a failed remote action, or the panel's own refusal. */
+  const panelNote = failure ? noteOfFailure(failure) : note;
+
+  /**
+   * `Discard` asks in the panel and names its scope. A stale snapshot is never
+   * used for it: the panel reads the status again and refuses when the row
+   * moved, so a discard cannot hit a path that changed under the confirmation.
+   */
+  const performDiscard = useCallback(
+    async (row: ChangeRow | ConflictRow) => {
+      if (!taskId) return;
+      setConfirm(null);
+      setNote(null);
+      setFailure(null);
+      if (stale) {
+        await store.requestStatus(taskId);
+        const fresh = store.getTask(taskId);
+        if (fresh?.status.error) {
+          setNote({
+            tone: 'warn',
+            text: `Nothing was discarded: the fresh git status could not be read (${fresh.status.error}).`,
+            actions: [{ id: 'retry', label: 'Retry', run: () => void performDiscard(row) }],
+          });
+          return;
+        }
+        // A read that lost to a newer invalidation leaves the snapshot stale:
+        // it cannot prove what is on disk, so the discard does not run.
+        if (fresh?.stale) {
+          setNote({
+            tone: 'warn',
+            text: `Nothing was discarded: the git status changed again while it was read, so ${rowTarget(row)} could not be checked. Retry when the panel is not stale.`,
+            actions: [{ id: 'retry', label: 'Retry', run: () => void performDiscard(row) }],
+          });
+          return;
+        }
+        if (!rowStillChanged(row, fresh?.status.data?.files ?? [])) {
+          setNote({ tone: 'warn', text: staleAbortNote(row), actions: [] });
+          return;
+        }
+      }
+      await run(() => store.discard(taskId, [row.path]).then(() => undefined));
+    },
+    [run, stale, store, taskId],
+  );
+
   const discard = useCallback(
     (row: ChangeRow | ConflictRow) => {
       if (!taskId) return;
-      if (!window.confirm(discardWarning(row, { hasHead: hasHead !== false }))) return;
-      void run(() => store.discard(taskId, [row.path]).then(() => undefined));
+      setConfirm({
+        request: discardConfirmation(row, { hasHead: hasHead !== false }),
+        accept: () => void performDiscard(row),
+      });
     },
-    [hasHead, run, store, taskId],
+    [hasHead, performDiscard, taskId],
   );
 
   const commit = useCallback(() => {
@@ -169,44 +397,6 @@ export function SourceControlPanel({
       await store.requestBranches(taskId);
     });
   }, [memory.amend, memory.draft, onNotify, run, store, taskId]);
-
-  const sync = useCallback(
-    (kind: SyncKind) => {
-      if (!taskId) return;
-      void run(async () => {
-        try {
-          if (kind === 'fetch') {
-            const result = await client.invoke('git.fetch', { taskId });
-            onNotify('info', result.output || 'Fetched');
-          } else if (kind === 'pull') {
-            const result = await client.invoke('git.pull', { taskId });
-            onNotify('info', result.output || 'Already up to date');
-          } else {
-            const result = await client.invoke('git.push', {
-              taskId,
-              ...(kind === 'publish' ? { publish: true } : {}),
-            });
-            onNotify('info', result.output || (kind === 'publish' ? 'Published' : 'Pushed'));
-          }
-        } catch (error) {
-          const details = errorMessage(error);
-          if (kind === 'push' || kind === 'publish') {
-            // The commit exists locally: say so and let the user retry the push
-            // only, instead of implying the work was lost.
-            onNotify(
-              'error',
-              `Push failed. The commit is saved locally; retry the push when the remote is reachable. ${details}`,
-            );
-          } else {
-            throw error;
-          }
-        }
-        await store.requestStatus(taskId);
-        await store.requestBranches(taskId);
-      });
-    },
-    [client, onNotify, run, store, taskId],
-  );
 
   const switchBranch = useCallback(
     (branch: string) => {
@@ -271,9 +461,10 @@ export function SourceControlPanel({
         branchesLoading={branchesLoading}
         plan={plan}
         busy={busy}
+        pendingSync={pendingSync}
         stale={stale}
         hasSelection={memory.selection !== null}
-        onSync={sync}
+        onSync={(kind) => void runSync(kind)}
         onRefresh={() => {
           void store.requestStatus(task.id);
           void store.requestBranches(task.id);
@@ -296,6 +487,33 @@ export function SourceControlPanel({
           >
             Retry
           </button>
+        </div>
+      ) : null}
+
+      {panelNote ? (
+        <div
+          className={`source-control-note ${panelNote.tone} source-control-failure`}
+          role="status"
+          data-testid="panel-note"
+        >
+          <span>{panelNote.text}</span>
+          {panelNote.detail ? (
+            <details className="source-control-reason">
+              <summary>Reason</summary>
+              <pre>{panelNote.detail}</pre>
+            </details>
+          ) : null}
+          {panelNote.actions.map((action) => (
+            <button
+              key={action.id}
+              type="button"
+              className="link-btn"
+              disabled={busy}
+              onClick={action.run}
+            >
+              {action.label}
+            </button>
+          ))}
         </div>
       ) : null}
 
@@ -391,8 +609,17 @@ export function SourceControlPanel({
         onDraft={(value) => taskId && store.updateMemory(taskId, { draft: value })}
         onAmend={(value) => taskId && store.updateMemory(taskId, { amend: value })}
         onCommit={commit}
-        onSync={sync}
+        onSync={(kind) => void runSync(kind)}
       />
+
+      {confirm ? (
+        <ConfirmAction
+          request={confirm.request}
+          busy={busy}
+          onAccept={confirm.accept}
+          onCancel={() => setConfirm(null)}
+        />
+      ) : null}
     </div>
   );
 }

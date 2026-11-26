@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { CommentView, DiffDescriptor, DiffFile, DiffMode } from '@nest/shared';
+import type { CommentView, DiffDescriptor, DiffFile, DiffMode, GitFile } from '@nest/shared';
 import {
   diffRequestKey,
   diffSideCounts,
@@ -7,6 +7,7 @@ import {
   isCurrentDiffAnswer,
   isTypingTarget,
   missingTargetMessage,
+  otherSideAction,
   pickTargetFile,
   restrictComments,
   targetLabel,
@@ -217,5 +218,61 @@ describe('isTypingTarget', () => {
     expect(isTypingTarget({ tagName: 'BUTTON' } as unknown as EventTarget)).toBe(false);
     expect(isTypingTarget({ tagName: 'DIV' } as unknown as EventTarget)).toBe(false);
     expect(isTypingTarget(null)).toBe(false);
+  });
+});
+
+function gitFile(patch: Partial<GitFile> = {}): GitFile {
+  return {
+    path: 'src/a.ts',
+    oldPath: null,
+    copied: false,
+    indexStatus: ' ',
+    worktreeStatus: ' ',
+    conflict: false,
+    staged: false,
+    unstaged: false,
+    untracked: false,
+    additions: 1,
+    deletions: 0,
+    ...patch,
+  };
+}
+
+describe('otherSideAction', () => {
+  it('offers the staged side of a file that only has staged changes', () => {
+    expect(
+      otherSideAction(selection({ mode: 'unstaged' }), [
+        gitFile({ indexStatus: 'M', staged: true }),
+      ]),
+    ).toEqual({ mode: 'staged', label: 'Show staged side' });
+  });
+
+  it('offers the unstaged side of a file that only has worktree changes', () => {
+    expect(
+      otherSideAction(selection({ mode: 'staged' }), [
+        gitFile({ worktreeStatus: 'M', unstaged: true }),
+      ]),
+    ).toEqual({ mode: 'unstaged', label: 'Show unstaged side' });
+    // An untracked file lives on the unstaged side too.
+    expect(
+      otherSideAction(selection({ path: 'notes.md', mode: 'staged' }), [
+        gitFile({ path: 'notes.md', untracked: true }),
+      ])?.mode,
+    ).toBe('unstaged');
+  });
+
+  it('offers nothing without a change on the other side, or before the status lands', () => {
+    expect(
+      otherSideAction(selection({ mode: 'unstaged' }), [gitFile({ unstaged: true })]),
+    ).toBeNull();
+    expect(otherSideAction(selection(), [gitFile()])).toBeNull();
+    expect(otherSideAction(selection(), [])).toBeNull();
+    expect(otherSideAction(selection(), null)).toBeNull();
+  });
+
+  it('names the missing side in the comparison message', () => {
+    expect(missingTargetMessage(selection({ mode: 'staged' }), 'staged')).toBe(
+      'Not in this comparison: src/a.ts has no staged change.',
+    );
   });
 });

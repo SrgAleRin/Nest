@@ -1,6 +1,6 @@
-import type { CommentView, DiffDescriptor, DiffFile, DiffMode } from '@nest/shared';
+import type { CommentView, DiffDescriptor, DiffFile, DiffMode, GitFile } from '@nest/shared';
 import { isStaleDiff, type SideCounts } from './diffMode';
-import type { GitSelection } from './state/gitSnapshot';
+import type { GitSelection, GitSide } from './state/gitSnapshot';
 
 /**
  * The step from a change-list row to the diff viewer: one file, one side, one
@@ -77,6 +77,32 @@ function comparisonName(mode: DiffMode): string {
  */
 export function missingTargetMessage(target: GitSelection, mode: DiffMode): string {
   return `Not in this comparison: ${target.path} has no ${comparisonName(mode)} change.`;
+}
+
+/** The explicit action that opens the other side of the open file. */
+export interface SideSwitch {
+  mode: GitSide;
+  label: string;
+}
+
+/**
+ * The other side of the open file, when that side still holds a change. The
+ * panel offers it as an action next to `Back to list`: no silent switch, no
+ * automatic reload, and no action when the file has nothing on either side.
+ */
+export function otherSideAction(
+  target: GitSelection,
+  files: readonly GitFile[] | null,
+): SideSwitch | null {
+  const mode: GitSide = target.mode === 'staged' ? 'unstaged' : 'staged';
+  const file = files?.find((candidate) => candidate.path === target.path) ?? null;
+  if (!file) return null;
+  const hasChange = mode === 'staged' ? file.staged : file.unstaged || file.untracked;
+  if (!hasChange) return null;
+  return {
+    mode,
+    label: mode === 'staged' ? 'Show staged side' : 'Show unstaged side',
+  };
 }
 
 /**

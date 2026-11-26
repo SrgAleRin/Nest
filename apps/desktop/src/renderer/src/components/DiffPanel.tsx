@@ -20,13 +20,14 @@ import { CheckIcon, ChevronIcon, SendIcon, TrashIcon } from './Icons';
 import { DiffPanelSkeleton } from './PanelSkeletons';
 import { panelPhase } from '../panelState';
 import { useGitSnapshotStore } from '../state/GitSnapshotProvider';
-import type { GitSelection } from '../state/gitSnapshot';
+import type { GitSelection, GitSide } from '../state/gitSnapshot';
 import {
   diffSideCounts,
   initialMode,
   isCurrentDiffAnswer,
   isTypingTarget,
   missingTargetMessage,
+  otherSideAction,
   pickTargetFile,
   restrictComments,
   targetLabel,
@@ -283,6 +284,14 @@ export function DiffPanel({
     [diff, targetPath],
   );
   const targetMissing = targetPath !== null && diff !== null && targetFile === null;
+  /**
+   * The open file has no change on this side: the other side is offered as an
+   * explicit action, built from the store's own status, never switched into.
+   */
+  const otherSide = useMemo(
+    () => (target ? otherSideAction(target, statusFiles) : null),
+    [statusFiles, target],
+  );
   const shownDiff = useMemo<GitDiff | null>(() => {
     if (!diff || targetPath === null) return diff;
     const files = targetFile ? [targetFile] : [];
@@ -552,6 +561,12 @@ export function DiffPanel({
     }
   }
 
+  /** Opens the other side of the open file through the store's selection. */
+  function switchSide(side: GitSide): void {
+    if (!task || !target) return;
+    snapshotStore.updateMemory(task.id, { selection: { path: target.path, mode: side } });
+  }
+
   function renderRow(row: DiffRow) {
     switch (row.kind) {
       case 'file':
@@ -748,11 +763,24 @@ export function DiffPanel({
               <p className="diff-missing-text" role="status">
                 {missingTargetMessage(target, mode)}
               </p>
-              {onBackToList ? (
-                <button className="diff-missing-back" onClick={onBackToList}>
-                  Back to list
-                </button>
-              ) : null}
+              <div className="diff-missing-actions">
+                {otherSide ? (
+                  <button
+                    type="button"
+                    className="mini-btn"
+                    data-testid="diff-other-side"
+                    title={`Open ${target.path} on its ${otherSide.mode} side`}
+                    onClick={() => switchSide(otherSide.mode)}
+                  >
+                    {otherSide.label}
+                  </button>
+                ) : null}
+                {onBackToList ? (
+                  <button className="diff-missing-back" onClick={onBackToList}>
+                    Back to list
+                  </button>
+                ) : null}
+              </div>
             </div>
           ) : diff.files.length === 0 ? (
             <div className="panel-empty">

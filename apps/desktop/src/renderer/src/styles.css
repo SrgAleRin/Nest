@@ -1283,6 +1283,11 @@ code,
   min-width: 0;
 }
 
+/* The in-panel confirmation is positioned against the panel it belongs to. */
+.source-control {
+  position: relative;
+}
+
 .source-control-head {
   display: flex;
   flex-direction: column;
@@ -1323,6 +1328,100 @@ code,
 
 .source-control-note.warn {
   color: var(--amber);
+}
+
+.source-control-note.error {
+  color: var(--red);
+}
+
+/* A failed remote action: the reason, its details and the actions it allows. */
+.source-control-failure {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin: 0 8px;
+  padding: 4px 6px;
+  border-left: 2px solid currentColor;
+  background: rgba(247, 118, 142, 0.06);
+}
+
+.source-control-note.warn.source-control-failure {
+  background: rgba(224, 175, 104, 0.06);
+}
+
+.source-control-reason {
+  flex: 1 0 100%;
+  min-width: 0;
+  color: var(--dim);
+}
+
+.source-control-reason summary {
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.source-control-reason pre {
+  margin: 4px 0 0;
+  max-height: 96px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 10px var(--mono);
+}
+
+/* ---------- in-panel confirmation ---------- */
+
+.confirm-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  background: rgba(3, 5, 8, 0.72);
+}
+
+.confirm {
+  width: 360px;
+  max-width: 100%;
+  max-height: 100%;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+}
+
+.confirm-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.confirm-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.confirm-body p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 /* ---------- panel menu (the dot-dot-dot popup) ---------- */
