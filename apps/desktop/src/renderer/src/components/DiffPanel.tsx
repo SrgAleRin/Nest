@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { DEFAULT_DIFF_MODE } from '@nest/shared';
 import type {
   CommentSide,
+  CommentView,
+  DiffDescriptor,
   DiffFile,
   DiffHunk,
   DiffLine,
+  DiffMode,
   GitDiff,
   NestClient,
   ReviewComment,
@@ -12,9 +16,29 @@ import type {
   Task,
 } from '@nest/shared';
 import { Button, EmptyState, ErrorState } from '@nest/ui';
-import { CheckIcon, SendIcon, TrashIcon } from './Icons';
+import { CheckIcon, ChevronIcon, SendIcon, TrashIcon } from './Icons';
 import { DiffPanelSkeleton } from './PanelSkeletons';
 import { panelPhase } from '../panelState';
+import {
+  countSides,
+  describeDiff,
+  DIFF_MODE_OPTIONS,
+  emptyDiffMessage,
+  fileSideBadge,
+  fileStageAction,
+  isStaleDiff,
+  type SideCounts,
+} from '../diffMode';
+import {
+  batchSendSummary,
+  groupOutsideComments,
+  needsModeSwitch,
+  openOutsideComments,
+  openTargetMode,
+  outsideSummary,
+  sendFailureNotice,
+  type OutsideSection,
+} from '../commentPlacement';
 import { diffStatusLetter, diffStatusTone, errorMessage } from '../utils';
 import { highlightHunk, tokenStyle, type HunkHighlight } from '../highlight';
 
@@ -31,6 +55,7 @@ interface DiffPanelProps {
   sessions: Session[];
   selectedSessionId: string | null;
   refreshKey: number;
+  onChanged: () => void;
   onNotify: (level: 'info' | 'warn' | 'error', message: string) => void;
 }
 
@@ -40,6 +65,8 @@ interface ComposerState {
   line: number;
   endLine: number;
   side: CommentSide;
+  /** The row was the staged side of a mixed view, which decides its anchor. */
+  staged: boolean;
 }
 
 type DiffRow =
@@ -68,17 +95,25 @@ export function DiffPanel({
   sessions,
   selectedSessionId,
   refreshKey,
+  onChanged,
   onNotify,
 }: DiffPanelProps) {
   const [diff, setDiff] = useState<GitDiff | null>(null);
-  const [comments, setComments] = useState<ReviewComment[]>([]);
+  const [comments, setComments] = useState<CommentView[]>([]);
   const [highlights, setHighlights] = useState<Map<DiffHunk, HunkHighlight>>(new Map());
+  const [mode, setMode] = useState<DiffMode>(DEFAULT_DIFF_MODE);
+  const [counts, setCounts] = useState<SideCounts>({ staged: 0, unstaged: 0 });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [composer, setComposer] = useState<ComposerState | null>(null);
   const [draft, setDraft] = useState('');
+  /** Saved note the panel is scrolling to, after "Open" from the off-patch area. */
+  const [focusCommentId, setFocusCommentId] = useState<string | null>(null);
+  const [outsideOpen, setOutsideOpen] = useState(true);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  /** Only the newest request may write state; mode switches race with reloads. */
+  const requestSeq = useRef(0);
 
   const activeSession = useMemo(() => {
     const running = sessions.filter(
@@ -87,32 +122,41 @@ export function DiffPanel({
     return running.find((session) => session.id === selectedSessionId) ?? running[0] ?? null;
   }, [sessions, selectedSessionId]);
 
-  const load = useCallback(async () => {
-    if (!task) {
-      setDiff(null);
-      setComments([]);
+  const load = useCallback(
+    async (requested: DiffMode) => {
+      if (!task) {
+        setDiff(null);
+        setComments([]);
+        setError(null);
+        return;
+      }
+      const seq = (requestSeq.current += 1);
+      setLoading(true);
       setError(null);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      const [nextDiff, nextComments] = await Promise.all([
-        client.invoke('git.diff', { taskId: task.id }),
-        client.invoke('comments.list', { taskId: task.id }),
-      ]);
-      setDiff(nextDiff);
-      setComments(nextComments);
-    } catch (loadError) {
-      setError(errorMessage(loadError));
-    } finally {
-      setLoading(false);
-    }
-  }, [client, task]);
+      try {
+        const [nextDiff, nextComments, nextStatus] = await Promise.all([
+          client.invoke('git.diff', { taskId: task.id, mode: requested }),
+          client.invoke('comments.list', { taskId: task.id, mode: requested }),
+          client.invoke('git.status', { taskId: task.id }),
+        ]);
+        // A response for another mode must not replace the selected view.
+        if (seq !== requestSeq.current || isStaleDiff(nextDiff.descriptor, requested)) return;
+        setDiff(nextDiff);
+        setComments(nextComments);
+        setCounts(countSides(nextStatus.files));
+      } catch (loadError) {
+        if (seq !== requestSeq.current) return;
+        setError(errorMessage(loadError));
+      } finally {
+        if (seq === requestSeq.current) setLoading(false);
+      }
+    },
+    [client, task],
+  );
 
   useEffect(() => {
-    void load();
-  }, [load, refreshKey]);
+    void load(mode);
+  }, [load, mode, refreshKey]);
 
   // Switching tasks starts at the top of the new diff.
   useEffect(() => {
@@ -156,6 +200,10 @@ export function DiffPanel({
 
   const rows = useMemo(() => buildRows(diff, comments, composer), [diff, comments, composer]);
 
+  /** Notes that are real but not on this patch, grouped by why. */
+  const outsideGroups = useMemo(() => groupOutsideComments(comments), [comments]);
+  const outsideOpenNotes = useMemo(() => openOutsideComments(comments), [comments]);
+
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
@@ -173,6 +221,22 @@ export function DiffPanel({
     const index = rows.findIndex((row) => row.kind === 'composer');
     if (index >= 0) virtualizer.scrollToIndex(index);
   }, [composer, rows, virtualizer]);
+
+  // "Open" on an off-patch note scrolls to it once the matching mode has loaded.
+  useEffect(() => {
+    if (!focusCommentId) return;
+    const index = rows.findIndex(
+      (row) => row.kind === 'comment' && row.comment.id === focusCommentId,
+    );
+    if (index >= 0) {
+      virtualizer.scrollToIndex(index);
+      setFocusCommentId(null);
+      return;
+    }
+    // The target view is loaded and the note is still off-patch (committed, or
+    // outside the hunks): its excerpt in the outside area is all there is.
+    if (!loading) setFocusCommentId(null);
+  }, [focusCommentId, loading, rows, virtualizer]);
 
   const virtualItems = virtualizer.getVirtualItems();
 
@@ -200,7 +264,7 @@ export function DiffPanel({
           endLine: Math.max(current.endLine, number),
         };
       }
-      return { filePath: file.path, line: number, endLine: number, side };
+      return { filePath: file.path, line: number, endLine: number, side, staged: file.staged };
     });
     if (!extend) setDraft('');
   }
@@ -216,8 +280,16 @@ export function DiffPanel({
         endLine: composer.endLine,
         side: composer.side,
         body: draft.trim(),
+        // The comparison is stored with the note: its sides decide what the
+        // anchor follows after the file or the index moves.
+        anchor: {
+          mode,
+          baseRef: diff?.descriptor.baseRef ?? null,
+          staged: composer.staged,
+        },
       });
-      setComments((prev) => [...prev, comment]);
+      // The note was just written on a visible row of this view.
+      setComments((prev) => [...prev, { ...comment, placement: { kind: 'inline' } }]);
       setComposer(null);
       setDraft('');
     } catch (error) {
@@ -238,7 +310,20 @@ export function DiffPanel({
         ...(patch.body ? { body: patch.body } : {}),
         ...(patch.status ? { status: patch.status } : {}),
       });
-      setComments((prev) => prev.map((item) => (item.id === next.id ? next : item)));
+      // Editing or resolving a note does not move it; keep the placement.
+      setComments((prev) =>
+        prev.map((item) =>
+          item.id === next.id
+            ? {
+                ...item,
+                body: next.body,
+                status: next.status,
+                excerpt: next.excerpt,
+                updatedAt: next.updatedAt,
+              }
+            : item,
+        ),
+      );
     } catch (error) {
       onNotify('error', errorMessage(error));
     } finally {
@@ -258,22 +343,43 @@ export function DiffPanel({
     }
   }
 
-  async function sendComment(comment: ReviewComment): Promise<void> {
-    if (!activeSession) return;
+  /**
+   * Sends one note or a batch. Without a live session the note is copied to the
+   * clipboard and the panel says so: a saved note is never silently dropped.
+   */
+  async function sendComments(targets: ReviewComment[]): Promise<void> {
+    if (targets.length === 0 || busy) return;
     setBusy(true);
     try {
-      const result = await client.invoke('comments.send', {
-        commentId: comment.id,
-        sessionId: activeSession.id,
-      });
-      if (result.sent) {
-        onNotify('info', `Comment sent to ${activeSession.title}`);
+      const sentTexts: string[] = [];
+      const unsentTexts: string[] = [];
+      let failure: string | undefined;
+
+      for (const comment of targets) {
+        const result = await client.invoke('comments.send', {
+          commentId: comment.id,
+          ...(activeSession ? { sessionId: activeSession.id } : {}),
+        });
+        if (result.sent) sentTexts.push(result.text);
+        else {
+          unsentTexts.push(result.text);
+          failure = result.reason ?? failure;
+        }
+      }
+
+      if (targets.length === 1) {
+        const notice = sendFailureNotice(
+          sentTexts.length === 1 ? undefined : failure,
+          activeSession?.title ?? null,
+        );
+        if (notice.copy) await copyNotes(unsentTexts);
+        onNotify(notice.level, notice.message);
       } else {
+        if (unsentTexts.length > 0) await copyNotes(unsentTexts);
+        const level = unsentTexts.length === 0 ? 'info' : 'warn';
         onNotify(
-          'warn',
-          result.reason === 'no_active_session'
-            ? 'No running session for this task'
-            : `Not sent: ${result.reason ?? 'unknown reason'}`,
+          level,
+          batchSendSummary(sentTexts.length, unsentTexts.length, activeSession?.title ?? null),
         );
       }
     } catch (error) {
@@ -283,12 +389,53 @@ export function DiffPanel({
     }
   }
 
+  async function copyNotes(texts: string[]): Promise<void> {
+    if (texts.length === 0) return;
+    try {
+      await client.invoke('clipboard.write', { text: texts.join('\n') });
+    } catch {
+      // clipboard access is a convenience here; the message already explains it
+    }
+  }
+
+  /** Opens an off-patch note: switch to its comparison, then scroll to it. */
+  function openComment(comment: CommentView): void {
+    setFocusCommentId(comment.id);
+    if (needsModeSwitch(comment, mode)) setMode(openTargetMode(comment, mode));
+  }
+
+  /** Stage or unstage one file without leaving the diff; the file stays on disk. */
+  async function changeStage(file: DiffFile, action: 'stage' | 'unstage'): Promise<void> {
+    if (!task) return;
+    setBusy(true);
+    try {
+      await client.invoke(action === 'stage' ? 'git.stage' : 'git.unstage', {
+        taskId: task.id,
+        paths: [file.path],
+      });
+      // Other panels show the same index, so the whole window refreshes.
+      onChanged();
+      await load(mode);
+    } catch (stageError) {
+      onNotify('error', errorMessage(stageError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function renderRow(row: DiffRow) {
     switch (row.kind) {
       case 'file':
-        return <DiffFileHeader file={row.file} />;
+        return (
+          <DiffFileHeader
+            file={row.file}
+            mode={mode}
+            busy={busy}
+            onStage={(action) => void changeStage(row.file, action)}
+          />
+        );
       case 'empty':
-        return <div className="diff-empty">Binary file or no textual hunks</div>;
+        return <div className="diff-empty">{emptyDiffLabel(row.file)}</div>;
       case 'stale-file':
         return (
           <header className="diff-file-head">
@@ -346,12 +493,13 @@ export function DiffPanel({
             comment={row.comment}
             activeSession={activeSession}
             busy={busy}
-            onSend={() => void sendComment(row.comment)}
+            onSend={() => void sendComments([row.comment])}
             onResolve={() =>
               void updateComment(row.comment, {
                 status: row.comment.status === 'resolved' ? 'open' : 'resolved',
               })
             }
+            onSaveEdit={(body) => void updateComment(row.comment, { body })}
             onDelete={() => void removeComment(row.comment)}
           />
         );
@@ -409,11 +557,15 @@ export function DiffPanel({
     return (
       <div className="diff-panel">
         <DiffHead
+          descriptor={diff?.descriptor ?? null}
           count={diff?.files.length ?? null}
+          mode={mode}
+          counts={counts}
           loading={loading}
-          onRefresh={() => void load()}
+          onMode={setMode}
+          onRefresh={() => void load(mode)}
         />
-        <ErrorState title="Diff unavailable" onRetry={() => void load()}>
+        <ErrorState title="Diff unavailable" onRetry={() => void load(mode)}>
           {error}
         </ErrorState>
       </div>
@@ -426,11 +578,42 @@ export function DiffPanel({
 
   return (
     <div className="diff-panel">
-      <DiffHead count={diff.files.length} loading={loading} onRefresh={() => void load()} />
+      <DiffHead
+        descriptor={diff.descriptor}
+        count={diff.files.length}
+        mode={mode}
+        counts={counts}
+        loading={loading}
+        onMode={setMode}
+        onRefresh={() => void load(mode)}
+      />
+
+      <OutsidePatchNotes
+        comments={comments}
+        groups={outsideGroups}
+        openCount={outsideOpenNotes.length}
+        expanded={outsideOpen}
+        busy={busy}
+        activeSession={activeSession}
+        onToggle={() => setOutsideOpen((open) => !open)}
+        onOpen={openComment}
+        onSend={(comment) => void sendComments([comment])}
+        onSendAll={() => void sendComments(outsideOpenNotes)}
+        onResolve={(comment) =>
+          void updateComment(comment, {
+            status: comment.status === 'resolved' ? 'open' : 'resolved',
+          })
+        }
+        onSaveEdit={(comment, body) => void updateComment(comment, { body })}
+        onDelete={(comment) => void removeComment(comment)}
+      />
 
       <div className="diff-body">
         <div className="diff-scroll" ref={scrollRef}>
-          {diff.files.length === 0 ? <div className="panel-empty">No changes to review</div> : null}
+          {diff.files.length === 0 ? (            <div className="panel-empty">
+              {emptyDiffMessage(mode, counts, diff.descriptor.baseRef)}
+            </div>
+          ) : null}
 
           <div className="diff-rows" style={{ height: virtualizer.getTotalSize() }}>
             {virtualItems.map((item) => {
@@ -451,46 +634,117 @@ export function DiffPanel({
           </div>
         </div>
 
-        {stickyFile ? <DiffFileHeader file={stickyFile} sticky /> : null}
+        {stickyFile ? <DiffFileHeader file={stickyFile} mode={mode} sticky /> : null}
       </div>
     </div>
   );
 }
 
 function DiffHead({
+  descriptor,
   count,
+  mode,
+  counts,
   loading,
+  onMode,
   onRefresh,
 }: {
+  descriptor: DiffDescriptor | null;
   count: number | null;
+  mode: DiffMode;
+  counts: SideCounts;
   loading: boolean;
+  onMode: (mode: DiffMode) => void;
   onRefresh: () => void;
 }) {
+  const hint = DIFF_MODE_OPTIONS.find((option) => option.mode === mode)?.hint ?? '';
   return (
-    <div className="diff-head">
-      <span className="section-label">
-        Diff
-        {count !== null ? ` · ${count} file${count === 1 ? '' : 's'}` : ''}
-      </span>
-      <button className="mini-btn" onClick={onRefresh} disabled={loading}>
-        {loading ? 'Loading…' : 'Refresh'}
-      </button>
-    </div>
+    <>
+      <div className="diff-head">
+        <span className="section-label">
+          Diff
+          {count !== null ? ` · ${count} file${count === 1 ? '' : 's'}` : ''}
+        </span>
+        <button className="mini-btn" onClick={onRefresh} disabled={loading}>
+          {loading ? 'Loading…' : 'Refresh'}
+        </button>
+      </div>
+
+      {/* The switch is part of the panel: the compared side is explicit, never inferred. */}
+      <div className="diff-modes" role="tablist" aria-label="Diff comparison">
+        {DIFF_MODE_OPTIONS.map((option) => (
+          <button
+            key={option.mode}
+            role="tab"
+            aria-selected={mode === option.mode}
+            className={`mini-btn diff-mode ${mode === option.mode ? 'selected' : ''}`}
+            title={option.hint}
+            onClick={() => onMode(option.mode)}
+          >
+            {option.label}
+            {option.mode === 'staged' && counts.staged > 0 ? ` ${counts.staged}` : ''}
+            {option.mode === 'unstaged' && counts.unstaged > 0 ? ` ${counts.unstaged}` : ''}
+          </button>
+        ))}
+      </div>
+      <div className="diff-mode-hint">{describeDiff(descriptor)}</div>
+      <div className="diff-mode-hint muted">{hint}</div>
+    </>
   );
 }
 
-function DiffFileHeader({ file, sticky = false }: { file: DiffFile; sticky?: boolean }) {
+function emptyDiffLabel(file: DiffFile): string {
+  if (file.binary) return 'Binary file';
+  if (file.modeChanged) return 'File mode changed';
+  return 'No textual hunks';
+}
+
+function DiffFileHeader({
+  file,
+  mode,
+  busy = false,
+  sticky = false,
+  onStage,
+}: {
+  file: DiffFile;
+  mode: DiffMode;
+  busy?: boolean;
+  sticky?: boolean;
+  onStage?: (action: 'stage' | 'unstage') => void;
+}) {
+  // `both` mixes sides, so the row says which one it is; in the single-side
+  // modes the mode switch above already does.
+  const badge = fileSideBadge(file, mode);
+  const action = onStage ? fileStageAction(file, mode) : null;
   return (
     <header className={`diff-file-head ${sticky ? 'diff-file-head-sticky' : ''}`}>
       <span className={`git-letter ${diffStatusTone(file.status)}`}>
         {diffStatusLetter(file.status)}
       </span>
-      <span className="diff-path" title={file.path}>
+      <span
+        className="diff-path"
+        title={file.oldPath ? `${file.oldPath} → ${file.path}` : file.path}
+      >
         {file.path}
       </span>
+      {badge ? <span className={`diff-side ${badge}`}>{badge}</span> : null}
       <span className="diff-stat">
         <em>+{file.additions}</em> <del>-{file.deletions}</del>
       </span>
+      {action && onStage ? (
+        <button
+          className="mini-btn"
+          disabled={busy}
+          title={
+            action === 'stage'
+              ? 'Stage this file; the working tree copy stays as it is'
+              : 'Unstage this file; the working tree copy stays as it is'
+          }
+          onClick={() => onStage(action)}
+        >
+          {action === 'stage' ? 'Stage' : 'Unstage'}
+        </button>
+      ) : null}
     </header>
   );
 }
@@ -501,6 +755,7 @@ function CommentThread({
   busy,
   onSend,
   onResolve,
+  onSaveEdit,
   onDelete,
 }: {
   comment: ReviewComment;
@@ -508,8 +763,22 @@ function CommentThread({
   busy: boolean;
   onSend: () => void;
   onResolve: () => void;
+  onSaveEdit: (body: string) => void;
   onDelete: () => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [editDraft, setEditDraft] = useState(comment.body);
+
+  function save(): void {
+    const body = editDraft.trim();
+    if (!body || body === comment.body) {
+      setEditing(false);
+      return;
+    }
+    onSaveEdit(body);
+    setEditing(false);
+  }
+
   return (
     <div className={`comment-thread ${comment.status === 'resolved' ? 'resolved' : ''}`}>
       <div className="comment-head">
@@ -523,16 +792,249 @@ function CommentThread({
           The anchored line was removed or changed; this note may no longer apply.
         </div>
       ) : null}
-      <div className="comment-body">{comment.body}</div>
+      {editing ? (
+        <div className="comment-edit">
+          <textarea
+            autoFocus
+            rows={3}
+            value={editDraft}
+            onChange={(event) => setEditDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                event.preventDefault();
+                save();
+              }
+              if (event.key === 'Escape') setEditing(false);
+            }}
+          />
+          <div className="comment-actions">
+            <button className="comment-action primary" onClick={save} disabled={busy}>
+              Save
+            </button>
+            <button className="comment-action" onClick={() => setEditing(false)} disabled={busy}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="comment-body">{comment.body}</div>
+      )}
       <div className="comment-actions">
         <button
           className="comment-action primary"
           onClick={onSend}
-          disabled={busy || !activeSession}
-          title={activeSession ? `Send to ${activeSession.title}` : 'No running session'}
+          disabled={busy}
+          title={
+            activeSession
+              ? `Send to ${activeSession.title}`
+              : 'No running session: the note goes to the clipboard instead'
+          }
         >
           <SendIcon size={11} />
-          {activeSession ? `Send to ${activeSession.title}` : 'No session'}
+          {activeSession ? `Send to ${activeSession.title}` : 'Send (no session)'}
+        </button>
+        <button
+          className="comment-action"
+          onClick={() => {
+            setEditDraft(comment.body);
+            setEditing(true);
+          }}
+          disabled={busy}
+        >
+          Edit
+        </button>
+        <button className="comment-action" onClick={onResolve} disabled={busy}>
+          <CheckIcon size={11} />
+          {comment.status === 'resolved' ? 'Reopen' : 'Resolve'}
+        </button>
+        <button className="comment-action danger" onClick={onDelete} disabled={busy}>
+          <TrashIcon size={11} />
+          Delete
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Notes that are real but not on the current patch: staged away, committed,
+ * written against another comparison, or on a file this patch does not touch.
+ * Distinct from the stale notes (whose text is gone), always counted, and with
+ * the same actions as an inline note: open, send, edit, resolve, delete.
+ */
+function OutsidePatchNotes({
+  comments,
+  groups,
+  openCount,
+  expanded,
+  busy,
+  activeSession,
+  onToggle,
+  onOpen,
+  onSend,
+  onSendAll,
+  onResolve,
+  onSaveEdit,
+  onDelete,
+}: {
+  comments: CommentView[];
+  groups: OutsideSection[];
+  openCount: number;
+  expanded: boolean;
+  busy: boolean;
+  activeSession: Session | null;
+  onToggle: () => void;
+  onOpen: (comment: CommentView) => void;
+  onSend: (comment: CommentView) => void;
+  onSendAll: () => void;
+  onResolve: (comment: CommentView) => void;
+  onSaveEdit: (comment: CommentView, body: string) => void;
+  onDelete: (comment: CommentView) => void;
+}) {
+  const total = groups.reduce((sum, group) => sum + group.count, 0);
+  if (total === 0) return null;
+
+  return (
+    <section
+      className={`outside-notes ${expanded ? 'expanded' : ''}`}
+      aria-label="Notes outside this patch"
+    >
+      <header className="outside-head">
+        <button className="outside-toggle" onClick={onToggle} aria-expanded={expanded}>
+          <ChevronIcon size={11} />
+          <span className="section-label">Outside this patch</span>
+        </button>
+        <span className="outside-counts">{outsideSummary(comments)}</span>
+        {expanded && openCount > 0 ? (
+          <button
+            className="mini-btn"
+            onClick={onSendAll}
+            disabled={busy}
+            title={
+              activeSession
+                ? `Send ${openCount} open note(s) to ${activeSession.title}`
+                : 'No running session: the notes go to the clipboard instead'
+            }
+          >
+            Send open ({openCount})
+          </button>
+        ) : null}
+      </header>
+
+      {expanded
+        ? groups.map((group) => (
+            <div className="outside-group" key={group.reason}>
+              <div className="outside-group-head">
+                <span className={`outside-reason ${group.reason}`}>{group.label}</span>
+                <span className="outside-group-count">{group.count}</span>
+                <span className="outside-group-hint">{group.hint}</span>
+              </div>
+              {group.comments.map((comment) => (
+                <OutsideNote
+                  key={comment.id}
+                  comment={comment}
+                  busy={busy}
+                  onOpen={() => onOpen(comment)}
+                  onSend={() => onSend(comment)}
+                  onResolve={() => onResolve(comment)}
+                  onSaveEdit={(body) => onSaveEdit(comment, body)}
+                  onDelete={() => onDelete(comment)}
+                />
+              ))}
+            </div>
+          ))
+        : null}
+    </section>
+  );
+}
+
+function OutsideNote({
+  comment,
+  busy,
+  onOpen,
+  onSend,
+  onResolve,
+  onSaveEdit,
+  onDelete,
+}: {
+  comment: CommentView;
+  busy: boolean;
+  onOpen: () => void;
+  onSend: () => void;
+  onResolve: () => void;
+  onSaveEdit: (body: string) => void;
+  onDelete: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [editDraft, setEditDraft] = useState(comment.body);
+
+  function save(): void {
+    const body = editDraft.trim();
+    if (!body || body === comment.body) {
+      setEditing(false);
+      return;
+    }
+    onSaveEdit(body);
+    setEditing(false);
+  }
+
+  return (
+    <div className={`outside-note ${comment.status === 'resolved' ? 'resolved' : ''}`}>
+      <div className="comment-head">
+        <span className={`comment-status ${comment.status}`}>{comment.status}</span>
+        <span className="comment-anchor">
+          {comment.filePath}:{formatRange(comment)}
+        </span>
+        <span className="outside-side">{comment.side}</span>
+      </div>
+
+      {comment.excerpt ? <pre className="outside-excerpt">{comment.excerpt}</pre> : null}
+
+      {editing ? (
+        <div className="comment-edit">
+          <textarea
+            autoFocus
+            rows={3}
+            value={editDraft}
+            onChange={(event) => setEditDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                event.preventDefault();
+                save();
+              }
+              if (event.key === 'Escape') setEditing(false);
+            }}
+          />
+          <div className="comment-actions">
+            <button className="comment-action primary" onClick={save} disabled={busy}>
+              Save
+            </button>
+            <button className="comment-action" onClick={() => setEditing(false)} disabled={busy}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="comment-body">{comment.body}</div>
+      )}
+
+      <div className="comment-actions">
+        <button className="comment-action primary" onClick={onSend} disabled={busy}>
+          <SendIcon size={11} />
+          Send
+        </button>
+        <button className="comment-action" onClick={onOpen} disabled={busy}>
+          Open
+        </button>
+        <button
+          className="comment-action"
+          onClick={() => {
+            setEditDraft(comment.body);
+            setEditing(true);
+          }}
+          disabled={busy}
+        >
+          Edit
         </button>
         <button className="comment-action" onClick={onResolve} disabled={busy}>
           <CheckIcon size={11} />
@@ -549,15 +1051,19 @@ function CommentThread({
 
 function buildRows(
   diff: GitDiff | null,
-  comments: ReviewComment[],
+  comments: CommentView[],
   composer: ComposerState | null,
 ): DiffRow[] {
   if (!diff) return [];
 
+  // Core already decided where each note belongs in this view; the panel only
+  // draws the ones that matched a row or lost their text. Off-patch notes live
+  // in their own area and never disappear.
   const byAnchor = new Map<string, ReviewComment[]>();
   const staleByFile = new Map<string, ReviewComment[]>();
   for (const comment of comments) {
-    if (comment.stale) {
+    if (comment.placement.kind === 'outside') continue;
+    if (comment.placement.kind === 'stale') {
       const stale = staleByFile.get(comment.filePath);
       if (stale) stale.push(comment);
       else staleByFile.set(comment.filePath, [comment]);

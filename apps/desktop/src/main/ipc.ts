@@ -9,6 +9,8 @@ import {
   type RpcResponse,
 } from '@nest/shared';
 import { NestError, type Core } from '@nest/core';
+import { currentAppUrl } from './appUrl';
+import { decideExternalLink, isTrustedSenderFrame } from './boundaries';
 import type { NotificationInput } from './notifications';
 import type { UpdateService } from './updates';
 
@@ -31,16 +33,11 @@ export function registerIpc(context: IpcContext): void {
     'app.info': () => context.info(),
 
     'app.openExternal': async ({ url }) => {
-      let protocol = '';
-      try {
-        protocol = new URL(url).protocol;
-      } catch {
-        throw new NestError('invalid_url', 'Not a valid URL');
-      }
-      if (protocol !== 'http:' && protocol !== 'https:' && protocol !== 'mailto:') {
-        throw new NestError('unsupported_url', `Refusing to open ${protocol} links`);
-      }
-      await shell.openExternal(url);
+      // Same policy the window open handler uses: one allowlist for links that
+      // leave the app, whether the main process or the renderer asked.
+      const decision = decideExternalLink(url);
+      if (!decision.allowed) throw new NestError(decision.code, decision.message);
+      await shell.openExternal(decision.url);
     },
     'clipboard.read': async () => ({ text: await clipboard.readText() }),
 
@@ -64,8 +61,10 @@ export function registerIpc(context: IpcContext): void {
       return result;
     },
 
-    'projects.remove': ({ projectId }) => {
-      core.projects.remove(projectId);
+    'projects.remove': async ({ projectId }) => {
+      // Live PTYs are stopped and confirmed before rows disappear; a failure
+      // throws and the renderer keeps the project visible.
+      await core.projects.remove(projectId);
       tasksChanged();
     },
 
@@ -76,11 +75,16 @@ export function registerIpc(context: IpcContext): void {
 
     'tasks.list': ({ projectId }) => core.tasks.list(projectId),
 
+    'tasks.preview': ({ projectId, title, baseRef }) =>
+      core.tasks.preview({ projectId, title, baseRef }),
+
     'tasks.create': async (input) => {
       const task = await core.tasks.create(input);
       tasksChanged();
       return task;
     },
+
+    'tasks.abort': async ({ operationId }) => core.tasks.abort(operationId),
 
     'tasks.remove': async ({ taskId, force }) => {
       await core.tasks.remove(taskId, { force });
@@ -96,7 +100,7 @@ export function registerIpc(context: IpcContext): void {
 
     'git.status': async ({ taskId }) => core.git.status(taskId),
 
-    'git.diff': async ({ taskId, path, staged }) => core.git.diff(taskId, path, staged),
+    'git.diff': async ({ taskId, path, mode }) => core.git.diff(taskId, { path, mode }),
 
     'git.stage': async ({ taskId, paths }) => core.git.stage(taskId, paths),
 
@@ -105,7 +109,7 @@ export function registerIpc(context: IpcContext): void {
     'git.commit': async ({ taskId, message, stageAll, amend }) =>
       core.git.commit(taskId, message, stageAll, amend),
 
-    'git.push': async ({ taskId, force }) => core.git.push(taskId, force),
+    'git.push': async ({ taskId, force, publish }) => core.git.push(taskId, { force, publish }),
 
     'git.log': async ({ taskId, ref, limit, skip }) => core.git.log(taskId, { ref, limit, skip }),
 
@@ -128,7 +132,7 @@ export function registerIpc(context: IpcContext): void {
 
     'files.read': ({ taskId, path }) => core.files.read(taskId, path),
 
-    'comments.list': ({ taskId }) => core.comments.list(taskId),
+    'comments.list': ({ taskId, mode }) => core.comments.list(taskId, { mode }),
 
     'comments.create': (input) => core.comments.create(input),
 
@@ -164,7 +168,7 @@ export function registerIpc(context: IpcContext): void {
       core.sessions.resize(sessionId, cols, rows);
     },
 
-    'sessions.scrollback': ({ sessionId }) => ({ data: core.sessions.scrollback(sessionId) }),
+    'sessions.scrollback': ({ sessionId }) => core.sessions.snapshot(sessionId),
 
     'harness.list': ({ includeDisabled }) =>
       core.harnesses.list({ includeDisabled: includeDisabled ?? false }),
@@ -175,8 +179,15 @@ export function registerIpc(context: IpcContext): void {
       const settings = core.settings.update(patch);
       // The custom command may have changed, so cached PATH lookups are stale.
       core.harnesses.invalidate();
-      // Saving a new feed applies immediately; the status arrives as an event.
-      if (patch.updateFeedUrl !== undefined) void context.updates.check();
+      if (patch.updateFeedUrl !== undefined || patch.updatesEnabled !== undefined) {
+        // Applying supersedes a run bound to the previous feed or switch and
+        // drops its installer; a newly saved feed checks immediately.
+        const status = context.updates.applySettings();
+        const enabling = patch.updatesEnabled === true;
+        if (status.enabled && (patch.updateFeedUrl !== undefined || enabling)) {
+          void context.updates.check();
+        }
+      }
       return settings;
     },
 
@@ -193,7 +204,32 @@ export function registerIpc(context: IpcContext): void {
 
   ipcMain.handle(
     'nest:rpc',
-    async (_event, method: unknown, params: unknown): Promise<RpcResponse<unknown>> => {
+    async (event, method: unknown, params: unknown): Promise<RpcResponse<unknown>> => {
+      // Only Nest's own window, and only its top frame, may call the router:
+      // `senderFrame` is null for a frame that has already gone, and a frame
+      // loaded from another origin never gets to the handlers below.
+      const frame = event.senderFrame;
+      const window = context.getWindow();
+      const trusted =
+        frame !== null &&
+        window !== null &&
+        !window.isDestroyed() &&
+        event.sender === window.webContents &&
+        isTrustedSenderFrame(
+          { url: frame.url, origin: frame.origin, isTopFrame: frame.parent === null },
+          currentAppUrl(),
+        );
+      if (!trusted) {
+        return {
+          ok: false,
+          error: {
+            code: 'untrusted_sender',
+            message: 'Refusing an RPC call from a window or frame Nest does not own',
+            details: frame ? `frame ${frame.url || '(empty)'}` : 'no sender frame',
+          },
+        };
+      }
+
       if (typeof method !== 'string' || !(method in rpcMethods)) {
         return {
           ok: false,

@@ -2,6 +2,8 @@ import type { Project, Session, Task } from '@nest/shared';
 import { IconButton } from '@nest/ui';
 import { BranchIcon, FolderIcon, FolderOpenIcon, PlusIcon, TerminalIcon, TrashIcon } from './Icons';
 import { collectActivity, type ActivityItem, type ActivityKind } from '../activity';
+import { STEP_LABELS, type StartFailure } from '../newTask';
+import type { TaskOperations } from '../state/taskOperations';
 import { relativeTime } from '../utils';
 
 interface SidebarProps {
@@ -12,6 +14,10 @@ interface SidebarProps {
   selectedSessionId: string | null;
   /** Finished sessions whose output the user has not opened yet. */
   unread: Record<string, number>;
+  /** Creations in flight: a pending row per operation, with its current step. */
+  operations: TaskOperations;
+  /** Task id → why its harness did not start after the task was created. */
+  startFailures: Record<string, StartFailure>;
   profile: string | null;
   onSelectTask: (taskId: string) => void;
   onSelectSession: (session: Session) => void;
@@ -20,11 +26,13 @@ interface SidebarProps {
   onRevealProject: (project: Project) => void;
   onNewTask: (projectId: string) => void;
   onRemoveTask: (task: Task) => void;
+  /** Retry the start step of a task that exists already; never a new worktree. */
+  onRetryStart: (taskId: string, harnessId: string) => void;
 }
 
 const ACTIVITY_GROUPS: Array<{ kind: ActivityKind; label: string }> = [
   { kind: 'working', label: 'Working' },
-  { kind: 'waiting', label: 'Waiting for you' },
+  { kind: 'idle', label: 'Idle' },
   { kind: 'finished', label: 'Finished' },
 ];
 
@@ -99,6 +107,9 @@ export function Sidebar(props: SidebarProps) {
 
         {projects.map((project) => {
           const projectTasks = tasks.filter((task) => task.projectId === project.id);
+          const pendingOperations = props.operations.filter(
+            (operation) => operation.projectId === project.id,
+          );
           return (
             <div className="project" key={project.id}>
               <div className="project-row">
@@ -132,6 +143,20 @@ export function Sidebar(props: SidebarProps) {
               </div>
 
               <div className="task-list">
+                {pendingOperations.map((operation) => (
+                  <div
+                    className="task-row pending"
+                    key={operation.operationId}
+                    data-testid="pending-task"
+                    title={operation.title}
+                  >
+                    <span className="task-spinner" aria-hidden="true" />
+                    <span className="task-name">{operation.title}</span>
+                    <span className="task-step">
+                      {operation.step ? STEP_LABELS[operation.step] : 'Starting…'}
+                    </span>
+                  </div>
+                ))}
                 {projectTasks.map((task) => {
                   const taskSessions = sessions.filter((session) => session.taskId === task.id);
                   const active = task.id === selectedTaskId;
@@ -156,6 +181,7 @@ export function Sidebar(props: SidebarProps) {
                               setup
                             </span>
                           ) : null}
+
                           {taskSessions.length > 0 ? (
                             <span className="task-count">{taskSessions.length}</span>
                           ) : null}
@@ -165,6 +191,18 @@ export function Sidebar(props: SidebarProps) {
                             </span>
                           ) : null}
                         </button>
+                        {props.startFailures[task.id] ? (
+                          <button
+                            className="task-warn task-warn-action"
+                            title={props.startFailures[task.id]?.message}
+                            onClick={() => {
+                              const failure = props.startFailures[task.id];
+                              if (failure) props.onRetryStart(task.id, failure.harnessId);
+                            }}
+                          >
+                            start failed · retry
+                          </button>
+                        ) : null}
                         {task.kind === 'worktree' ? (
                           <IconButton
                             label="Remove task"

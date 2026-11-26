@@ -4,24 +4,19 @@ import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
 import type { ITheme } from '@xterm/xterm';
-import type {
-  HarnessProfile,
-  NestClient,
-  Session,
-  Task,
-  TerminalPreferences,
-  TerminalTheme,
+import {
+  TerminalReplay,
+  type HarnessProfile,
+  type NestClient,
+  type Session,
+  type Task,
+  type TerminalPreferences,
+  type TerminalTheme,
 } from '@nest/shared';
 import { Button, EmptyState } from '@nest/ui';
-import {
-  ChevronIcon,
-  CloseIcon,
-  PlayIcon,
-  PlusIcon,
-  TerminalIcon,
-} from './Icons';
+import { ChevronIcon, CloseIcon, PlayIcon, PlusIcon, TerminalIcon } from './Icons';
 import { onSessionData } from '../state/terminalBus';
-import { errorMessage } from '../utils';
+import { errorMessage, resumeActionLabel, resumeShortLabel, resumeTone } from '../utils';
 
 const SEARCH_DECORATIONS = {
   matchBackground: '#2a3a55',
@@ -370,7 +365,8 @@ function NewTabControl({
           )}
           <div className="new-tab-foot">
             <span>
-              Default: {defaultId === 'ask' ? 'ask every time' : (defaultHarness?.label ?? defaultId)}
+              Default:{' '}
+              {defaultId === 'ask' ? 'ask every time' : (defaultHarness?.label ?? defaultId)}
             </span>
             <button
               type="button"
@@ -432,8 +428,8 @@ function StartScreen({
               </>
             ) : (
               <>
-                No harness commands found on PATH. Install Claude Code, Codex, Qwen Code or OpenCode,
-                or add a custom command in Settings.
+                No harness commands found on PATH. Install Claude Code, Codex, Qwen Code or
+                OpenCode, or add a custom command in Settings.
               </>
             )}
           </div>
@@ -453,12 +449,6 @@ function StartScreen({
       </div>
     </div>
   );
-}
-
-function resumeLabel(session: Session): string {
-  return session.resumeMode === 'exact' && session.harnessSessionId
-    ? 'Resume exact'
-    : 'Resume latest';
 }
 
 function TerminalView({
@@ -610,6 +600,10 @@ function TerminalView({
         onOpenPaletteRef.current();
         return false;
       }
+      // Tab cycling and terminal focus are app shortcuts, not shell input.
+      // Ctrl+N and Ctrl+W are deliberately not listed: bash uses them.
+      if (mod && key === 'tab') return false;
+      if (mod && event.key === '`') return false;
       // Ctrl+C is SIGINT unless the user selected text first.
       if (mod && !event.shiftKey && key === 'c' && term.hasSelection()) {
         copySelection();
@@ -629,7 +623,11 @@ function TerminalView({
       return true;
     });
 
-    const offData = onSessionData(session.id, (data) => term.write(data));
+    // Subscribe before asking for history: chunks that arrive while the
+    // snapshot is in flight are buffered and only the part the snapshot does
+    // not cover is written afterwards, in arrival order.
+    const replay = new TerminalReplay((data) => term.write(data));
+    const offData = onSessionData(session.id, (chunk) => replay.push(chunk));
     const input = term.onData((data) => {
       if (statusRef.current === 'exited' || statusRef.current === 'failed') {
         if (!warnedRef.current) {
@@ -649,10 +647,12 @@ function TerminalView({
 
     void client
       .invoke('sessions.scrollback', { sessionId: session.id })
-      .then(({ data }) => {
-        if (data) term.write(data);
-      })
-      .catch((error) => onErrorRef.current(errorMessage(error)));
+      .then((snapshot) => replay.attach(snapshot))
+      .catch((error) => {
+        // Keep the terminal live with whatever arrived while history failed.
+        replay.attach({ data: '', position: 0 });
+        onErrorRef.current(errorMessage(error));
+      });
 
     const sendResize = (cols: number, rows: number) => {
       if (cols <= 0 || rows <= 0) return;
@@ -691,6 +691,9 @@ function TerminalView({
       observer.disconnect();
       searchResults.dispose();
       offData();
+      // A late chunk or a snapshot that resolves after unmount must not touch
+      // the disposed xterm.
+      replay.dispose();
       input.dispose();
       term.dispose();
       termRef.current = null;
@@ -785,19 +788,23 @@ function TerminalView({
           </span>
           {canResume ? (
             <span
-              className={`resume-mode ${session.harnessSessionId ? 'exact' : 'latest'}`}
+              className={`resume-mode ${resumeTone(session)}`}
               title={
                 session.harnessSessionId
-                  ? `continues ${session.harnessSessionId}`
+                  ? `continues ${session.harnessSessionId}${
+                      resumeTone(session) === 'heuristic'
+                        ? ' (unverified: not resumed automatically)'
+                        : ''
+                    }`
                   : 'continues the latest conversation in this workspace'
               }
             >
-              {session.harnessSessionId ? 'exact' : 'latest'}
+              {resumeShortLabel(session)}
             </span>
           ) : null}
           {canResume ? (
             <button className="mini-btn primary" onClick={() => onResume(session)}>
-              {resumeLabel(session)}
+              {resumeActionLabel(session)}
             </button>
           ) : null}
           <button className="mini-btn" onClick={() => onNewSession(session)}>

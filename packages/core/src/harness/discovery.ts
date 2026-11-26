@@ -6,11 +6,13 @@ import path from 'node:path';
 import type { HarnessId } from '@nest/shared';
 
 /**
- * How far before the recorded session start we still accept a discovered
- * conversation. Harness CLIs may create their session file a few seconds
- * before Nest persists the row, and filesystem timestamps are coarse.
+ * How far before the launch we still look for a conversation that an explicit
+ * "continue latest" resume just touched: the CLI rewrites the file a moment
+ * after Nest records the launch. A fresh start never uses this slack, so a
+ * conversation that already existed when the tab started cannot be mistaken
+ * for the new tab's own conversation.
  */
-const CLOCK_SLACK_MS = 15_000;
+const CONTINUE_SLACK_MS = 15_000;
 
 const HEAD_BYTES = 256 * 1024;
 
@@ -28,6 +30,44 @@ export interface FindOptions {
    * instead of creating a new one (OpenCode keeps `created` unchanged).
    */
   includeUpdated?: boolean;
+  /** Ids already bound to another Nest session; they are never returned. */
+  claimedIds?: Iterable<string>;
+  /**
+   * Output of the launched process itself. A conversation id printed there is
+   * the only positive proof that the conversation belongs to this process.
+   */
+  processOutput?: string;
+  /**
+   * Another tab runs the same harness in the same workspace. Timestamps then
+   * prove nothing, so only a process-reported id may become `exact`.
+   */
+  hasSiblingSession?: boolean;
+}
+
+export type DiscoveryConfidence = 'exact' | 'heuristic';
+
+export type DiscoveryReason =
+  /** The launched process printed the conversation id itself. */
+  | 'process_reported'
+  /** Exactly one conversation for this cwd appeared after the launch. */
+  | 'unique_after_launch'
+  /** Several conversations for the same cwd are plausible. */
+  | 'ambiguous_candidates'
+  /** The only candidate was created before this tab started. */
+  | 'predates_launch'
+  /** The CLI was asked to continue its latest conversation. */
+  | 'continued_latest'
+  /** The candidate already belongs to another session or tab. */
+  | 'claimed_elsewhere'
+  | 'no_candidates';
+
+export interface DiscoveryResult {
+  id: string | null;
+  confidence: DiscoveryConfidence;
+  reason: DiscoveryReason;
+  /** Conversations found for the same cwd inside the time window. */
+  candidates: number;
+  createdAtMs: number | null;
 }
 
 interface Candidate {
@@ -35,12 +75,22 @@ interface Candidate {
   mtimeMs: number;
 }
 
+interface Conversation {
+  id: string;
+  createdAtMs: number | null;
+  updatedAtMs: number | null;
+}
+
 /**
  * Finds the harness conversation that belongs to a Nest session.
  *
- * Every adapter is a best-effort lookup: it returns the newest conversation
- * for the same working directory that appeared after the session started.
- * Returning null is normal and simply keeps the `latest` resume fallback.
+ * Every adapter gathers the conversations for the working directory that
+ * appeared inside the time window; the shared resolver then decides how strong
+ * the ownership evidence is. `exact` means the launched process named the
+ * conversation itself, or it is the only conversation that appeared after the
+ * launch and nobody else claims it. Everything else is `heuristic` and must
+ * never be applied automatically. Returning no id is normal and simply keeps
+ * the `latest` resume fallback.
  */
 export class HarnessDiscovery {
   private readonly homeDir: string;
@@ -58,25 +108,44 @@ export class HarnessDiscovery {
     cwd: string,
     since: Date,
     options: FindOptions = {},
-  ): Promise<string | null> {
-    const sinceMs = since.getTime() - CLOCK_SLACK_MS;
+  ): Promise<DiscoveryResult> {
+    const includeUpdated = options.includeUpdated ?? false;
+    const launchMs = since.getTime();
+    const windowStartMs = includeUpdated ? launchMs - CONTINUE_SLACK_MS : launchMs;
+    const conversations = await this.collect(harnessId, cwd, windowStartMs, includeUpdated);
+
+    return resolveCandidates(conversations, {
+      includeUpdated,
+      launchMs,
+      claimedIds: options.claimedIds ?? [],
+      processOutput: options.processOutput ?? '',
+      hasSiblingSession: options.hasSiblingSession ?? false,
+    });
+  }
+
+  private collect(
+    harnessId: HarnessId,
+    cwd: string,
+    windowStartMs: number,
+    includeUpdated: boolean,
+  ): Promise<Conversation[]> {
     switch (harnessId) {
       case 'opencode':
-        return this.findOpenCode(cwd, sinceMs, options.includeUpdated ?? false);
+        return this.findOpenCode(cwd, windowStartMs, includeUpdated);
       case 'codex':
-        return this.findCodex(cwd, sinceMs);
+        return this.findCodex(cwd, windowStartMs);
       case 'pi':
-        return this.findPi(cwd, sinceMs);
+        return this.findPi(cwd, windowStartMs);
       case 'copilot':
-        return this.findCopilot(cwd, sinceMs);
+        return this.findCopilot(cwd, windowStartMs);
       case 'claude':
-        return this.findClaude(cwd, sinceMs);
+        return this.findClaude(cwd, windowStartMs);
       case 'qwen':
-        return this.findQwen(cwd, sinceMs);
+        return this.findQwen(cwd, windowStartMs);
       case 'fake':
-        return this.findFake(cwd, sinceMs);
+        return this.findFake(cwd, windowStartMs);
       default:
-        return null;
+        return Promise.resolve([]);
     }
   }
 
@@ -84,31 +153,27 @@ export class HarnessDiscovery {
     cwd: string,
     sinceMs: number,
     includeUpdated: boolean,
-  ): Promise<string | null> {
+  ): Promise<Conversation[]> {
     let output: string;
     try {
-      output = await this.run(
-        'opencode',
-        ['session', 'list', '--format', 'json', '-n', '50'],
-        cwd,
-      );
+      output = await this.run('opencode', ['session', 'list', '--format', 'json', '-n', '50'], cwd);
     } catch {
-      return null;
+      return [];
     }
 
     const start = output.indexOf('[');
     const end = output.lastIndexOf(']');
-    if (start < 0 || end < start) return null;
+    if (start < 0 || end < start) return [];
 
     let parsed: unknown;
     try {
       parsed = JSON.parse(output.slice(start, end + 1));
     } catch {
-      return null;
+      return [];
     }
-    if (!Array.isArray(parsed)) return null;
+    if (!Array.isArray(parsed)) return [];
 
-    let best: { id: string; stamp: number } | null = null;
+    const found: Conversation[] = [];
     for (const item of parsed) {
       if (!item || typeof item !== 'object') continue;
       const record = item as Record<string, unknown>;
@@ -118,19 +183,20 @@ export class HarnessDiscovery {
       const updated = record.updated;
       if (typeof id !== 'string') continue;
       if (typeof directory !== 'string' || !samePath(directory, cwd)) continue;
-      if (typeof created !== 'number') continue;
 
-      const updatedAt = typeof updated === 'number' ? updated : created;
-      const fresh = created >= sinceMs || (includeUpdated && updatedAt >= sinceMs);
+      const createdAtMs = typeof created === 'number' ? created : null;
+      const updatedAtMs = typeof updated === 'number' ? updated : createdAtMs;
+      const fresh =
+        (createdAtMs !== null && createdAtMs >= sinceMs) ||
+        (includeUpdated && updatedAtMs !== null && updatedAtMs >= sinceMs);
       if (!fresh) continue;
 
-      const stamp = includeUpdated ? updatedAt : created;
-      if (!best || stamp > best.stamp) best = { id, stamp };
+      found.push({ id, createdAtMs, updatedAtMs });
     }
-    return best?.id ?? null;
+    return found;
   }
 
-  private async findCodex(cwd: string, sinceMs: number): Promise<string | null> {
+  private async findCodex(cwd: string, sinceMs: number): Promise<Conversation[]> {
     const root = this.env.CODEX_HOME
       ? path.join(this.env.CODEX_HOME, 'sessions')
       : path.join(this.homeDir, '.codex', 'sessions');
@@ -139,10 +205,10 @@ export class HarnessDiscovery {
       root,
       sinceMs,
       (candidate) =>
-        candidate.path.endsWith('.jsonl') &&
-        path.basename(candidate.path).startsWith('rollout-'),
+        candidate.path.endsWith('.jsonl') && path.basename(candidate.path).startsWith('rollout-'),
     );
 
+    const found: Conversation[] = [];
     for (const file of files) {
       const head = await readHead(file.path);
       if (!head) continue;
@@ -155,19 +221,20 @@ export class HarnessDiscovery {
         const id = payload.id;
         const sessionCwd = payload.cwd;
         if (typeof id === 'string' && typeof sessionCwd === 'string' && samePath(sessionCwd, cwd)) {
-          return id;
+          found.push(fileConversation(id, file));
         }
       }
     }
-    return null;
+    return found;
   }
 
-  private async findPi(cwd: string, sinceMs: number): Promise<string | null> {
+  private async findPi(cwd: string, sinceMs: number): Promise<Conversation[]> {
     const root = path.join(this.homeDir, '.pi', 'agent', 'sessions');
     const files = await recentFiles(root, sinceMs, (candidate) =>
       candidate.path.endsWith('.jsonl'),
     );
 
+    const found: Conversation[] = [];
     for (const file of files) {
       const head = await readHead(file.path);
       if (!head) continue;
@@ -177,14 +244,14 @@ export class HarnessDiscovery {
         const id = record.id;
         const sessionCwd = record.cwd;
         if (typeof id === 'string' && typeof sessionCwd === 'string' && samePath(sessionCwd, cwd)) {
-          return id;
+          found.push(fileConversation(id, file));
         }
       }
     }
-    return null;
+    return found;
   }
 
-  private async findCopilot(cwd: string, sinceMs: number): Promise<string | null> {
+  private async findCopilot(cwd: string, sinceMs: number): Promise<Conversation[]> {
     const root = path.join(this.homeDir, '.copilot', 'session-state');
     const files = await recentFiles(
       root,
@@ -192,23 +259,25 @@ export class HarnessDiscovery {
       (candidate) => path.basename(candidate.path) === 'workspace.yaml',
     );
 
+    const found: Conversation[] = [];
     for (const file of files) {
       const text = await readText(file.path);
       if (!text) continue;
       const id = yamlField(text, 'id') ?? path.basename(path.dirname(file.path));
       const sessionCwd = yamlField(text, 'cwd');
-      if (sessionCwd && samePath(sessionCwd, cwd)) return id;
+      if (sessionCwd && samePath(sessionCwd, cwd)) found.push(fileConversation(id, file));
     }
-    return null;
+    return found;
   }
 
-  private async findClaude(cwd: string, sinceMs: number): Promise<string | null> {
+  private async findClaude(cwd: string, sinceMs: number): Promise<Conversation[]> {
     const root = path.join(this.homeDir, '.claude', 'projects');
     const files = await recentFiles(root, sinceMs, (candidate) =>
       candidate.path.endsWith('.jsonl'),
     );
     const encodedDir = encodeCwd(cwd);
 
+    const found: Conversation[] = [];
     for (const file of files) {
       const head = await readHead(file.path);
       if (!head) continue;
@@ -224,33 +293,34 @@ export class HarnessDiscovery {
       }
 
       const id = sessionId ?? path.basename(file.path, '.jsonl');
-      if (sessionCwd && samePath(sessionCwd, cwd)) return id;
-      if (!sessionCwd && path.basename(path.dirname(file.path)) === encodedDir) return id;
+      if (sessionCwd && samePath(sessionCwd, cwd)) {
+        found.push(fileConversation(id, file));
+      } else if (!sessionCwd && path.basename(path.dirname(file.path)) === encodedDir) {
+        found.push(fileConversation(id, file));
+      }
     }
-    return null;
+    return found;
   }
 
-  private async findQwen(cwd: string, sinceMs: number): Promise<string | null> {
+  private async findQwen(cwd: string, sinceMs: number): Promise<Conversation[]> {
     const base =
       this.env.QWEN_HOME || this.env.QWEN_RUNTIME_DIR || path.join(this.homeDir, '.qwen');
     const projectDir = path.join(base, 'projects', encodeQwenCwd(cwd));
-    if (!(await directoryExists(projectDir))) return null;
+    if (!(await directoryExists(projectDir))) return [];
 
     const files = await recentFiles(path.join(projectDir, 'chats'), sinceMs, (candidate) =>
       candidate.path.endsWith('.jsonl'),
     );
-    const newest = files[0];
-    return newest ? path.basename(newest.path, '.jsonl') : null;
+    return files.map((file) => fileConversation(path.basename(file.path, '.jsonl'), file));
   }
 
-  private async findFake(cwd: string, sinceMs: number): Promise<string | null> {
+  private async findFake(cwd: string, sinceMs: number): Promise<Conversation[]> {
     const root = this.env.NEST_FAKE_SESSION_DIR;
-    if (!root) return null;
+    if (!root) return [];
 
-    const files = await recentFiles(root, sinceMs, (candidate) =>
-      candidate.path.endsWith('.json'),
-    );
+    const files = await recentFiles(root, sinceMs, (candidate) => candidate.path.endsWith('.json'));
 
+    const found: Conversation[] = [];
     for (const file of files) {
       const text = await readText(file.path);
       if (!text) continue;
@@ -259,11 +329,127 @@ export class HarnessDiscovery {
       const id = record.id;
       const sessionCwd = record.cwd;
       if (typeof id === 'string' && typeof sessionCwd === 'string' && samePath(sessionCwd, cwd)) {
-        return id;
+        found.push(fileConversation(id, file));
       }
     }
-    return null;
+    return found;
   }
+}
+
+/**
+ * Turns the candidate list into a binding decision.
+ *
+ * Only a conversation id that the launched process printed is `exact` on its
+ * own; a lone conversation created after the launch is `exact` too, but only
+ * while it is the only tab on that workspace. Any second candidate for the same
+ * cwd, a parallel tab, a candidate that predates the launch or an id claimed by
+ * another session downgrades the answer to `heuristic`. Heuristic ids stay
+ * usable on request but are never applied automatically.
+ */
+function resolveCandidates(
+  conversations: Conversation[],
+  input: {
+    includeUpdated: boolean;
+    launchMs: number;
+    claimedIds: Iterable<string>;
+    processOutput: string;
+    hasSiblingSession: boolean;
+  },
+): DiscoveryResult {
+  const claimed = new Set(input.claimedIds);
+  const ordered = [...conversations].sort(
+    (left, right) => stamp(right, input.includeUpdated) - stamp(left, input.includeUpdated),
+  );
+  const candidates = ordered.length;
+  if (candidates === 0) {
+    return {
+      id: null,
+      confidence: 'heuristic',
+      reason: 'no_candidates',
+      candidates,
+      createdAtMs: null,
+    };
+  }
+
+  const output = stripAnsi(input.processOutput);
+  const reported = output
+    ? ordered.find(
+        (conversation) => !claimed.has(conversation.id) && output.includes(conversation.id),
+      )
+    : undefined;
+  if (reported) {
+    return {
+      id: reported.id,
+      confidence: 'exact',
+      reason: 'process_reported',
+      candidates,
+      createdAtMs: reported.createdAtMs,
+    };
+  }
+
+  const best = ordered.find((conversation) => !claimed.has(conversation.id));
+  if (!best) {
+    return {
+      id: null,
+      confidence: 'heuristic',
+      reason: 'claimed_elsewhere',
+      candidates,
+      createdAtMs: null,
+    };
+  }
+
+  const unbound = (reason: DiscoveryReason): DiscoveryResult => ({
+    id: null,
+    confidence: 'heuristic',
+    reason,
+    candidates,
+    createdAtMs: null,
+  });
+
+  // "Continue latest" means the CLI picked the conversation, not us: the id is
+  // a hint the user may act on, never an automatic choice.
+  if (input.includeUpdated) {
+    return {
+      id: best.id,
+      confidence: 'heuristic',
+      reason: 'continued_latest',
+      candidates,
+      createdAtMs: best.createdAtMs,
+    };
+  }
+
+  // Ambiguity is judged on every conversation for the cwd, not only on the
+  // unclaimed ones: a parallel tab may simply not have bound its id yet. A
+  // guess here would let two tabs adopt each other's conversation, so no id is
+  // stored at all and the session keeps the "latest" fallback.
+  if (candidates > 1 || input.hasSiblingSession) return unbound('ambiguous_candidates');
+  if (best.createdAtMs === null || best.createdAtMs < input.launchMs) {
+    return unbound('predates_launch');
+  }
+
+  return {
+    id: best.id,
+    confidence: 'exact',
+    reason: 'unique_after_launch',
+    candidates,
+    createdAtMs: best.createdAtMs,
+  };
+}
+
+function stamp(conversation: Conversation, includeUpdated: boolean): number {
+  const primary = includeUpdated ? conversation.updatedAtMs : conversation.createdAtMs;
+  return primary ?? conversation.createdAtMs ?? conversation.updatedAtMs ?? 0;
+}
+
+function fileConversation(id: string, file: Candidate): Conversation {
+  // File adapters only know the file timestamp; the scan window already limits
+  // it to the launch, so it is good enough for ordering and the freshness test.
+  return { id, createdAtMs: file.mtimeMs, updatedAtMs: file.mtimeMs };
+}
+
+function stripAnsi(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  return value.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '');
 }
 
 export function samePath(left: string, right: string): boolean {
@@ -393,8 +579,7 @@ function runCommand(command: string, args: string[], cwd: string): Promise<strin
       maxBuffer: 4 * 1024 * 1024,
     };
 
-    const executable =
-      process.platform === 'win32' ? process.env.ComSpec || 'cmd.exe' : command;
+    const executable = process.platform === 'win32' ? process.env.ComSpec || 'cmd.exe' : command;
     const execArgs =
       process.platform === 'win32'
         ? ['/d', '/s', '/c', [command, ...args].map(quoteArgument).join(' ')]

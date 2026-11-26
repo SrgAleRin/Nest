@@ -1,9 +1,14 @@
-import type { DiffFileStatus, GitFile } from '@nest/shared';
+import type { DiffFileStatus, GitFile, Session } from '@nest/shared';
 
 export function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === 'string') return error;
   return 'Unexpected error';
+}
+
+/** Stable code of an RPC failure; the IPC client keeps it on `error.name`. */
+export function errorCode(error: unknown): string {
+  return error instanceof Error ? error.name : '';
 }
 
 export function upsert<T extends { id: string }>(list: T[], item: T): T[] {
@@ -36,6 +41,7 @@ export function statusTone(file: GitFile): string {
   if (file.indexStatus === 'A' || file.worktreeStatus === 'A') return 'tone-added';
   if (file.indexStatus === 'D' || file.worktreeStatus === 'D') return 'tone-deleted';
   if (file.indexStatus === 'R' || file.worktreeStatus === 'R') return 'tone-renamed';
+  if (file.copied) return 'tone-renamed';
   return 'tone-modified';
 }
 
@@ -50,6 +56,30 @@ export function relativeTime(iso: string): string {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.round(hours / 24);
   return `${days}d ago`;
+}
+
+/**
+ * `exact` promises one specific conversation, `heuristic` is a guess that the
+ * user may still ask for, `latest` has no id at all.
+ */
+export function resumeTone(session: Session): 'exact' | 'heuristic' | 'latest' {
+  if (!session.harnessSessionId) return 'latest';
+  return session.resumeMode === 'heuristic' ? 'heuristic' : 'exact';
+}
+
+export function resumeShortLabel(session: Session): string {
+  return resumeTone(session);
+}
+
+export function resumeActionLabel(session: Session): string {
+  switch (resumeTone(session)) {
+    case 'exact':
+      return 'Resume exact';
+    case 'heuristic':
+      return 'Resume unverified';
+    default:
+      return 'Resume latest';
+  }
 }
 
 export function shortHash(hash: string, length = 7): string {

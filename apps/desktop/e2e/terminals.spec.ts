@@ -143,6 +143,7 @@ test('opens a plain terminal and closes tabs for good', async () => {
   await startHarness(page, 'fake');
   await startHarness(page, 'fake');
   await expect(page.locator('.terminal-tab')).toHaveCount(2, { timeout: 30_000 });
+
   await page.locator('.terminal-tab').first().hover();
   await page.locator('.terminal-tab').first().locator('.terminal-tab-close').click();
   await expect(page.locator('.terminal-tab')).toHaveCount(1, { timeout: 30_000 });
@@ -152,6 +153,48 @@ test('opens a plain terminal and closes tabs for good', async () => {
   await page.reload();
   await page.waitForSelector('.app', { timeout: 60_000 });
   await expect(page.locator('.terminal-tab')).toHaveCount(1, { timeout: 30_000 });
+
+  // Keyboard shortcuts. Another harness gives two tabs to cycle.
+  await startHarness(page, 'fake');
+  await expect(page.locator('.terminal-tab')).toHaveCount(2, { timeout: 30_000 });
+  // Both tabs are "Fake harness", so the selected index is the only signal.
+  const selectedIndex = (): Promise<number> =>
+    page
+      .locator('.terminal-tab')
+      .evaluateAll((tabs) => tabs.findIndex((tab) => tab.classList.contains('selected')));
+  const firstIndex = await selectedIndex();
+  await page.locator('.right-tab').first().click();
+  await page.keyboard.press('Control+Tab');
+  await expect.poll(selectedIndex).not.toBe(firstIndex);
+  await page.keyboard.press('Control+Shift+Tab');
+  await expect.poll(selectedIndex).toBe(firstIndex);
+
+  // Ctrl+` puts the caret back into the terminal.
+  await page.locator('.right-tab').first().click();
+  await page.keyboard.press('Control+Backquote');
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => document.activeElement?.classList.contains('xterm-helper-textarea') ?? false,
+      ),
+    )
+    .toBe(true);
+
+  // Ctrl+N opens the new-task dialog whenever no modal owns the keyboard.
+  await page.locator('.right-tab').first().click();
+  await page.keyboard.press('Control+n');
+  await expect(page.locator('.modal')).toBeVisible();
+  // The header X and the footer button are both labelled Close; the footer one
+  // dismisses without cancelling anything.
+  await page.locator('.modal').getByRole('button', { name: 'Close' }).last().click();
+  await expect(page.locator('.modal')).toHaveCount(0);
+
+  // Ctrl+W closes the active tab while the focus is outside the terminal; with
+  // focus inside xterm it stays a shell kill-word.
+  await page.locator('.right-tab').first().click();
+  await page.keyboard.press('Control+w');
+  await expect(page.locator('.terminal-tab')).toHaveCount(1, { timeout: 30_000 });
+  await expect.poll(countSessions, { timeout: 30_000 }).toBe(1);
 
   await app.close();
   app = null;

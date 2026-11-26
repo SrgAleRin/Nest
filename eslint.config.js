@@ -1,10 +1,31 @@
+import { readdirSync, statSync } from 'node:fs';
+import path from 'node:path';
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
+
+/**
+ * Directories with a `.git` *file* are linked worktrees: the untracked
+ * `flatworm/` checkout and every Orca child workspace. They hold another
+ * checkout of this repo, so linting them reports foreign code as ours.
+ */
+function nestedWorktreeIgnores(root = process.cwd()) {
+  return readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+    .filter((entry) => {
+      try {
+        return statSync(path.join(root, entry.name, '.git')).isFile();
+      } catch {
+        return false;
+      }
+    })
+    .map((entry) => `${entry.name}/**`);
+}
 
 export default tseslint.config(
   {
     ignores: [
       '**/node_modules/**',
+      ...nestedWorktreeIgnores(),
       '**/out/**',
       '**/dist/**',
       '**/release/**',

@@ -234,7 +234,7 @@ describe('git working branch actions', () => {
     // The rewritten commit is already on the remote, so a plain push is
     // rejected until it is explicitly forced.
     await expect(core!.git.push(taskId)).rejects.toMatchObject({ code: 'git_failed' });
-    const forced = await core!.git.push(taskId, true);
+    const forced = await core!.git.push(taskId, { force: true });
     expect(forced.output.length).toBeGreaterThan(0);
     expect((await core!.git.status(taskId)).ahead).toBe(0);
   });

@@ -1,7 +1,10 @@
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
+import { DEFAULT_DIFF_MODE } from '@nest/shared';
 import type {
+  DiffDescriptor,
   DiffFile,
+  DiffMode,
   GitBranches,
   GitBranch,
   GitCommitDetail,
@@ -12,6 +15,7 @@ import type {
   GitRemote,
   GitStatus,
   NestEvent,
+  Task,
 } from '@nest/shared';
 import type { Db } from '../db/database.js';
 import { NestError } from '../errors.js';
@@ -22,6 +26,7 @@ import { parseNameStatus, toCompareFiles } from '../git/compare.js';
 import { buildUntrackedDiff, parseUnifiedDiff } from '../git/diff.js';
 import { mergeNumstat, parseNumstat, type Numstat } from '../git/numstat.js';
 import { assertRef } from '../git/refs.js';
+import { parseStatus } from '../git/status.js';
 import type { TaskService } from './tasks.js';
 
 const BINARY_CHECK_BYTES = 8000;
@@ -36,6 +41,26 @@ const DEFAULT_LOG_LIMIT = 50;
 const MAX_LOG_LIMIT = 200;
 const MAX_COMPARE_COMMITS = 100;
 const MAX_COMPARE_FILES = 2000;
+/** Reading untracked files costs IO; a huge untracked tree only needs a sample. */
+const MAX_UNTRACKED_FILES = 200;
+const DIFF_ARGS = ['--no-color', '-M', '--unified=3', '--src-prefix=a/', '--dst-prefix=b/'];
+
+export interface DiffRequest {
+  mode?: DiffMode;
+  /** Restrict the diff to one workspace-relative path. */
+  path?: string;
+}
+
+export interface PushOptions {
+  /** Lease-guarded force push; only the current branch is rewritten. */
+  force?: boolean;
+  /**
+   * Publish the branch as its own remote branch even though its upstream names
+   * something else. Without it a mismatched upstream is reported, never
+   * rewritten silently.
+   */
+  publish?: boolean;
+}
 
 export class GitService {
   constructor(
@@ -44,38 +69,103 @@ export class GitService {
     private readonly emit: (event: NestEvent) => void,
   ) {}
 
+  /**
+   * Reading the status also reconciles the persisted branch: a switch made in
+   * the UI or by an external git command is visible to the header and the
+   * status bar as soon as they read the same status the Git panel reads.
+   */
   async status(taskId: string): Promise<GitStatus> {
     const task = this.tasks.get(taskId);
-    return readStatus(task.workspacePath);
+    return this.readAndSync(task);
   }
 
-  async diff(taskId: string, filePath?: string, staged = false): Promise<GitDiff> {
+  /** `git status` plus the branch mirror; the single source of truth is Git. */
+  private async readAndSync(task: Task): Promise<GitStatus> {
+    const status = await readStatus(task.workspacePath);
+    this.tasks.syncBranch(task.id, status.branch);
+    return status;
+  }
+
+  /**
+   * The Diff panel's review view. Each mode names its two sides explicitly and
+   * returns the descriptor it was computed with, so the panel never labels a
+   * patch with a comparison it does not describe.
+   *
+   * - `unstaged`: index → working tree (untracked files as additions)
+   * - `staged`: HEAD → index
+   * - `both`: per-file union of the two; a partially staged file appears once
+   *   per side, so the stage state is never hidden in a merged patch
+   * - `base`: task base ref → working tree *including the index*
+   */
+  async diff(taskId: string, request: DiffRequest = {}): Promise<GitDiff> {
     const task = this.tasks.get(taskId);
     const cwd = task.workspacePath;
-    const args = ['diff', '--no-color', '-M', '--unified=3', '--src-prefix=a/', '--dst-prefix=b/'];
-    if (staged) args.push('--cached');
-    if (filePath) args.push('--', filePath);
+    const mode = request.mode ?? DEFAULT_DIFF_MODE;
+    const pathspec = request.path ? ['--', request.path] : [];
 
-    const { stdout } = await git(cwd, args);
-    const files = parseUnifiedDiff(stdout, { staged });
+    switch (mode) {
+      case 'staged':
+        return {
+          descriptor: descriptorFor('staged', null),
+          files: sortDiffFiles(
+            await this.readDiff(cwd, ['diff', ...DIFF_ARGS, '--cached', ...pathspec], true),
+          ),
+        };
 
-    if (!staged) {
-      const status = await readStatus(cwd);
-      const untracked = status.files
-        .filter((file) => file.untracked && (!filePath || file.path === filePath))
-        .slice(0, 200);
+      case 'base': {
+        const baseRef = await this.resolveDiffBase(cwd, task);
+        const files = await this.readDiff(cwd, ['diff', ...DIFF_ARGS, baseRef, ...pathspec], false);
+        await appendUntracked(cwd, files, request.path);
+        return { descriptor: descriptorFor('base', baseRef), files: sortDiffFiles(files) };
+      }
 
-      for (const file of untracked) {
-        const synthetic = await buildUntrackedFile(cwd, file.path);
-        if (synthetic) files.push(synthetic);
+      case 'unstaged': {
+        const files = await this.readDiff(cwd, ['diff', ...DIFF_ARGS, ...pathspec], false);
+        await appendUntracked(cwd, files, request.path);
+        return { descriptor: descriptorFor('unstaged', null), files: sortDiffFiles(files) };
+      }
+
+      case 'both': {
+        const [unstaged, staged] = await Promise.all([
+          this.readDiff(cwd, ['diff', ...DIFF_ARGS, ...pathspec], false),
+          this.readDiff(cwd, ['diff', ...DIFF_ARGS, '--cached', ...pathspec], true),
+        ]);
+        const files = [...unstaged, ...staged];
+        await appendUntracked(cwd, files, request.path);
+        return { descriptor: descriptorFor('both', null), files: sortDiffFiles(files) };
       }
     }
+  }
 
-    return { files };
+  private async readDiff(cwd: string, args: string[], staged: boolean): Promise<DiffFile[]> {
+    const { stdout } = await git(cwd, args);
+    return parseUnifiedDiff(stdout, { staged });
+  }
+
+  /**
+   * Ref the task base mode compares against: the recorded branch point of a
+   * worktree task, else the compare default. A checkout on its own base branch
+   * would otherwise diff against itself, so HEAD is used and labelled instead.
+   */
+  private async resolveDiffBase(cwd: string, task: Task): Promise<string> {
+    if (task.baseRef) {
+      await assertRevision(cwd, task.baseRef, 'task base ref');
+      return task.baseRef;
+    }
+    if (!(await hasHead(cwd))) {
+      throw new NestError(
+        'no_head',
+        'Nothing is committed yet, so there is no base to compare against',
+      );
+    }
+    const branches = await this.branches(task.id);
+    const base = branches.baseRef;
+    return !base || base === branches.current ? 'HEAD' : base;
   }
 
   async stage(taskId: string, paths: string[]): Promise<GitStatus> {
     const task = this.tasks.get(taskId);
+    assertPathsInside(task.workspacePath, paths);
     await git(task.workspacePath, ['add', '--', ...paths]);
     this.emit({ type: 'git:changed', taskId });
     return readStatus(task.workspacePath);
@@ -83,8 +173,13 @@ export class GitService {
 
   async unstage(taskId: string, paths: string[]): Promise<GitStatus> {
     const task = this.tasks.get(taskId);
-    await git(task.workspacePath, ['restore', '--staged', '--', ...paths]).catch(async () => {
-      await git(task.workspacePath, ['reset', 'HEAD', '--', ...paths]);
+    assertPathsInside(task.workspacePath, paths);
+    // A rename lives in the index as an addition plus a deletion, so undoing
+    // only the new path leaves the original staged as deleted.
+    const status = await readStatus(task.workspacePath);
+    const targets = expandChangedPaths(status.files, paths);
+    await git(task.workspacePath, ['restore', '--staged', '--', ...targets]).catch(async () => {
+      await git(task.workspacePath, ['reset', 'HEAD', '--', ...targets]);
     });
     this.emit({ type: 'git:changed', taskId });
     return readStatus(task.workspacePath);
@@ -115,21 +210,55 @@ export class GitService {
     return { hash, summary: message.split('\n')[0] ?? message };
   }
 
-  async push(taskId: string, force = false): Promise<{ output: string }> {
+  /**
+   * Publishes the current branch. A task branch created with --no-track has no
+   * upstream yet, so the first push names both the remote and the branch
+   * explicitly; a plain `git push` would follow push.default and, for a branch
+   * still tracking its base, try to update that base instead.
+   */
+  async push(taskId: string, options: PushOptions = {}): Promise<{ output: string }> {
     const task = this.tasks.get(taskId);
-    const upstream = await git(task.workspacePath, [
-      'rev-parse',
-      '--abbrev-ref',
-      '--symbolic-full-name',
-      '@{u}',
-    ]).catch(() => null);
+    const cwd = task.workspacePath;
+    const branch = (await gitOrNull(cwd, ['symbolic-ref', '--short', '-q', 'HEAD']))?.trim();
+    if (!branch) {
+      throw new NestError(
+        'detached_head',
+        'Check out a branch before pushing: a detached HEAD has no branch to publish',
+      );
+    }
 
-    // Force is lease-guarded: it rewrites the remote branch only if nobody
-    // else pushed to it since the last fetch.
-    const options = force ? ['push', '--force-with-lease'] : ['push'];
-    const result = upstream
-      ? await git(task.workspacePath, options)
-      : await git(task.workspacePath, [...options, '-u', 'origin', 'HEAD']);
+    const remotes = ((await gitOrNull(cwd, ['remote'])) ?? '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (remotes.length === 0) {
+      throw new NestError('no_remotes', 'This repository has no remotes to push to');
+    }
+
+    const upstream =
+      (
+        await gitOrNull(cwd, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])
+      )?.trim() || null;
+    const remote = pushRemote(remotes, upstream);
+    const target = `${remote}/${branch}`;
+
+    if (upstream && upstream !== target && !options.publish) {
+      throw new NestError(
+        'upstream_mismatch',
+        `Branch ${branch} tracks ${upstream}, so a plain push would update ${upstream}`,
+        `Nest never rewrites an upstream you did not choose.\n\n` +
+          `Publish ${branch} as ${target} instead: the branch is pushed explicitly ` +
+          `("git push -u ${remote} ${branch}") and ${upstream} is left untouched.`,
+      );
+    }
+
+    // Force is lease-guarded: it rewrites the remote branch only if nobody else
+    // pushed to it since the last fetch.
+    const forceArgs = options.force ? ['--force-with-lease'] : [];
+    const explicit = !upstream || upstream !== target;
+    const result = explicit
+      ? await git(cwd, ['push', ...forceArgs, '-u', remote, branch])
+      : await git(cwd, ['push', ...forceArgs]);
 
     this.emit({ type: 'git:changed', taskId });
     return { output: [result.stdout, result.stderr].filter(Boolean).join('\n').trim() };
@@ -394,7 +523,7 @@ export class GitService {
     }
 
     this.emit({ type: 'git:changed', taskId });
-    return readStatus(cwd);
+    return this.readAndSync(task);
   }
 
   /**
@@ -416,8 +545,14 @@ export class GitService {
       if (!file) {
         throw new NestError('path_not_changed', `${filePath} has no pending changes`);
       }
-      if (file.untracked) untracked.push(filePath);
-      else tracked.push(filePath);
+      if (file.untracked) {
+        untracked.push(filePath);
+        continue;
+      }
+      // A rename is restored as a pair: the original name comes back from HEAD
+      // while the new one leaves the index and the workspace. A copy only
+      // removes the new file; its source was never changed.
+      for (const target of expandChangedPaths([file], [filePath])) tracked.push(target);
     }
 
     if (tracked.length > 0) {
@@ -472,6 +607,43 @@ function toPublicBranch(record: BranchRecord): GitBranch {
   return branch;
 }
 
+/**
+ * The sides each mode compares, stated once so the panel and the tests agree
+ * with what the git command actually asked for.
+ */
+function descriptorFor(mode: DiffMode, baseRef: string | null): DiffDescriptor {
+  switch (mode) {
+    case 'staged':
+      return { mode, baseRef: null, workspaceIncludesIndex: false, anchorSide: 'index' };
+    case 'base':
+      // `git diff <base>` reads the working tree with the index applied.
+      return { mode, baseRef, workspaceIncludesIndex: true, anchorSide: 'worktree' };
+    case 'both':
+      // Each file carries its own side, hence the per-file anchor.
+      return { mode, baseRef: null, workspaceIncludesIndex: false, anchorSide: 'mixed' };
+    case 'unstaged':
+      return { mode, baseRef: null, workspaceIncludesIndex: false, anchorSide: 'worktree' };
+  }
+}
+
+/** Files by path; the same path appears at most once per side. */
+function sortDiffFiles(files: DiffFile[]): DiffFile[] {
+  return files.sort((a, b) => a.path.localeCompare(b.path) || Number(a.staged) - Number(b.staged));
+}
+
+/** Untracked files are missing from `git diff`, so they are built from disk. */
+async function appendUntracked(cwd: string, files: DiffFile[], filePath?: string): Promise<void> {
+  const status = await readStatus(cwd);
+  const untracked = status.files
+    .filter((file) => file.untracked && (!filePath || file.path === filePath))
+    .slice(0, MAX_UNTRACKED_FILES);
+
+  for (const file of untracked) {
+    const synthetic = await buildUntrackedFile(cwd, file.path);
+    if (synthetic) files.push(synthetic);
+  }
+}
+
 function combineOutput(result: { stdout: string; stderr: string }): string {
   return [result.stdout, result.stderr]
     .map((value) => value.trim())
@@ -519,68 +691,55 @@ function assertInsideWorkspace(workspacePath: string, filePath: string): void {
   }
 }
 
+function assertPathsInside(workspacePath: string, paths: string[]): void {
+  for (const filePath of paths) assertInsideWorkspace(workspacePath, filePath);
+}
+
+/**
+ * Expands the requested paths with the source side of a rename. Callers only
+ * know the new path from the panel, but git needs both halves to undo or
+ * unstage the change. A copy keeps its source untouched, so only its new path
+ * is returned.
+ */
+function expandChangedPaths(files: readonly GitFile[], paths: readonly string[]): string[] {
+  const byPath = new Map(files.map((file) => [file.path, file]));
+  const targets: string[] = [];
+  for (const filePath of paths) {
+    targets.push(filePath);
+    const file = byPath.get(filePath);
+    if (file?.oldPath && !file.copied && !targets.includes(file.oldPath)) {
+      targets.push(file.oldPath);
+    }
+  }
+  return targets;
+}
+
+/** Remote that carries the branch: the upstream's when it has one, else origin. */
+function pushRemote(remotes: readonly string[], upstream: string | null): string {
+  const fromUpstream = upstream?.split('/')[0];
+  if (fromUpstream && remotes.includes(fromUpstream)) return fromUpstream;
+  return remotes.includes('origin') ? 'origin' : (remotes[0] ?? 'origin');
+}
+
 async function readStatus(cwd: string): Promise<GitStatus> {
   const [{ stdout }, stats] = await Promise.all([
     git(cwd, ['status', '--porcelain=v1', '-z', '--branch', '--untracked-files=all']),
     readNumstat(cwd),
   ]);
 
-  const tokens = stdout.split('\0');
-  let branch = 'HEAD';
-  let upstream: string | null = null;
-  let ahead = 0;
-  let behind = 0;
-  const files: GitFile[] = [];
-
-  for (let index = 0; index < tokens.length; index += 1) {
-    const token = tokens[index];
-    if (!token) continue;
-
-    if (token.startsWith('## ')) {
-      const header = token.slice(3);
-      if (header.startsWith('No commits yet on ')) {
-        branch = header.slice('No commits yet on '.length);
-      } else if (header.startsWith('HEAD (no branch)')) {
-        branch = 'HEAD';
-      } else {
-        const [left, right] = header.split('...');
-        branch = left ?? 'HEAD';
-        if (right) {
-          const upstreamMatch = /^([^\s[]+)/.exec(right);
-          upstream = upstreamMatch?.[1] ?? null;
-          ahead = Number(/ahead (\d+)/.exec(right)?.[1] ?? 0);
-          behind = Number(/behind (\d+)/.exec(right)?.[1] ?? 0);
-        }
-      }
-      continue;
-    }
-
-    if (token.length < 4) continue;
-    const indexStatus = token[0] ?? ' ';
-    const worktreeStatus = token[1] ?? ' ';
-    const filePath = token.slice(3);
-    const untracked = indexStatus === '?' && worktreeStatus === '?';
-    const staged = !untracked && indexStatus !== ' ' && indexStatus !== '?';
-    const stat = stats.get(filePath);
-
-    files.push({
-      path: filePath,
-      indexStatus,
-      worktreeStatus,
-      staged,
-      untracked,
+  const parsed = parseStatus(stdout);
+  const files: GitFile[] = parsed.files.map((file) => {
+    const stat = stats.get(file.path);
+    return {
+      ...file,
       additions: stat?.additions ?? null,
       deletions: stat?.deletions ?? null,
-    });
-
-    if (indexStatus === 'R' || indexStatus === 'C') {
-      index += 1;
-    }
-  }
+    };
+  });
 
   files.sort((a, b) => a.path.localeCompare(b.path));
   await countUntracked(files, cwd);
-  return { branch, upstream, ahead, behind, files };
+  return { ...parsed, files };
 }
 
 /**

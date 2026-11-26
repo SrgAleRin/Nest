@@ -1,8 +1,10 @@
 import { app, BrowserWindow, Menu, nativeImage, shell, Tray } from 'electron';
 import path from 'node:path';
 import { mkdirSync } from 'node:fs';
-import { createCore, type Core } from '@nest/core';
+import { createCore, resolveWorktreesRoot, type Core } from '@nest/core';
 import type { AppInfo, NestEvent } from '@nest/shared';
+import { currentAppUrl } from './appUrl';
+import { decideExternalLink, decideNavigation, isAppUrl } from './boundaries';
 import { registerIpc } from './ipc';
 import { setAppBadge, showNotification } from './notifications';
 import { resolveProfileName } from './profile';
@@ -30,7 +32,10 @@ if (process.env.NEST_USER_DATA) {
 
 const userData = app.getPath('userData');
 const dbPath = process.env.NEST_DB_PATH ?? path.join(userData, 'nest.db');
-const worktreesRoot = process.env.NEST_WORKTREES_ROOT ?? path.join(userData, 'worktrees');
+// The default root: the environment override or the platform user-data folder.
+// A path saved in Settings replaces it for new worktrees only.
+const defaultWorktreesRoot =
+  process.env.NEST_WORKTREES_ROOT ?? path.join(userData, 'worktrees');
 const fakeHarnessScript = app.isPackaged
   ? path.join(process.resourcesPath, 'fake-harness.mjs')
   : path.resolve(app.getAppPath(), '../../scripts/fake-harness.mjs');
@@ -85,17 +90,40 @@ function createWindow(): void {
     mainWindow = null;
   });
 
+  const appUrl = currentAppUrl();
+
+  // Nest is a single window. A new window request never opens one; the URL is
+  // handed to the same link policy the renderer's `app.openExternal` uses.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    openExternalLink(url);
     return { action: 'deny' };
   });
 
-  const devUrl = process.env.ELECTRON_RENDERER_URL;
-  if (!app.isPackaged && devUrl) {
-    void mainWindow.loadURL(devUrl);
-  } else {
-    void mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
-  }
+  // Navigation away from the app document is refused instead of silently
+  // followed; a user-initiated external link still reaches the browser.
+  mainWindow.webContents.on('will-navigate', (details) => {
+    const decision = decideNavigation(details.url, appUrl);
+    if (decision === 'allow') return;
+    details.preventDefault();
+    if (decision === 'external') openExternalLink(details.url);
+  });
+
+  // A subframe has no business loading anything: the app is one document.
+  mainWindow.webContents.on('will-frame-navigate', (details) => {
+    if (!isAppUrl(details.url, appUrl)) details.preventDefault();
+  });
+
+  mainWindow.webContents.on('will-redirect', (details) => {
+    if (!isAppUrl(details.url, appUrl)) details.preventDefault();
+  });
+
+  void mainWindow.loadURL(appUrl.href);
+}
+
+function openExternalLink(raw: string): void {
+  const decision = decideExternalLink(raw);
+  if (!decision.allowed) return;
+  void shell.openExternal(decision.url);
 }
 
 function showWindow(): void {
@@ -137,8 +165,19 @@ function info(): AppInfo {
     profile,
     userData,
     dbPath,
-    worktreesRoot,
+    worktreesRoot: resolvedWorktreesRoot(),
+    defaultWorktreesRoot,
   };
+}
+
+/** What an empty worktree root in Settings resolves to, shown in the dialog. */
+function resolvedWorktreesRoot(): string {
+  if (!core) return defaultWorktreesRoot;
+  try {
+    return resolveWorktreesRoot(defaultWorktreesRoot, core.settings.get().worktreeRoot);
+  } catch {
+    return defaultWorktreesRoot;
+  }
 }
 
 const allowMultipleInstances = process.env.NEST_DISABLE_SINGLE_INSTANCE === '1';
@@ -155,7 +194,7 @@ if (!allowMultipleInstances && !app.requestSingleInstanceLock()) {
 
     core = createCore({
       dbPath,
-      worktreesRoot,
+      worktreesRoot: defaultWorktreesRoot,
       fakeHarnessScript,
       customCommand: process.env.NEST_CUSTOM_COMMAND,
       onEvent: broadcast,

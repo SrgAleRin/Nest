@@ -433,6 +433,16 @@ code,
   flex: 0 0 auto;
 }
 
+.task-warn-action {
+  background: none;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.task-warn-action:hover {
+  border-color: var(--amber);
+}
+
 .unread-badge {
   flex: 0 0 auto;
   min-width: 15px;
@@ -460,6 +470,39 @@ code,
   font-size: 10px;
   font-style: italic;
   color: var(--dim);
+}
+
+/* Row for a creation that is still running; lives in the tree, not the modal. */
+.task-row.pending {
+  gap: 6px;
+  padding: 5px 6px;
+  color: var(--muted);
+}
+
+.task-step {
+  flex: 0 0 auto;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dim);
+  font: 9px var(--mono);
+}
+
+.task-spinner {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid rgba(122, 162, 247, 0.25);
+  border-top-color: var(--blue);
+  border-radius: 50%;
+  animation: task-spin 0.9s linear infinite;
+}
+
+@keyframes task-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .session-row {
@@ -889,6 +932,11 @@ code,
 .resume-mode.exact {
   border-color: #2f5b46;
   color: var(--green);
+}
+
+.resume-mode.heuristic {
+  border-color: #4a4557;
+  color: #c8bfe0;
 }
 
 .resume-mode.latest {
@@ -1987,6 +2035,43 @@ code,
   display: flex;
 }
 
+.diff-modes {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px 4px;
+}
+
+.diff-mode-hint {
+  padding: 0 10px 4px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.diff-mode-hint.muted {
+  color: var(--dim);
+}
+
+/* Side badge for the mixed `both` view: a file's stage state is never implied. */
+.diff-side {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.diff-side.staged {
+  background: rgba(158, 206, 106, 0.14);
+  color: var(--green);
+}
+
+.diff-side.unstaged {
+  background: rgba(122, 162, 247, 0.14);
+  color: var(--blue);
+}
+
 .diff-scroll {
   flex: 1;
   min-height: 0;
@@ -2653,6 +2738,64 @@ code,
   align-self: center;
   color: var(--dim);
   font-size: 10.5px;
+}
+
+/* What the dialog will create: project, location, branch, path, base ref. */
+.task-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: #0b0f15;
+}
+
+.task-facts > div {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.task-facts dt {
+  color: var(--dim);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.task-facts dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--text);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.task-facts code {
+  font: 10px var(--mono);
+  color: #9aa6b8;
+}
+
+.modal-note {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.modal-note.warn {
+  border: 1px solid rgba(224, 175, 104, 0.4);
+  background: rgba(224, 175, 104, 0.08);
+  color: var(--amber);
+}
+
+.modal-note.error {
+  border: 1px solid rgba(247, 118, 142, 0.4);
+  background: rgba(247, 118, 142, 0.08);
+  color: #f7768e;
 }
 
 .settings-modal {
@@ -3337,4 +3480,145 @@ code,
 .fatal-card .btn {
   align-self: flex-start;
   margin-top: 2px;
+}
+
+/* ---------- notes outside the patch ---------- */
+
+/*
+ * Saved notes whose hunk left the current comparison. Separate from the stale
+ * notes (whose text is gone) and always counted, so a staged or committed note
+ * stays openable, sendable and resolvable.
+ */
+.outside-notes {
+  flex: 0 0 auto;
+  max-height: 40%;
+  overflow: auto;
+  border-top: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
+  background: #090c11;
+}
+
+.outside-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(9, 12, 17, 0.97);
+}
+
+.outside-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.outside-toggle svg {
+  transition: transform 120ms ease;
+  color: var(--dim);
+}
+
+.outside-notes.expanded .outside-toggle svg {
+  transform: rotate(90deg);
+}
+
+.outside-counts {
+  flex: 1;
+  color: var(--dim);
+  font: 10px var(--mono);
+}
+
+.outside-group {
+  padding: 2px 10px 6px;
+}
+
+.outside-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 0 3px;
+}
+
+.outside-reason {
+  padding: 0 4px;
+  border-radius: 4px;
+  font: 9px var(--mono);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.outside-reason.staged {
+  background: rgba(158, 206, 106, 0.14);
+  color: var(--green);
+}
+
+.outside-reason.committed {
+  background: rgba(122, 162, 247, 0.14);
+  color: var(--blue);
+}
+
+.outside-reason.other_mode,
+.outside-reason.file_not_in_diff,
+.outside-reason.not_in_patch {
+  background: rgba(187, 154, 247, 0.14);
+  color: var(--purple);
+}
+
+.outside-group-count {
+  color: var(--muted);
+  font: 10px var(--mono);
+}
+
+.outside-group-hint {
+  flex: 1;
+  color: var(--dim);
+  font: 9.5px var(--mono);
+}
+
+.outside-note {
+  margin: 2px 0 4px;
+  padding: 5px 7px;
+  border: 1px solid #2a3442;
+  border-left: 2px solid var(--purple);
+  border-radius: 6px;
+  background: #0b0e13;
+}
+
+.outside-note.resolved {
+  border-left-color: var(--green);
+  opacity: 0.75;
+}
+
+.outside-note .comment-head {
+  margin-bottom: 2px;
+}
+
+.outside-side {
+  color: var(--dim);
+  text-transform: uppercase;
+}
+
+.outside-excerpt {
+  margin: 0 0 3px;
+  padding: 3px 5px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #0e131b;
+  color: var(--muted);
+  font: 10px/1.45 var(--mono);
+  white-space: pre;
+  text-overflow: ellipsis;
+}
+
+.comment-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }

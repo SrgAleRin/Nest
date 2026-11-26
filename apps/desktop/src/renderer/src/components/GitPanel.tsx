@@ -7,7 +7,7 @@ import { FileTree } from './FileTree';
 import { RefreshIcon } from './Icons';
 import { GitPanelSkeleton } from './PanelSkeletons';
 import { panelPhase } from '../panelState';
-import { errorMessage, statusLetter, statusTone } from '../utils';
+import { errorCode, errorMessage, statusLetter, statusTone } from '../utils';
 
 type FileView = 'tree' | 'list';
 
@@ -117,8 +117,12 @@ export function GitPanel({
 
   function discard(file: GitFile): void {
     if (!task) return;
-    const target = file.untracked ? 'this untracked file' : 'local changes in';
-    if (!window.confirm(`Discard ${target} ${file.path}? This cannot be undone.`)) return;
+    const target = file.oldPath
+      ? `${file.copied ? 'the copy' : 'the rename'} ${file.oldPath} → ${file.path}`
+      : file.untracked
+        ? `this untracked file ${file.path}`
+        : `local changes in ${file.path}`;
+    if (!window.confirm(`Discard ${target}? This cannot be undone.`)) return;
     void run(async () => {
       const next = await client.invoke('git.discard', { taskId: task.id, paths: [file.path] });
       setStatus(next);
@@ -150,9 +154,21 @@ export function GitPanel({
         onNotify('info', result.output || 'Pushed');
       } catch (pushError) {
         const details = errorMessage(pushError);
-        // A rewritten (amended) branch is the usual reason a push is rejected;
-        // offer the lease-guarded force instead of asking the user to retype it.
-        if (!force && /rejected|non-fast-forward|fetch first/i.test(details)) {
+        if (errorCode(pushError) === 'upstream_mismatch') {
+          // Older task branches inherit their base as upstream. Publishing is
+          // explicit and leaves that base branch alone.
+          if (!window.confirm(`${details}\n\nPublish this branch as its own remote branch?`)) {
+            return;
+          }
+          const result = await client.invoke('git.push', {
+            taskId: task.id,
+            publish: true,
+            force,
+          });
+          onNotify('info', result.output || 'Published');
+        } else if (!force && /rejected|non-fast-forward|fetch first/i.test(details)) {
+          // A rewritten (amended) branch is the usual reason a push is rejected;
+          // offer the lease-guarded force instead of asking the user to retype it.
           if (
             !window.confirm(
               `Push was rejected:\n${details}\n\nForce push with lease? The remote branch is rewritten only if it has not changed since your last fetch.`,
@@ -163,7 +179,9 @@ export function GitPanel({
           const forced = await client.invoke('git.push', { taskId: task.id, force: true });
           onNotify('info', forced.output || 'Force pushed');
         } else {
-          throw pushError;
+          // The commit already exists, so a failed push must not read like the
+          // whole operation was lost.
+          throw new Error(`Push failed, the commit stays local. ${details}`);
         }
       }
       await load();
@@ -418,9 +436,13 @@ function GitFileRow({
   onDiscard: () => void;
 }) {
   return (
-    <div className="git-file tree-row" style={{ paddingLeft: 6 + depth * 11 }} title={file.path}>
+    <div
+      className="git-file tree-row"
+      style={{ paddingLeft: 6 + depth * 11 }}
+      title={file.oldPath ? `${file.oldPath} → ${file.path}` : file.path}
+    >
       <span className={`git-letter ${statusTone(file)}`}>{statusLetter(file)}</span>
-      <span className="git-path">{name}</span>
+      <span className="git-path">{renameLabel(file, name)}</span>
       {file.additions !== null && file.deletions !== null ? (
         <span className="git-stat" title={`${file.additions} added, ${file.deletions} deleted`}>
           <em>+{file.additions}</em> <del>-{file.deletions}</del>
@@ -446,6 +468,12 @@ function GitFileRow({
       </span>
     </div>
   );
+}
+
+function renameLabel(file: GitFile, name: string): string {
+  if (!file.oldPath) return name;
+  const source = file.oldPath.split('/').pop() ?? file.oldPath;
+  return `${source} → ${name}`;
 }
 
 function GitHead({

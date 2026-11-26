@@ -2,6 +2,8 @@ import { DEFAULT_TERMINAL_PREFERENCES, DEFAULT_UPDATE_FEED_URL } from '@nest/sha
 import type {
   AppInfo,
   AppSettings,
+  DiffDescriptor,
+  DiffMode,
   GitBranches,
   GitCommit,
   GitDiff,
@@ -10,6 +12,7 @@ import type {
   NestClient,
   NestEvent,
   Project,
+  CommentView,
   ReviewComment,
   RpcMethod,
   RpcParams,
@@ -31,10 +34,11 @@ export function createMockClient(): NestClient {
       name: 'nest-demo',
       path: 'D:\\dev\\nest-demo',
       setupScript: 'pnpm install',
+      defaultBaseRef: 'origin/main',
       createdAt: now,
     },
   ];
-  const tasks: Task[] = [
+  let tasks: Task[] = [
     {
       id: 'task-checkout',
       projectId: 'project-nest',
@@ -42,6 +46,7 @@ export function createMockClient(): NestClient {
       slug: '@main',
       title: 'main checkout',
       branch: 'main',
+      baseRef: null,
       workspacePath: 'D:\\dev\\nest-demo',
       status: 'active',
       setupError: null,
@@ -55,6 +60,7 @@ export function createMockClient(): NestClient {
       slug: 'terminal-reconnect',
       title: 'terminal reconnect',
       branch: 'nest/terminal-reconnect',
+      baseRef: 'origin/main',
       workspacePath: 'D:\\dev\\nest-worktrees\\nest-demo\\terminal-reconnect',
       status: 'active',
       setupError: null,
@@ -90,7 +96,7 @@ export function createMockClient(): NestClient {
       updatedAt: now,
     },
   ];
-  let comments: ReviewComment[] = [
+  let comments: CommentView[] = [
     {
       id: 'comment-1',
       taskId: 'task-checkout',
@@ -101,8 +107,28 @@ export function createMockClient(): NestClient {
       body: 'This effect subscribes twice in StrictMode. Unsubscribe on cleanup.',
       status: 'open',
       stale: false,
+      excerpt: 'useEffect(() => { subscribe();',
+      anchorMode: 'unstaged',
       createdAt: now,
       updatedAt: now,
+      placement: { kind: 'inline' },
+    },
+    {
+      // Kept reachable after its hunk was committed: real, just off-patch.
+      id: 'comment-2',
+      taskId: 'task-checkout',
+      filePath: 'src/terminal/bus.ts',
+      line: 4,
+      endLine: 4,
+      side: 'new',
+      body: 'This buffer is flushed on unmount only; do we need a timer?',
+      status: 'open',
+      stale: false,
+      excerpt: 'const pending = new Map<string, string>();',
+      anchorMode: 'both',
+      createdAt: now,
+      updatedAt: now,
+      placement: { kind: 'outside', reason: 'committed' },
     },
   ];
 
@@ -185,7 +211,10 @@ export function createMockClient(): NestClient {
     harnessArgs: {},
     shellCommand: '',
     terminal: { ...DEFAULT_TERMINAL_PREFERENCES },
+    worktreeRoot: '',
+    copyEnvFiles: false,
     updateFeedUrl: '',
+    updatesEnabled: true,
     newSessionDefault: 'ask',
   };
 
@@ -196,7 +225,9 @@ export function createMockClient(): NestClient {
     feedUrl: settings.updateFeedUrl || DEFAULT_UPDATE_FEED_URL,
     availableVersion: null,
     percent: null,
-    message: 'Updates are available in packaged builds only.',
+    message: settings.updatesEnabled
+      ? 'Updates are available in packaged builds only.'
+      : 'Update checks are turned off in Settings.',
     checkedAt: null,
   });
 
@@ -229,6 +260,8 @@ export function createMockClient(): NestClient {
     files: [
       {
         path: 'src/App.tsx',
+        oldPath: null,
+        copied: false,
         indexStatus: ' ',
         worktreeStatus: 'M',
         staged: false,
@@ -238,7 +271,9 @@ export function createMockClient(): NestClient {
       },
       {
         path: 'src/terminal/bus.ts',
-        indexStatus: 'A',
+        oldPath: 'src/terminal/legacy.ts',
+        copied: false,
+        indexStatus: 'R',
         worktreeStatus: ' ',
         staged: true,
         untracked: false,
@@ -247,6 +282,8 @@ export function createMockClient(): NestClient {
       },
       {
         path: 'docs/notes.md',
+        oldPath: null,
+        copied: false,
         indexStatus: '?',
         worktreeStatus: '?',
         staged: false,
@@ -258,6 +295,12 @@ export function createMockClient(): NestClient {
   };
 
   const diff: GitDiff = {
+    descriptor: {
+      mode: 'both',
+      baseRef: null,
+      workspaceIncludesIndex: false,
+      anchorSide: 'mixed',
+    },
     files: [
       {
         path: 'src/App.tsx',
@@ -436,6 +479,16 @@ export function createMockClient(): NestClient {
     for (const handler of handlers) handler(event);
   };
 
+  // Mock output stream positions, so the renderer's snapshot/live join behaves
+  // like the real main process.
+  const streamPositions = new Map<string, number>();
+  const emitData = (sessionId: string, data: string): void => {
+    const start = streamPositions.get(sessionId) ?? 0;
+    const end = start + data.length;
+    streamPositions.set(sessionId, end);
+    emit({ type: 'session:data', sessionId, data, start, end });
+  };
+
   let clipboardText = '';
 
   const info: AppInfo = {
@@ -446,6 +499,7 @@ export function createMockClient(): NestClient {
     userData: 'C:\\Users\\mock\\AppData\\Roaming\\Nest',
     dbPath: 'C:\\Users\\mock\\AppData\\Roaming\\Nest\\nest.db',
     worktreesRoot: 'C:\\Users\\mock\\AppData\\Roaming\\Nest\\worktrees',
+    defaultWorktreesRoot: 'C:\\Users\\mock\\AppData\\Roaming\\Nest\\worktrees',
   };
 
   async function handle(method: RpcMethod, params: Record<string, unknown>): Promise<unknown> {
@@ -485,10 +539,22 @@ export function createMockClient(): NestClient {
             params.terminal === undefined
               ? settings.terminal
               : (params.terminal as AppSettings['terminal']),
+          worktreeRoot:
+            typeof params.worktreeRoot === 'string'
+              ? params.worktreeRoot.trim()
+              : settings.worktreeRoot,
+          copyEnvFiles:
+            params.copyEnvFiles === undefined
+              ? settings.copyEnvFiles
+              : Boolean(params.copyEnvFiles),
           updateFeedUrl:
             typeof params.updateFeedUrl === 'string'
               ? params.updateFeedUrl.trim()
               : settings.updateFeedUrl,
+          updatesEnabled:
+            params.updatesEnabled === undefined
+              ? settings.updatesEnabled
+              : Boolean(params.updatesEnabled),
           newSessionDefault:
             params.newSessionDefault === undefined
               ? settings.newSessionDefault
@@ -516,6 +582,7 @@ export function createMockClient(): NestClient {
           name: path.split(/[\\/]/).pop() ?? 'project',
           path,
           setupScript: null,
+          defaultBaseRef: 'origin/main',
           createdAt: new Date().toISOString(),
         };
         projects.push(project);
@@ -526,6 +593,7 @@ export function createMockClient(): NestClient {
           slug: '@main',
           title: 'main checkout',
           branch: 'main',
+          baseRef: null,
           workspacePath: path,
           status: 'active',
           setupError: null,
@@ -536,8 +604,14 @@ export function createMockClient(): NestClient {
         return { project, checkout };
       }
       case 'projects.remove': {
-        const index = projects.findIndex((project) => project.id === params.projectId);
+        const projectId = String(params.projectId);
+        const removed = new Set(
+          tasks.filter((task) => task.projectId === projectId).map((task) => task.id),
+        );
+        const index = projects.findIndex((project) => project.id === projectId);
         if (index >= 0) projects.splice(index, 1);
+        tasks = tasks.filter((task) => task.projectId !== projectId);
+        sessions = sessions.filter((session) => !removed.has(session.taskId));
         return undefined;
       }
       case 'projects.reveal':
@@ -552,20 +626,41 @@ export function createMockClient(): NestClient {
         if (!checkout) throw new Error('checkout not found');
         return { ...checkout };
       }
+      case 'tasks.preview': {
+        const project = projects.find((candidate) => candidate.id === params.projectId);
+        if (!project) throw new Error('project not found');
+        const title = String(params.title ?? '').trim();
+        const slug = title ? title.toLowerCase().replace(/[^a-z0-9]+/g, '-') : '';
+        const explicit = params.baseRef ? String(params.baseRef) : null;
+        return {
+          branch: slug ? `nest/${slug}` : null,
+          slug: slug || null,
+          workspacePath: slug ? `D:\\dev\\nest-worktrees\\nest-demo\\${slug}` : null,
+          baseRef: explicit ?? project.defaultBaseRef,
+          baseSource: explicit ? ('explicit' as const) : ('project' as const),
+          baseAvailable: true,
+        };
+      }
       case 'tasks.create': {
         const id = `task-${tasks.length + 1}`;
         const title = String(params.title ?? 'new task');
         const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+        const operationId = String(params.operationId);
         const project = projects.find((candidate) => candidate.id === params.projectId);
         if (project && params.setupScript !== undefined) {
           project.setupScript = params.setupScript ? String(params.setupScript) : null;
         }
         const progressProjectId = String(params.projectId);
-        emit({ type: 'task:progress', projectId: progressProjectId, step: 'fetch' });
+        emit({ type: 'task:progress', operationId, projectId: progressProjectId, step: 'fetch' });
         await new Promise((resolve) => setTimeout(resolve, 120));
-        emit({ type: 'task:progress', projectId: progressProjectId, step: 'worktree' });
+        emit({
+          type: 'task:progress',
+          operationId,
+          projectId: progressProjectId,
+          step: 'worktree',
+        });
         await new Promise((resolve) => setTimeout(resolve, 120));
-        emit({ type: 'task:progress', projectId: progressProjectId, step: 'setup' });
+        emit({ type: 'task:progress', operationId, projectId: progressProjectId, step: 'setup' });
         await new Promise((resolve) => setTimeout(resolve, 120));
         const task: Task = {
           id,
@@ -574,6 +669,7 @@ export function createMockClient(): NestClient {
           slug,
           title,
           branch: `nest/${slug}`,
+          baseRef: params.baseRef ? String(params.baseRef) : 'origin/main',
           workspacePath: `D:\\dev\\nest-worktrees\\nest-demo\\${slug}`,
           status: 'active',
           setupError: null,
@@ -581,8 +677,17 @@ export function createMockClient(): NestClient {
           updatedAt: new Date().toISOString(),
         };
         tasks.push(task);
+        emit({
+          type: 'task:operation',
+          operationId,
+          projectId: progressProjectId,
+          state: 'done',
+          taskId: id,
+        });
         return task;
       }
+      case 'tasks.abort':
+        return { aborted: false };
       case 'tasks.remove': {
         const index = tasks.findIndex((task) => task.id === params.taskId);
         if (index >= 0) tasks.splice(index, 1);
@@ -607,7 +712,7 @@ export function createMockClient(): NestClient {
           updatedAt: new Date().toISOString(),
         };
         sessions = [...sessions, session];
-        setTimeout(() => emit({ type: 'session:data', sessionId: session.id, data: GREETING }), 80);
+        setTimeout(() => emitData(session.id, GREETING), 80);
         return session;
       }
       case 'sessions.write': {
@@ -618,7 +723,7 @@ export function createMockClient(): NestClient {
             ? 'you said: hello\r\n\u001b[32m>\u001b[0m '
             : '';
         if (reply) {
-          setTimeout(() => emit({ type: 'session:data', sessionId, data: reply }), 60);
+          setTimeout(() => emitData(sessionId, reply), 60);
         }
         return undefined;
       }
@@ -645,22 +750,37 @@ export function createMockClient(): NestClient {
         const updated = { ...session };
         emit({ type: 'session:status', session: updated });
         setTimeout(() => {
-          emit({
-            type: 'session:data',
-            sessionId: session.id,
-            data: `\r\n── resume ${harness?.label ?? session.harnessId} ──\r\n${GREETING}`,
-          });
+          emitData(
+            session.id,
+            `\r\n── resume ${harness?.label ?? session.harnessId} ──\r\n${GREETING}`,
+          );
         }, 80);
         return updated;
       }
       case 'sessions.resize':
         return undefined;
-      case 'sessions.scrollback':
-        return { data: params.sessionId === 'session-fake' ? GREETING : '' };
+      case 'sessions.scrollback': {
+        const sessionId = String(params.sessionId);
+        const position = streamPositions.get(sessionId) ?? 0;
+        return {
+          data: sessionId === 'session-fake' ? GREETING : '',
+          position: sessionId === 'session-fake' ? position : 0,
+        };
+      }
       case 'git.status':
         return status;
-      case 'git.diff':
-        return diff;
+      case 'git.diff': {
+        const mode = (params.mode as DiffMode | undefined) ?? 'both';
+        const descriptor: DiffDescriptor = {
+          mode,
+          baseRef: mode === 'base' ? 'origin/main' : null,
+          workspaceIncludesIndex: mode === 'base',
+          anchorSide: mode === 'staged' ? 'index' : mode === 'both' ? 'mixed' : 'worktree',
+        };
+        if (mode === 'both' || mode === 'base') return { descriptor, files: diff.files };
+        const staged = mode === 'staged';
+        return { descriptor, files: diff.files.filter((file) => file.staged === staged) };
+      }
       case 'git.stage':
       case 'git.unstage':
         return status;
@@ -760,10 +880,13 @@ export function createMockClient(): NestClient {
           body: String(params.body),
           status: 'open',
           stale: false,
+          excerpt: null,
+          anchorMode: (params.anchor as { mode?: DiffMode } | undefined)?.mode ?? null,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
-        comments = [...comments, comment];
+        // A note is created from a row of the current view, so it starts inline.
+        comments = [...comments, { ...comment, placement: { kind: 'inline' } }];
         return comment;
       }
       case 'comments.update': {
@@ -780,12 +903,19 @@ export function createMockClient(): NestClient {
         return undefined;
       }
       case 'comments.send': {
+        const comment = comments.find((candidate) => candidate.id === params.commentId);
+        const text = `Review comment — ${comment?.filePath ?? ''}:${comment?.line ?? 0} (${comment?.side ?? 'new'})
+
+${comment?.body ?? ''}
+`;
         const session = sessions.find(
           (candidate) =>
-            candidate.id === params.sessionId &&
+            (params.sessionId === undefined || candidate.id === params.sessionId) &&
             (candidate.status === 'running' || candidate.status === 'idle'),
         );
-        return session ? { sent: true } : { sent: false, reason: 'no_active_session' };
+        return session
+          ? { sent: true, text }
+          : { sent: false, reason: 'no_active_session' as const, text };
       }
       default:
         throw new Error(`Mock does not implement ${method}`);

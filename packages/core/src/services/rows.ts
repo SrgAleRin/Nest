@@ -1,6 +1,7 @@
 import type {
   CommentSide,
   CommentStatus,
+  DiffMode,
   HarnessId,
   Project,
   ResumeMode,
@@ -17,6 +18,7 @@ export interface ProjectRow {
   name: string;
   path: string;
   setup_script: string | null;
+  default_base_ref: string | null;
   created_at: string;
 }
 
@@ -27,6 +29,7 @@ export interface TaskRow {
   slug: string;
   title: string;
   branch: string;
+  base_ref: string | null;
   workspace_path: string;
   status: TaskStatus;
   setup_error: string | null;
@@ -43,7 +46,9 @@ export interface SessionRow {
   cwd: string;
   exit_code: number | null;
   scrollback: string;
+  stream_position: number;
   resume_on_start: number;
+  stop_requested: number;
   harness_session_id: string | null;
   resume_mode: ResumeMode;
   created_at: string;
@@ -60,6 +65,11 @@ export interface CommentRow {
   side: CommentSide;
   body: string;
   status: CommentStatus;
+  /** Comparison the note was written against; null on rows from before it was stored. */
+  anchor_mode: string | null;
+  anchor_base: string | null;
+  /** 1 when the note came from the staged side of a `both` view. */
+  anchor_staged: number;
   created_at: string;
   updated_at: string;
 }
@@ -70,6 +80,7 @@ export function toProject(row: ProjectRow): Project {
     name: row.name,
     path: row.path,
     setupScript: row.setup_script,
+    defaultBaseRef: row.default_base_ref ?? null,
     createdAt: row.created_at,
   };
 }
@@ -82,6 +93,7 @@ export function toTask(row: TaskRow): Task {
     slug: row.slug,
     title: row.title,
     branch: row.branch,
+    baseRef: row.base_ref,
     workspacePath: row.workspace_path,
     status: row.status,
     setupError: row.setup_error,
@@ -118,7 +130,21 @@ export function toComment(row: CommentRow): ReviewComment {
     body: row.body,
     status: row.status,
     stale: false,
+    excerpt: row.anchor_text,
+    anchorMode: toDiffMode(row.anchor_mode),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function toDiffMode(value: string | null): DiffMode | null {
+  switch (value) {
+    case 'both':
+    case 'unstaged':
+    case 'staged':
+    case 'base':
+      return value;
+    default:
+      return null;
+  }
 }

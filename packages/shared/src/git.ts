@@ -2,6 +2,14 @@ import { z } from 'zod';
 
 export const GitFileSchema = z.object({
   path: z.string(),
+  /**
+   * Source path of a rename or copy reported by porcelain status; null for
+   * every other kind of change. Both paths belong to the entry: git actions
+   * must receive the pair, or only half of the change is undone.
+   */
+  oldPath: z.string().nullable(),
+  /** True when the entry is a detected copy (C) rather than a rename (R). */
+  copied: z.boolean(),
   indexStatus: z.string(),
   worktreeStatus: z.string(),
   staged: z.boolean(),
@@ -51,10 +59,48 @@ export const DiffFileSchema = z.object({
   additions: z.number().int().nonnegative(),
   deletions: z.number().int().nonnegative(),
   raw: z.string(),
+  /** True when Git reported a binary diff; such files have no textual hunks. */
+  binary: z.boolean().optional(),
+  /** True when only the file mode changed (chmod), so there are no textual hunks. */
+  modeChanged: z.boolean().optional(),
 });
 export type DiffFile = z.infer<typeof DiffFileSchema>;
 
+/** What the Diff panel compares. */
+export const DiffModeSchema = z.enum(['both', 'unstaged', 'staged', 'base']);
+export type DiffMode = z.infer<typeof DiffModeSchema>;
+
+/** Staged and unstaged work both stay visible by default. */
+export const DEFAULT_DIFF_MODE: DiffMode = 'both';
+
+/**
+ * Side that new-side line numbers and comment anchors point at: the working
+ * tree, the index, or both (`both` mode reports it per file via `staged`).
+ */
+export const DiffAnchorSideSchema = z.enum(['worktree', 'index', 'mixed']);
+export type DiffAnchorSide = z.infer<typeof DiffAnchorSideSchema>;
+
+/**
+ * Every diff response carries the comparison it was computed for, so the panel
+ * can label the current mode and drop a response that arrives after the user
+ * switched modes.
+ */
+export const DiffDescriptorSchema = z.object({
+  mode: DiffModeSchema,
+  /** Ref the workspace is compared against in `base` mode; null otherwise. */
+  baseRef: z.string().nullable(),
+  /**
+   * True when the workspace side is the working tree with the index applied,
+   * so staged work is part of the comparison (`base` mode).
+   */
+  workspaceIncludesIndex: z.boolean(),
+  /** Which side new line numbers and comment anchors refer to. */
+  anchorSide: DiffAnchorSideSchema,
+});
+export type DiffDescriptor = z.infer<typeof DiffDescriptorSchema>;
+
 export const GitDiffSchema = z.object({
+  descriptor: DiffDescriptorSchema,
   files: z.array(DiffFileSchema),
 });
 export type GitDiff = z.infer<typeof GitDiffSchema>;

@@ -7,7 +7,7 @@ import { CommentsService } from './services/comments.js';
 import { FilesService } from './services/files.js';
 import { GitService } from './services/git.js';
 import { ProjectService } from './services/projects.js';
-import { SessionService } from './services/sessions.js';
+import { SessionService, type SessionServiceOptions } from './services/sessions.js';
 import { SettingsService } from './services/settings.js';
 import { TaskService } from './services/tasks.js';
 
@@ -16,6 +16,8 @@ export interface CoreOptions {
   worktreesRoot: string;
   fakeHarnessScript: string;
   customCommand?: string;
+  /** Test seams: PTY factory and crash-snapshot tuning. */
+  sessions?: SessionServiceOptions;
   onEvent?: (event: NestEvent) => void;
 }
 
@@ -53,16 +55,28 @@ export function createCore(options: CoreOptions): Core {
     getSettings: () => settings.get(),
   });
   const projects = new ProjectService(db);
-  const tasks = new TaskService(db, projects, options.worktreesRoot, emit);
+  const tasks = new TaskService(db, projects, options.worktreesRoot, emit, () => {
+    const current = settings.get();
+    return { worktreeRoot: current.worktreeRoot, copyEnvFiles: current.copyEnvFiles };
+  });
   const git = new GitService(db, tasks, emit);
   const files = new FilesService(tasks);
   const discovery = new HarnessDiscovery();
-  const sessions = new SessionService(db, tasks, harnesses, discovery, emit);
+  const sessions = new SessionService(db, tasks, harnesses, discovery, emit, options.sessions);
   sessions.recoverStale();
   sessions.resumePending();
-  const comments = new CommentsService(db, tasks, sessions);
+  const comments = new CommentsService(db, tasks, sessions, git);
 
-  tasks.onBeforeRemove((task) => sessions.stopForTask(task.id));
+  tasks.onBeforeRemove((task) =>
+    sessions.stopTasksAndWait([task.id], { subject: 'task' }),
+  );
+
+  // A project deletion owns every PTY of every task, including the main
+  // checkout. Unconfirmed stops throw and keep the project and its rows.
+  projects.onBeforeRemove(async (project) => {
+    const taskIds = tasks.list(project.id).map((task) => task.id);
+    await sessions.stopTasksAndWait(taskIds, { subject: 'project' });
+  });
 
   return {
     db,
@@ -85,5 +99,5 @@ export { NestError } from './errors.js';
 export type { Db } from './db/database.js';
 export { migrate, openDatabase } from './db/database.js';
 export { migrations } from './db/migrations.js';
-export { DEFAULT_SETTINGS, SettingsService } from './services/settings.js';
+export { DEFAULT_SETTINGS, SettingsService, resolveWorktreesRoot } from './services/settings.js';
 export { parseUnifiedDiff, buildUntrackedDiff } from './git/diff.js';

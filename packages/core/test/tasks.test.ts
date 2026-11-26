@@ -83,6 +83,9 @@ describe('task setup', () => {
     if (!core) throw new Error('core was not created');
     const script = 'node scripts/setup-ok.mjs';
 
+    // Copying env files is an explicit choice, off by default.
+    core.settings.update({ copyEnvFiles: true });
+
     const task = await core.tasks.create({
       projectId,
       title: 'Setup works',
@@ -126,7 +129,7 @@ describe('task setup', () => {
     const task = await core.tasks.create({
       projectId,
       title: 'From origin main',
-      baseBranch: 'origin/main',
+      baseRef: 'origin/main',
       setupScript: null,
     });
 
@@ -142,7 +145,7 @@ describe('task setup', () => {
   it('rejects an unknown base branch', async () => {
     if (!core) throw new Error('core was not created');
     await expect(
-      core.tasks.create({ projectId, title: 'Bad base', baseBranch: 'missing-branch' }),
+      core.tasks.create({ projectId, title: 'Bad base', baseRef: 'missing-branch' }),
     ).rejects.toThrow(/does not exist/);
   });
 

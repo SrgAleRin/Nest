@@ -32,7 +32,7 @@ Tauri-заметка: если позже понадобится установ�
 | БД | SQLite через `node:sqlite` (Node 24 в Electron 45), WAL |
 | Git | системный `git` через `node:child_process` |
 | Watcher | `@parcel/watcher` на workspace и git-каталоге проекта; debounce 350 мс, событие `git:changed` на задачу |
-| Diff | `git diff` + собственный парсер; виртуализированный viewer и подсветка Shiki (JS engine, грамматики по требованию) |
+| Diff | `git diff` + собственный парсер; режимы `both`/`unstaged`/`staged`/`base`, каждый ответ несёт дескриптор сравнения; виртуализированный viewer и подсветка Shiki (JS engine, грамматики по требованию) |
 | Review comments | SQLite + inline threads в diff; отправка в активную PTY-сессию |
 | PR | не в MVP; GitHub/GitLab и checks — позже |
 | Валидация | `zod` на границе IPC |
@@ -233,11 +233,11 @@ export const rpcContract = {
   'sessions.list':   { input: z.object({ taskId: z.string().optional() }), output: z.array(SessionSchema) },
 
   'git.status': { input: z.object({ taskId: z.string() }), output: GitStatusSchema },
-  'git.diff':   { input: z.object({ taskId: z.string(), path: z.string(), staged: z.boolean().optional() }), output: GitDiffSchema },
+  'git.diff':   { input: z.object({ taskId: z.string(), path: z.string().optional(), mode: DiffModeSchema.optional() }), output: GitDiffSchema /* files + descriptor */ },
   'git.stage':  { input: z.object({ taskId: z.string(), paths: z.array(z.string()) }), output: GitStatusSchema },
   'git.unstage':{ input: z.object({ taskId: z.string(), paths: z.array(z.string()) }), output: GitStatusSchema },
   'git.commit': { input: z.object({ taskId: z.string(), message: z.string().min(1), stageAll: z.boolean().optional(), amend: z.boolean().optional() }), output: z.object({ hash: z.string(), summary: z.string() }) },
-  'git.push':   { input: z.object({ taskId: z.string(), force: z.boolean().optional() }), output: z.object({ output: z.string() }) },
+  'git.push':   { input: z.object({ taskId: z.string(), force: z.boolean().optional(), publish: z.boolean().optional() }), output: z.object({ output: z.string() }) },
   'git.log':    { input: z.object({ taskId: z.string(), ref: z.string().optional(), limit: z.number().int().optional(), skip: z.number().int().optional() }), output: GitLogSchema },
   'git.commitDetail': { input: z.object({ taskId: z.string(), hash: z.string() }), output: GitCommitDetailSchema },
   'git.branches': { input: z.object({ taskId: z.string() }), output: GitBranchesSchema },
@@ -293,6 +293,8 @@ export type NestEvent =
 ```
 
 `git:changed` адресован конкретной задаче. Renderer хранит счётчик версии на `taskId` и перезапрашивает status/diff только для выбранной задачи, поэтому события из чужих worktree не дёргают открытые панели.
+
+Сессии в renderer — reducer (`state/sessions.ts`): событие обновляет только свою строку, локальное закрытие ставит tombstone, а `sessions.list` сливается по ревизии, снятой перед запросом. Поздний ответ поэтому не воскрешает закрытые вкладки и не теряет запущенные за время запроса. Выбранная вкладка запоминается на задачу (`state/sessionTabs.ts`), так что A → B → A возвращает терминал A; дефолт (последняя живая) применяется только если её больше нет.
 
 Preload:
 
@@ -365,16 +367,29 @@ Windows-нюанс: `claude`, `codex`, `dsh` часто являются `.cmd`-
 
 ```
 pty.onData(chunk)
-  → batch 8–16 ms
-  → webContents.send('nest:event', { type:'session:data', ... })
-  → xterm.write(chunk, ack)
-  → ack every 64 KB
-  → if unacked > 1 MB: pty.pause()
+  → буфер сессии + монотонная позиция (сразу, до отправки)
+  → batch: 8 ms или 64 KB ожидающей очереди
+  → webContents.send('nest:event', { type:'session:data', data, start, end })
+  → renderer: подписка → snapshot → только байты после position
 ```
 
-- batching обязателен: TUI-агенты выдают много мелких escape-последовательностей;
-- backpressure защищает renderer от OOM при `yes` или огромном логе;
-- для 10+ сессий можно перейти на `MessageChannelMain` (отдельный port на сессию), но это оптимизация, не MVP.
+- batching обязателен: TUI-агенты выдают много мелких escape-последовательностей; 200
+  микро-chunk'ов превращаются в одно событие, а очередь ограничена порогом 64 KB;
+- **позиция потока** — число UTF-16 units, полученных сессией с момента создания. Позиция
+  растёт монотонно даже когда буфер обрезан (4 MB) или сессия перезапущена через resume, поэтому
+  она и есть единственные часы для стыковки истории с live-выводом. Каждое `session:data` несёт
+  диапазон `[start, end)` и `end - start === data.length`;
+- `pty.pause()` по ack renderer'а описан в архитектуре как backpressure, но в текущем срезе не
+  реализован: очередь ограничена размером batch, а не окном подтверждений;
+- для 10+ сессий можно перейти на `MessageChannelMain` (отдельный port на сессию), но это
+  оптимизация, не MVP.
+
+**Стыковка истории и live-вывода.** `sessions.scrollback` возвращает `{ data, position }` —
+snapshot и позицию, которую он покрывает. Renderer сначала подписывается на `session:data`,
+буферизует live-chunk'и, затем получает snapshot, пишет его и только после этого пишет буферные
+chunk'и, у которых `end > position`, в исходном порядке, обрезая пересечение по позиции. Так
+reload или LRU-remount не дублирует и не переставляет данные, а ANSI-последовательность
+собирается из непрерывных байтов. После `dispose()` xterm не получает ни одной записи.
 
 ### 6.3 Resize
 
@@ -385,18 +400,31 @@ pty.onData(chunk)
 
 ### 6.4 Scrollback и восстановление
 
-Два уровня:
+Хранится в SQLite в колонках `scrollback` и `stream_position` (позиция = конец сохранённых
+данных). Уровни записи:
 
-1. **Raw log** — всё, что пришло из PTY, пишется в `sessions/<id>.log` (append-only, с лимитом).
-2. **Snapshot** — в main держим headless-xterm (`@xterm/headless`) и раз в 5 секунд (или при закрытии) сериализуем состояние через `@xterm/addon-serialize`.
+1. **Crash snapshot** — раз в 5 секунд по dirty-флагу пишется хвост буфера (не больше 256 KB) и
+   его позиция. Запись идёт с таймера, не из `onData`, поэтому не удорожает путь каждого chunk'а.
+   Цена: `UPDATE` на 256 KB на сессию, ~1–3 ms (WAL, локальный SSD) — на 10 сессий ~0.5 MB/s.
+   Принятое окно потери при аварии: вывод за последние ≤5 s, а восстановленный хвост никогда не
+   превышает 256 KB.
+2. **Exit / graceful shutdown** — пишется весь буфер (до 4 MB), поэтому штатное завершение
+   ничего не теряет.
+
+Recovery не заявляет больше, чем сохранено: `stream_position` всегда равен концу сохранённого
+snapshot'а, resume прибавляет к нему маркер и продолжает счёт. Решение о автозапуске принимает
+явный маркер `stop_requested`, а не незавершённый статус: сессия, остановленная Stop, остаётся
+finished после Quit/рестарта.
 
 При открытии сессии:
 
-- если процесс жив — создаём xterm и продолжаем поток;
-- если процесс умер — пишем snapshot, затем хвост raw log (если snapshot старше);
-- если snapshot нет — replay последних N КБ raw log.
+- если процесс жив — создаём xterm, пишем snapshot и продолжаем поток с его позиции;
+- если процесс умер — пишем сохранённый snapshot; больше данных нет, поэтому «хвоста» после
+  него не бывает (он был потерян аварией и не заявлялся);
+- если snapshot пуст — сессия открывается с пустого экрана.
 
-Это даёт быстрый возврат к задаче без хранения мегабайт ANSI в SQLite.
+Сериализация экрана headless-xterm (`@xterm/headless` + `@xterm/addon-serialize`) остаётся
+отдельным улучшением: сейчас snapshot — это сырой ANSI-хвост, а не экран.
 
 ### 6.5 Инстансы терминалов
 
@@ -406,7 +434,7 @@ pty.onData(chunk)
 - При переключении задачи не убиваем PTY; скрываем контейнер.
 - Крестик на вкладке (или средний клик) закрывает её окончательно: PTY останавливается, строка сессии и scrollback удаляются из БД; `Stop` в терминале, наоборот, оставляет сессию для resume.
 - Кнопка `+` открывает новую вкладку, стрелка рядом — общий пикер профилей (Terminal + агенты). Что делает сам `+`, задаёт настройка `newSessionDefault`: `ask` (пикер) или конкретный профиль.
-- Секция **Activity** в сайдбаре показывает не все открытые вкладки, а только те, что требуют внимания: `Working` (PTY выдаёт вывод), `Waiting for you` (агент затих, но процесс жив — обычно ждёт ответа) и `Finished` (завершился, пока пользователь смотрел другое). Выбранная вкладка и простой shell в ожидание не попадают. Сессии всех задач остаются видимы в дереве проектов, даже когда задача не активна.
+- Секция **Activity** в сайдбаре показывает не все открытые вкладки, а только те, что требуют внимания: `Working` (PTY выдаёт вывод), `Idle` (агент затих, но процесс жив) и `Finished` (завершился, пока пользователь смотрел другое). Выбранная вкладка и простой shell в `Idle` не попадают. `Idle` намеренно не утверждает, что агент ждёт ответа: без hooks Nest не отличает вопрос от законченного хода, поэтому `needs_input` в статусах нет. Сессии всех задач остаются видимы в дереве проектов, даже когда задача не активна.
 
 ### 6.6 Жизненный цикл и приложение
 
@@ -415,8 +443,9 @@ pty.onData(chunk)
 - при закрытии окна Nest скрывается в трей, PTY-процессы и xterm продолжают жить; повторный клик по иконке или запуск Nest показывает то же окно и те же терминалы;
 - полный выход (**Quit Nest** в меню трея) завершает все PTY-процессы;
 - сессии, которые были живы в этот момент, помечаются `resume_on_start = 1`;
-- при следующем запуске они автоматически возобновляются в тех же вкладках: по сохранённому `harness_session_id` (exact), иначе через `--continue` / `resume --last` (latest);
-- id беседы определяется discovery-адаптером после старта: OpenCode — `session list --format json`, Codex/pi/Claude/Qwen — свежие JSONL по `cwd`, Copilot — `workspace.yaml`; поиск повторяется после ввода;
+- при следующем запуске они автоматически возобновляются в тех же вкладках: по сохранённому `harness_session_id`, если он `exact`, иначе через `--continue` / `resume --last` (latest); `heuristic` id автоматически не применяется никогда;
+- id беседы определяется discovery-адаптером после старта: OpenCode — `session list --format json`, Codex/pi/Claude/Qwen — свежие JSONL по `cwd`, Copilot — `workspace.yaml`; поиск повторяется после ввода. `exact` получает только id, который напечатал сам запущенный процесс, либо единственная беседа, появившаяся после старта, когда на том же `cwd` нет второй вкладки; при неоднозначности id не записывается (остаётся latest). Один id не может принадлежать двум сессиям проекта: перед записью идёт claim-проверка в БД;
+- автоматическое latest-возобновление не запускается, если на том же `cwd` есть другая вкладка того же harness: `--continue` мог бы открыть её беседу;
 - в БД сессии, завершившиеся сами или остановленные пользователем, помечаются `exited`/`failed`;
 - snapshot/scrollback сохраняется, новый вывод дописывается после маркера `── resume <harness> ──`;
 - для остальных завершённых сессий доступна кнопка `Resume exact` / `Resume latest`; неудачный exact-resume сбрасывает id и оставляет сессию для latest-повтора;
@@ -445,6 +474,23 @@ pty.onData(chunk)
 
 На Windows тосты требуют AppUserModelID; main выставляет `dev.nest.desktop` (совпадает с `appId` в `electron-builder.yml`).
 
+### 6.8.1 Создание задачи как операция
+
+`tasks.create` принимает `operationId` от renderer, `task:progress` повторяет его вместе с `step`
+(`fetch`, `worktree`, `setup`, `start`…), а `task:operation` закрывает операцию состоянием
+`done | failed | aborted` (с `taskId` или сообщением). Дерево показывает ожидающую строку по
+`operationId`, поэтому прогресс виден и с закрытой модалкой.
+
+`tasks.preview` — read-only: он считает slug, ветку, путь и эффективную базу, ничего не создавая и
+не делая сетевых вызовов. `tasks.abort` снимает флаг операции; `create` проверяет его между шагами
+(`throwIfAborted`) и откатывает только свои артефакты (worktree, ветку, строку задачи) — чужие
+worktree не трогаются, сессия не стартует. `Cancel` в модалке вызывает `abort`, `Close` просто
+закрывает окно.
+
+База задачи: явный `baseRef` → сохранённый `projects.default_base_ref` (миграция 12, заполняется
+лениво для старых строк через `ensureDefaultBase`) → текущая ветка. Default при добавлении проекта
+— `origin/HEAD`, иначе текущая ветка; `fetch` не выполняется.
+
 ### 6.9 Command palette
 
 `Ctrl+Shift+P` открывает палитру команд (намеренно не `Ctrl+K` — в шелле это kill-line). Renderer строит плоский список `CommandItem` на каждый рендер: задачи, сессии, запуск доступных harness, stop/resume текущей сессии, переключение панелей Git/History/Compare/Diff/Sessions, `New task`, `Add project`, `Settings`, `Reveal workspace`, `Refresh git`, `Fetch`, `Pull`. `filterCommands` сортирует совпадения по prefix > substring > subsequence и учитывает `detail`/`keywords`.
@@ -452,6 +498,20 @@ pty.onData(chunk)
 Палитра — обычный `modal-overlay` с `max-height` и скроллом: ↑↓/Enter/Esc, клик по строке, фокус в поле поиска, выбранная строка подскролливается. Команда выполняется после закрытия палитры, поэтому `New task`/`Settings` открываются без наложения модалов.
 
 Вкладка правой колонки поднята в `App` (`RightTab`), чтобы палитра могла переключать её теми же callbacks, что и кнопки. Когда фокус в терминале, xterm-хендлер распознаёт `Ctrl+Shift+P` и возвращает `false`, не отправляя его в PTY; глобальный keydown-listener открывает палитру. Пока открыт другой модал, shortcut игнорируется.
+
+Остальные глобальные сочетания описаны в `renderer/src/shortcuts.ts` одной чистой функцией
+`resolveShortcut(event, { terminalFocused })` и покрыты unit-тестами:
+
+- `Ctrl+N` — диалог новой задачи для выбранного проекта;
+- `Ctrl+W` — закрыть активную вкладку задачи;
+- `Ctrl+Tab` / `Ctrl+Shift+Tab` — следующая / предыдущая вкладка задачи;
+- `Ctrl+`` — вернуть каретку в активный терминал.
+
+`Ctrl+Tab` и `Ctrl+`` не заняты шеллом, поэтому xterm-хендлер возвращает для них `false` всегда.
+`Ctrl+N` (history-next) и `Ctrl+W` (kill-word) остаются за PTY, пока фокус внутри терминала:
+глобальный listener получает их только при фокусе вне xterm, иначе bash теряет свои биндинги.
+Пока открыт любой модал (палитра, Settings, новая задача), все сочетания кроме `Ctrl+Shift+P`
+игнорируются.
 
 ### 6.10 Загрузка, пустые состояния и ошибки
 
@@ -469,7 +529,7 @@ pty.onData(chunk)
 
 | kind | path | branch | setup | delete |
 |---|---|---|---|---|
-| `worktree` | `~/Nest/worktrees/<project>/<task>` | `nest/<slug>` | да | да, с проверкой dirty |
+| `worktree` | `~/Nest/worktrees/<project>-<id8>/<task>` | `nest/<slug>` | да | да, с проверкой dirty |
 | `checkout` | корень проекта | текущая ветка | нет | нет, только вместе с проектом |
 
 `checkout` — singleton: один на проект. Он создаётся автоматически при добавлении проекта и не участвует в `git worktree add/remove`. Все git-операции для него выполняются в корне проекта.
@@ -482,7 +542,7 @@ pty.onData(chunk)
 1. validate project path
 2. save setup script on the project (если пришёл из модалки)
 3. git fetch --prune            (best effort: 60 с, пропускается без remotes)
-4. git worktree add -b <branch> <path> <base>
+4. git worktree add --no-track -b <branch> <path> <base>
 5. insert task row (kind=worktree, status=active)
 6. setup:
    - copy .env / .env.local    (только если файла ещё нет в worktree)
@@ -492,6 +552,8 @@ pty.onData(chunk)
 ```
 
 `base` — локальная ветка (`main`) или remote-tracking (`origin/main`); вторая разрешается после `git fetch`, поэтому задача может стартовать от свежего upstream. Setup script хранится в `projects.setup_script`, запоминается при создании задачи и подставляется в модалку New task.
+
+`--no-track` держит базу и upstream раздельно: `nest/<slug>` стартует от `origin/main`, но не наследует его как свой upstream, поэтому первый push публикует саму задачу. Если у существующей задачи upstream указывает на другую ветку, `git.push` возвращает `upstream_mismatch` и путь публикации (`push -u <remote> <branch>`); чужой upstream перезаписывается только с `publish: true`. Создание задач сериализуется внутри проекта, поэтому две одновременные задачи не делят ни slug, ни путь, ни ветку. Откат после неудачного INSERT убирает только созданные этой операцией worktree и ветку (ветку — если её не использует другой worktree).
 
 Создание остаётся одним синхронным RPC, но по пути core шлёт события `task:progress` (`fetch` → `worktree` → `setup`); модалка показывает текущий шаг, а не просто «Creating…».
 
@@ -511,7 +573,7 @@ Rollback:
 
 - если worktree создан, а setup упал — задача остаётся, причина лежит в `tasks.setup_error`, worktree не удаляем автоматически (пользователь может зайти и посмотреть, в сайдбаре горит бейдж `setup`);
 - если worktree не создан — ничего не пишем в БД, показываем ошибку;
-- branch создаётся только вместе с worktree; при откате удаляем, если она пустая;
+- branch создаётся только вместе с worktree; при откате удаляем только ветку, созданную этой операцией, и только если её не использует ни один worktree (чужой worktree или ветку не трогаем);
 - для checkout rollback не нужен: мы не создаём файлов и не меняем ветку.
 
 ### 7.2 Команды
@@ -524,14 +586,16 @@ Rollback:
 | base ref | `git symbolic-ref refs/remotes/origin/HEAD` → fallback `origin/main` |
 | status | `git status --porcelain=v1 --branch -z --untracked-files=all` |
 | numstat | `git diff --numstat -z -M HEAD`; без коммитов — сумма `git diff --numstat -z` и `--cached` |
-| diff | `git diff --no-ext-diff --no-color --unified=3 -- <path>` |
-| staged diff | `git diff --cached --no-ext-diff --no-color -- <path>` |
+| diff (unstaged) | `git diff --no-color -M --unified=3 --src-prefix=a/ --dst-prefix=b/ -- <path>` |
+| staged diff | `git diff --cached --no-color -M --unified=3 --src-prefix=a/ --dst-prefix=b/ -- <path>` |
+| diff `both` | оба вызова выше, объединение по файлу: частично staged файл виден дважды со своей стороной (`staged`, `unstaged`) |
+| diff `base` | `git diff <base_ref>` где `base_ref` — записанный при создании задачи ref (`tasks.base_ref`), иначе compare-base; рабочая сторона включает индекс |
 | untracked | читать файл, показывать как added; бинарные — placeholder, строки считает сам Nest (лимит 1 МБ и первые 200 файлов) |
 | stage | `git add -A -- <path>` |
-| unstage | `git restore --staged -- <path>` |
-| discard | `git restore --source=HEAD --staged --worktree -- <path>`; untracked — `git clean -f -- <path>` |
+| unstage | `git restore --staged -- <path>`; у rename/copy передаются оба пути (источник — только для rename) |
+| discard | `git restore --source=HEAD --staged --worktree -- <path>`; у rename — оба пути, у copy — только новый; untracked — `git clean -f -- <path>` |
 | commit | `git commit -m <message>`; с `amend` — `git commit --amend -m <message>` |
-| push | `git push -u origin HEAD`; force — `git push --force-with-lease` после подтверждения |
+| push | без upstream — `git push -u <remote> <branch>`; со своим upstream — `git push`; force — `--force-with-lease` после подтверждения; чужой upstream — `upstream_mismatch` и публикация только с `publish` |
 | log | `git log --max-count=<n+1> --skip=<m> --format=<NUL-поля>`; без HEAD — пустая страница |
 | commit detail | `git log -1 --format=<meta>` + `git diff <parent> <hash>` (корневой — `git show`, merge — первый parent) |
 | branches | `git for-each-ref --format=... refs/heads refs/remotes` + `git symbolic-ref --short -q HEAD`, `git remote -v` |
@@ -551,6 +615,8 @@ Rollback:
 Панель `Git` показывает изменения деревом (сворачиваемые каталоги, одиночные цепочки схлопываются: `apps/desktop/src/main`) или плоским списком, последние 5 коммитов и действия `Fetch`/`Pull`/`Push`; ветка в шапке открывает переключатель локальных и remote-веток и создание новой. `History` — мастер-деталь: страница `git.log` по 50 коммитов, `Load older commits`, карточка коммита с метаданными и патчами файлов (аккордеон, лимит 2000 строк на файл). `Compare` — три-точечное сравнение `base...head` (как в PR): коммиты, которых нет в базе, и файлы, изменённые относительно merge-base; по умолчанию база — upstream текущей ветки, затем `origin/HEAD`, затем `origin/main`, затем `main`. Клик по коммиту открывает его в `History`.
 
 Дерево строится в renderer (`fileTree.ts`, без запросов к core) из плоских путей `git status`/`git diff`/`files.list`, поэтому одинаково работает для изменений, коммита, сравнения веток и файлов проекта. `Files` показывает tracked и untracked-файлы без ignored (`git ls-files --cached --others --exclude-standard`, лимит 5000); клик открывает read-only превью (первые 512 КБ, бинарные — без текста) с подсветкой Shiki, путь проверяется на принадлежность workspace.
+
+Ветка — состояние git, а не задачи: `git.status` остаётся единственным источником правды для панели `Git`, шапки и статусбара, а core при каждом чтении статуса и после успешного `git.checkout` переносит её в `tasks.branch`. Поэтому `tasks.branch` — зеркало для сайдбара, палитры, уведомлений и перезапуска, а исходная ветка задачи живёт отдельно в `tasks.base_ref`; detached HEAD (`HEAD`) зеркало не перезаписывает.
 
 Pull не создаёт merge-коммитов: при расхождении возвращается `pull_not_fast_forward`, и пользователь решает сам. Push после amend сначала идёт обычным путём, а `--force-with-lease` предлагается только после отклонения и явного подтверждения. Переключение ветки и discard — действия пользователя с подтверждением dirty-изменений в UI; Nest по-прежнему не сбрасывает main checkout сам.
 
@@ -576,6 +642,8 @@ PR и checks в MVP нет. Если появятся позже, это отд�
 - Windows long paths (>260) — включить long path support, предупреждать в настройках;
 - file locks (antivirus, editor) — `git worktree remove` может упасть; предложить `Force delete` и повторить;
 - dirty worktree — удаление возвращает `workspace_dirty` со списком файлов; UI сначала спрашивает подтверждение и только потом передаёт `force: true`;
+- удаление задачи — единый lifecycle: сначала подтверждённая остановка PTY (`sessions_not_stopped` при таймауте), затем `git worktree remove`. Успешный exit-код Git не считается доказательством: строка `tasks` удаляется только когда путь исчез с диска **и** больше не значится в `git worktree list --porcelain`. Ошибка Git или `git status` — `worktree_remove_failed` / `worktree_status_failed` с путём, stderr и подсказкой для повтора; задача, сессии и комментарии остаются. `git worktree prune` выполняется только когда путь уже отсутствует, но регистрация осталась, и после него регистрация перепроверяется; ветки Nest не удаляет;
+- удаление проекта — останавливает и ждёт все PTY задач проекта, включая main checkout; при неподтверждённой остановке проект и все строки остаются. После подтверждённой остановки удаляются только записи (задачи, сессии, комментарии, настройки), а checkout и worktree остаются на диске и не регистрируются заново при повторном добавлении проекта; `git worktree remove` для удаления проекта Nest не запускает;
 - submodules и LFS — не поддерживаем в MVP, показываем предупреждение;
 - detached HEAD в worktree-задаче — задача не создаётся, показываем ошибку;
 - detached HEAD в main checkout — работать можно, но показываем предупреждение и не даём создать worktree-задачу от «detached» base;
@@ -595,21 +663,24 @@ PR и checks в MVP нет. Если появятся позже, это отд�
 
 - `task_id`, `file_path`, `side` (`old`/`new`), `line`, `end_line` (`end_line = line` для одной строки);
 - `anchor_text` — текст прокомментированного блока (строки с обрезанными хвостовыми пробелами, склеенные через `\n`);
+- `anchor_mode`, `anchor_base`, `anchor_staged` — сравнение, против которого написана заметка (тот же descriptor, что показал Diff);
 - `body`, `status` (`open`/`resolved`).
 
 UI:
 
 - `+` на строке открывает композер; Shift+клик по `+` другой строки той же стороны расширяет диапазон, выбранные строки подсвечиваются;
 - комментарий рендерится inline под последней строкой диапазона; в заголовке `file:line-endLine`;
-- можно resolve/reopen, удалить, отправить в активную сессию;
+- можно редактировать текст, resolve/reopen, удалить, отправить в активную сессию или отправить все открытые заметки вне патча одним действием;
+- заметки делятся на три области: строки текущего patch (inline), `stale` (текст якоря пропал) и «Outside this patch» — реальные заметки, чей hunk сейчас не в этом сравнении; они сгруппированы по причине (staged / committed / another mode / file not in this diff / outside the hunks) с видимыми счётчиками, и из этой области заметку можно открыть, отправить, отредактировать и resolve.
 - если якорь не найден, комментарий помечается stale и показывается в начале файла (или под синтетической шапкой, если файла уже нет в диффе).
 
 Re-anchor:
 
-1. При создании core читает содержимое нужной стороны (`new` — файл в workspace, `old` — `git show HEAD:<path>`) и сохраняет `anchor_text` блока.
+1. При создании core читает содержимое нужной стороны **того сравнения, что показал Diff** (`anchor_mode`/`anchor_base`/`anchor_staged`): `unstaged` — old из индекса (`git show :0:<path>`), new из workspace; `staged` — old `HEAD`, new из индекса; `base` — old base ref, new из workspace; `both` — по признаку `staged` строки. Захардкоженного `HEAD` для old больше нет: у частично staged файла old-side якорь цитирует индекс.
 2. `comments.list` перед возвратом сверяет якорь с текущим содержимым: если текст на прежней строке не совпадает, он ищется по всему файлу.
 3. Единственное или ближайшее к прежней позиции совпадение — это новая строка; core обновляет `line`/`end_line` в БД, `updated_at` не трогает.
 4. Совпадений нет — комментарий возвращается со `stale: true`, номера остаются как подсказка; если текст вернётся, stale снимется сам.
+5. `comments.list` принимает режим, который смотрит панель, и возвращает каждой заметке `placement`: `inline`, `stale` или `outside` с причиной (`staged`, `committed`, `other_mode`, `file_not_in_diff`, `not_in_patch`). Решение принимает core: только он читает git. Заметка, чей hunk ушёл из текущего patch, остаётся в списке и отправляется как обычная.
 
 Отправка:
 
@@ -628,7 +699,14 @@ Should we also cover the negative quantity case here?
 
 - предпочтительно bracketed paste (`ESC[200~ ... ESC[201~`), если harness/терминал это поддерживает;
 - fallback — записать текст и завершить `\r` (как обычный ввод);
-- если сессия `running`, предупредить, что текст может встать в очередь; если `exited` — «Copy to clipboard» / «Start session», без скрытой отправки.
+- если сессия `running`, предупредить, что текст может встать в очередь; если `exited` — «Copy to clipboard» / «Start session» без скрытой отправки.
+
+Режим вставки берётся из реестра: `HarnessRegistry.inputMode(harnessId)` и `buildPaste` (`packages/core/src/harness/paste.ts`):
+
+- `bracketed-paste` (агентские TUI: claude, codex, opencode, pi, copilot, zcode, qwen, fake) — `ESC[200~` + текст + `ESC[201~` + один `\r`;
+- `line` (shell, dsh, custom — профили без подтверждённой поддержки bracketed paste) — без escape-последовательностей, каждая непустая строка завершается `\r`, то есть отправляется отдельно.
+
+Если живой сессии нет, `comments.send` возвращает `sent: false` с причиной и готовым текстом: панель показывает сообщение и копирует заметку в clipboard, ничего не теряя.
 
 Ограничения MVP:
 
@@ -704,7 +782,10 @@ Custom-команда задаётся в настройках (⚙ в стат�
     cursorBlink: boolean;
     theme: 'nest' | 'solarized' | 'paper';
   };
+  worktreeRoot: string;
+  copyEnvFiles: boolean;
   updateFeedUrl: string;
+  updatesEnabled: boolean;
   newSessionDefault: HarnessId | 'ask';
 }
 ```
@@ -752,7 +833,7 @@ nest hook --event stop --session $NEST_SESSION_ID
 | Что | Где |
 |---|---|
 | БД | `app.getPath('userData')/nest.db` |
-| Worktrees | `~/Nest/worktrees/<project-slug>/<task-slug>` (настраивается) |
+| Worktrees | `worktreeRoot` из настроек, по умолчанию `~/Nest/worktrees` (`NEST_WORKTREES_ROOT` перекрывает путь по умолчанию); `/<project>-<id8>/<task-slug>`, суффикс — первые 8 hex id проекта. Новый корень применяется к новым задачам, старые пути не мигрируются, непригодный каталог даёт `worktree_root_unusable` |
 | Main checkout | путь самого проекта (без копии) |
 | Логи сессий | `userData/sessions/<session-id>.log` |
 | Snapshots | `userData/sessions/<session-id>.snapshot` |
@@ -807,7 +888,7 @@ CREATE TABLE sessions (
   exit_code          INTEGER,
   scrollback_path    TEXT,
   harness_session_id TEXT,
-  resume_mode        TEXT NOT NULL DEFAULT 'latest',
+  resume_mode        TEXT NOT NULL DEFAULT 'latest', -- exact / heuristic / latest
   last_activity_at   INTEGER
 );
 
@@ -850,7 +931,7 @@ CREATE TABLE settings (
 - комментарии к diff восстанавливаются из SQLite и заново привязываются к file/line;
 - сессии со статусом `running`/`idle` помечаем `exited` — в MVP PTY не переживает закрытие приложения;
 - scrollback восстанавливаем из snapshot/log;
-- `harness_session_id` и `resume_mode` позволяют продолжить именно эту беседу; без id остаётся latest-fallback.
+- `harness_session_id` и `resume_mode` (`exact` / `heuristic` / `latest`) позволяют продолжить именно эту беседу; без id остаётся latest-fallback. Миграция 7 понижает ранее сохранённые `exact` до `heuristic` (они получены каталогом, а не подтверждены процессом) и оставляет один id на проект.
 
 ## 10. Структура репозитория
 
@@ -906,11 +987,12 @@ nest/
 - `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`;
 - renderer не имеет доступа к `fs`, `child_process`, `ipcRenderer`;
 - все IPC-входы валидируются zod;
-- пути нормализуются и проверяются на префикс project/worktree;
+- `nest:rpc` принимает вызов только от top-frame окна Nest, чей URL совпадает с URL приложения (`main/boundaries.ts`); остальное — `untrusted_sender`. `setWindowOpenHandler` не открывает окон, `will-navigate`/`will-frame-navigate`/`will-redirect` на чужой документ блокируются;
+- пути, по которым core читает файлы (якоря комментариев, копирование `.env`), разрешаются через `realpath` и проверяются физически, а не по префиксу строки: symlink/junction наружу даёт `path_outside_workspace` (`packages/core/src/paths.ts`);
 - команды запускаются только из реестра harness; custom-профиль добавляет пользователь;
 - текст комментариев рендерится как plain text, без HTML/Markdown-инъекций;
 - CSP: `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'`;
-- внешние ссылки — только через `shell.openExternal` после подтверждения;
+- внешние ссылки — только через `shell.openExternal` и только после единого allowlist (`http:`, `https:`, `mailto:`) в `main/boundaries.ts`; этот же allowlist использует обработчик открытия окон;
 - автообновление — HTTPS;
 - секреты не храним; env наследуем от пользователя, токены harness — их дело;
 - логи не содержат env и токены.
@@ -1000,11 +1082,12 @@ Windows-first:
 
 ### 14.1 Auto-update
 
-Обновления работают только в упакованной сборке (`app.isPackaged`), в dev и e2e — отключены (`NEST_DISABLE_UPDATES=1` для принудительного отключения). Источник — статический каталог с `latest.yml` и установщиком (generic provider), URL задаётся в Settings → Updates и хранится в `app_settings.updateFeedUrl`; `NEST_UPDATE_URL` перекрывает настройку для экспериментов. Публичный feed обязан быть HTTPS — обновление исполняет скачанный установщик; HTTP допускается только для loopback при локальной проверке.
+Обновления работают только в упакованной сборке (`app.isPackaged`), в dev и e2e — отключены (`NEST_DISABLE_UPDATES=1` для принудительного отключения). Источник — статический каталог с `latest.yml` и установщиком (generic provider), URL задаётся в Settings → Updates и хранится в `app_settings.updateFeedUrl` (пустое значение = встроенный GitHub Releases feed); `NEST_UPDATE_URL` перекрывает настройку для экспериментов. Выключатель `app_settings.updatesEnabled` (по умолчанию `true`) полностью прекращает проверки: статус `disabled`, текущий run устаревает, артефакт сбрасывается. Публичный feed обязан быть HTTPS — обновление исполняет скачанный установщик; HTTP допускается только для loopback при локальной проверке.
 
-- main: `UpdateService` в `apps/desktop/src/main/updates.ts`; первый check через 20 с после старта, дальше раз в 6 часов; `autoDownload = true`, `autoInstallOnAppQuit = true`;
+- main: `UpdateService` в `apps/desktop/src/main/updates.ts`; первый check через 20 с после старта, дальше раз в 6 часов; `autoDownload = true`, `autoInstallOnAppQuit = false` — установщик запускает только `updates.install`, чтобы на выходе не сработал артефакт от прежнего feed;
 - контракт: `updates.status` / `updates.check` / `updates.install` и событие `updates:status`; renderer показывает статус в Settings и бейдж «Update ready» в статусбаре;
-- при сохранении нового feed URL `settings.update` сразу запускает проверку, не дожидаясь таймера;
+- статус, проверка, загрузка и скачанный артефакт привязаны к feed URL, который их породил. Смена URL прерывает загрузку (CancellationToken) или помечает текущий run устаревшим, снимает его подписки на события, очищает артефакт и публикует `idle`; новый check стартует, когда updater освободился (события и результат устаревшего run игнорируются). `updates.install` требует артефакт именно текущего feed, файл на диске и отсутствие активного run, иначе `update_not_ready`;
+- при сохранении нового feed URL или включении выключателя `settings.update` вызывает `UpdateService.applySettings()` и сразу запускает проверку, не дожидаясь таймера;
 - `pnpm dist` после `electron-builder` вызывает `scripts/make-latest-yml.mjs`, который считает sha512/size установщика и пишет `latest.yml`; `.blockmap` создаёт electron-builder для дифференциальных обновлений;
 - `quitAndInstall` перезапускает Nest и тем самым завершает PTY-сессии — это ожидаемо при установке обновления.
 

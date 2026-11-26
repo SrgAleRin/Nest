@@ -56,7 +56,12 @@ describe('harness session discovery', () => {
     );
 
     const discovery = new HarnessDiscovery({ homeDir: home, env: {} });
-    await expect(discovery.find('codex', repo, since())).resolves.toBe('codex-new');
+    await expect(discovery.find('codex', repo, since())).resolves.toMatchObject({
+      id: 'codex-new',
+      confidence: 'exact',
+      reason: 'unique_after_launch',
+      candidates: 1,
+    });
   });
 
   it('finds a pi session by its recorded cwd', async () => {
@@ -72,7 +77,7 @@ describe('harness session discovery', () => {
     );
 
     const discovery = new HarnessDiscovery({ homeDir: home, env: {} });
-    await expect(discovery.find('pi', repo, since())).resolves.toBe('pi-1');
+    await expect(discovery.find('pi', repo, since())).resolves.toMatchObject({ id: 'pi-1' });
   });
 
   it('finds a Copilot workspace by cwd', async () => {
@@ -84,7 +89,9 @@ describe('harness session discovery', () => {
     );
 
     const discovery = new HarnessDiscovery({ homeDir: home, env: {} });
-    await expect(discovery.find('copilot', repo, since())).resolves.toBe('copilot-uuid');
+    await expect(discovery.find('copilot', repo, since())).resolves.toMatchObject({
+      id: 'copilot-uuid',
+    });
   });
 
   it('finds a Claude transcript by cwd or encoded project directory', async () => {
@@ -97,7 +104,9 @@ describe('harness session discovery', () => {
     );
 
     const discovery = new HarnessDiscovery({ homeDir: home, env: {} });
-    await expect(discovery.find('claude', repo, since())).resolves.toBe('claude-uuid');
+    await expect(discovery.find('claude', repo, since())).resolves.toMatchObject({
+      id: 'claude-uuid',
+    });
   });
 
   it('finds the newest Qwen chat under the encoded project directory', async () => {
@@ -114,18 +123,20 @@ describe('harness session discovery', () => {
       homeDir: path.join(root, 'qwen-default-home'),
       env: { QWEN_HOME: qwenHome },
     });
-    await expect(discovery.find('qwen', repo, since())).resolves.toBe('qwen-new');
+    await expect(discovery.find('qwen', repo, since())).resolves.toMatchObject({ id: 'qwen-new' });
 
     const runtimeDiscovery = new HarnessDiscovery({
       homeDir: path.join(root, 'qwen-default-home'),
       env: { QWEN_RUNTIME_DIR: qwenHome },
     });
-    await expect(runtimeDiscovery.find('qwen', repo, since())).resolves.toBe('qwen-new');
+    await expect(runtimeDiscovery.find('qwen', repo, since())).resolves.toMatchObject({
+      id: 'qwen-new',
+    });
 
     // A missing encoded project directory returns null instead of scanning every project.
     await expect(
       discovery.find('qwen', path.join(root, 'missing-repo'), since()),
-    ).resolves.toBeNull();
+    ).resolves.toMatchObject({ id: null, reason: 'no_candidates' });
   });
 
   it('asks OpenCode for recent sessions and picks the newest for cwd', async () => {
@@ -145,7 +156,11 @@ describe('harness session discovery', () => {
       },
     });
 
-    await expect(discovery.find('opencode', repo, since())).resolves.toBe('ses-new');
+    await expect(discovery.find('opencode', repo, since())).resolves.toMatchObject({
+      id: 'ses-new',
+      confidence: 'exact',
+      reason: 'unique_after_launch',
+    });
   });
 
   it('can match a continued OpenCode conversation by last activity', async () => {
@@ -162,7 +177,11 @@ describe('harness session discovery', () => {
 
     await expect(
       discovery.find('opencode', repo, since(), { includeUpdated: true }),
-    ).resolves.toBe('ses-resumed');
+    ).resolves.toMatchObject({
+      id: 'ses-resumed',
+      confidence: 'heuristic',
+      reason: 'continued_latest',
+    });
   });
 
   it('reads fake harness sessions only when a directory is configured', async () => {
@@ -182,13 +201,123 @@ describe('harness session discovery', () => {
       homeDir: path.join(root, 'fake-home'),
       env: { NEST_FAKE_SESSION_DIR: fakeDir },
     });
-    await expect(discovery.find('fake', repo, since())).resolves.toBe('fake-new');
+    await expect(discovery.find('fake', repo, since())).resolves.toMatchObject({ id: 'fake-new' });
 
     const withoutDir = new HarnessDiscovery({
       homeDir: path.join(root, 'fake-home'),
       env: {},
     });
-    await expect(withoutDir.find('fake', repo, since())).resolves.toBeNull();
+    await expect(withoutDir.find('fake', repo, since())).resolves.toMatchObject({ id: null });
+  });
+
+  it('never treats two conversations for one cwd as proof of ownership', async () => {
+    const now = Date.now();
+    const discovery = new HarnessDiscovery({
+      homeDir: path.join(root, 'parallel-home'),
+      env: {},
+      run: async () =>
+        JSON.stringify([
+          { id: 'ses-tab-a', directory: repo, created: now - 400, updated: now - 400 },
+          { id: 'ses-tab-b', directory: repo, created: now - 100, updated: now - 100 },
+        ]),
+    });
+
+    await expect(discovery.find('opencode', repo, since())).resolves.toMatchObject({
+      id: null,
+      confidence: 'heuristic',
+      reason: 'ambiguous_candidates',
+      candidates: 2,
+    });
+  });
+
+  it('prefers the conversation the launched process named itself', async () => {
+    const now = Date.now();
+    const discovery = new HarnessDiscovery({
+      homeDir: path.join(root, 'reported-home'),
+      env: {},
+      run: async () =>
+        JSON.stringify([
+          { id: 'ses-tab-a', directory: repo, created: now - 400, updated: now - 400 },
+          { id: 'ses-tab-b', directory: repo, created: now - 100, updated: now - 100 },
+        ]),
+    });
+
+    await expect(
+      discovery.find('opencode', repo, since(), {
+        processOutput: '[32mopencode[0m session ses-tab-a ready',
+      }),
+    ).resolves.toMatchObject({
+      id: 'ses-tab-a',
+      confidence: 'exact',
+      reason: 'process_reported',
+    });
+  });
+
+  it('does not trust timestamps while another tab uses the workspace', async () => {
+    const now = Date.now();
+    const discovery = new HarnessDiscovery({
+      homeDir: path.join(root, 'sibling-home'),
+      env: {},
+      run: async () =>
+        JSON.stringify([{ id: 'ses-only', directory: repo, created: now, updated: now }]),
+    });
+
+    await expect(
+      discovery.find('opencode', repo, since(), { hasSiblingSession: true }),
+    ).resolves.toMatchObject({ id: null, reason: 'ambiguous_candidates', candidates: 1 });
+  });
+
+  it('ignores a conversation another tab already claimed', async () => {
+    const now = Date.now();
+    const discovery = new HarnessDiscovery({
+      homeDir: path.join(root, 'claimed-home'),
+      env: {},
+      run: async () =>
+        JSON.stringify([{ id: 'ses-taken', directory: repo, created: now, updated: now }]),
+    });
+
+    await expect(
+      discovery.find('opencode', repo, since(), { claimedIds: ['ses-taken'] }),
+    ).resolves.toMatchObject({ id: null, reason: 'claimed_elsewhere', candidates: 1 });
+  });
+
+  it('ignores a conversation created a moment before the tab started', async () => {
+    const fakeDir = path.join(root, 'fresh-sessions');
+    writeFile(
+      path.join(fakeDir, 'other-tab.json'),
+      JSON.stringify({ id: 'other-tab', cwd: repo }),
+      1_000,
+    );
+
+    const discovery = new HarnessDiscovery({
+      homeDir: path.join(root, 'fresh-home'),
+      env: { NEST_FAKE_SESSION_DIR: fakeDir },
+    });
+    // A fresh launch has no clock slack: the conversation already existed.
+    await expect(discovery.find('fake', repo, new Date())).resolves.toMatchObject({
+      id: null,
+      reason: 'no_candidates',
+    });
+  });
+
+  it('keeps a single continued conversation heuristic, never exact', async () => {
+    const now = Date.now();
+    const discovery = new HarnessDiscovery({
+      homeDir: path.join(root, 'continued-home'),
+      env: {},
+      run: async () =>
+        JSON.stringify([
+          { id: 'ses-continued', directory: repo, created: now - 3_600_000, updated: now },
+        ]),
+    });
+
+    await expect(
+      discovery.find('opencode', repo, since(), { includeUpdated: true }),
+    ).resolves.toMatchObject({
+      id: 'ses-continued',
+      confidence: 'heuristic',
+      reason: 'continued_latest',
+    });
   });
 
   it('ignores conversations older than the Nest session', async () => {
@@ -201,6 +330,9 @@ describe('harness session discovery', () => {
     );
 
     const discovery = new HarnessDiscovery({ homeDir: home, env: {} });
-    await expect(discovery.find('pi', repo, since())).resolves.toBeNull();
+    await expect(discovery.find('pi', repo, since())).resolves.toMatchObject({
+      id: null,
+      reason: 'no_candidates',
+    });
   });
 });
