@@ -1002,8 +1002,9 @@ Windows-first:
 
 Обновления работают только в упакованной сборке (`app.isPackaged`), в dev и e2e — отключены (`NEST_DISABLE_UPDATES=1` для принудительного отключения). Источник — статический каталог с `latest.yml` и установщиком (generic provider), URL задаётся в Settings → Updates и хранится в `app_settings.updateFeedUrl`; `NEST_UPDATE_URL` перекрывает настройку для экспериментов. Публичный feed обязан быть HTTPS — обновление исполняет скачанный установщик; HTTP допускается только для loopback при локальной проверке.
 
-- main: `UpdateService` в `apps/desktop/src/main/updates.ts`; первый check через 20 с после старта, дальше раз в 6 часов; `autoDownload = true`, `autoInstallOnAppQuit = true`;
+- main: `UpdateService` в `apps/desktop/src/main/updates.ts`; первый check через 20 с после старта, дальше раз в 6 часов; `autoDownload = true`, `autoInstallOnAppQuit = false` — установщик запускает только `updates.install`, чтобы на выходе не сработал артефакт от прежнего feed;
 - контракт: `updates.status` / `updates.check` / `updates.install` и событие `updates:status`; renderer показывает статус в Settings и бейдж «Update ready» в статусбаре;
+- статус, проверка, загрузка и скачанный артефакт привязаны к feed URL, который их породил. Смена URL прерывает загрузку (CancellationToken) или помечает текущий run устаревшим, снимает его подписки на события, очищает артефакт и публикует `idle`; новый check стартует, когда updater освободился (события и результат устаревшего run игнорируются). `updates.install` требует артефакт именно текущего feed, файл на диске и отсутствие активного run, иначе `update_not_ready`;
 - при сохранении нового feed URL `settings.update` сразу запускает проверку, не дожидаясь таймера;
 - `pnpm dist` после `electron-builder` вызывает `scripts/make-latest-yml.mjs`, который считает sha512/size установщика и пишет `latest.yml`; `.blockmap` создаёт electron-builder для дифференциальных обновлений;
 - `quitAndInstall` перезапускает Nest и тем самым завершает PTY-сессии — это ожидаемо при установке обновления.
