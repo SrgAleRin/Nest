@@ -64,7 +64,7 @@ beforeAll(async () => {
   projectId = project.id;
   checkoutId = core.tasks.ensureCheckout(projectId).id;
 
-  const task = await core.tasks.create({ projectId, title: 'diff modes', baseBranch: 'main' });
+  const task = await core.tasks.create({ projectId, title: 'diff modes', baseRef: 'main' });
   worktreeId = task.id;
   workspace = task.workspacePath;
 

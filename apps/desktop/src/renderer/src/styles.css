@@ -433,6 +433,16 @@ code,
   flex: 0 0 auto;
 }
 
+.task-warn-action {
+  background: none;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.task-warn-action:hover {
+  border-color: var(--amber);
+}
+
 .unread-badge {
   flex: 0 0 auto;
   min-width: 15px;
@@ -460,6 +470,39 @@ code,
   font-size: 10px;
   font-style: italic;
   color: var(--dim);
+}
+
+/* Row for a creation that is still running; lives in the tree, not the modal. */
+.task-row.pending {
+  gap: 6px;
+  padding: 5px 6px;
+  color: var(--muted);
+}
+
+.task-step {
+  flex: 0 0 auto;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dim);
+  font: 9px var(--mono);
+}
+
+.task-spinner {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid rgba(122, 162, 247, 0.25);
+  border-top-color: var(--blue);
+  border-radius: 50%;
+  animation: task-spin 0.9s linear infinite;
+}
+
+@keyframes task-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .session-row {
@@ -2695,6 +2738,64 @@ code,
   align-self: center;
   color: var(--dim);
   font-size: 10.5px;
+}
+
+/* What the dialog will create: project, location, branch, path, base ref. */
+.task-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: #0b0f15;
+}
+
+.task-facts > div {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.task-facts dt {
+  color: var(--dim);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.task-facts dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--text);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.task-facts code {
+  font: 10px var(--mono);
+  color: #9aa6b8;
+}
+
+.modal-note {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.modal-note.warn {
+  border: 1px solid rgba(224, 175, 104, 0.4);
+  background: rgba(224, 175, 104, 0.08);
+  color: var(--amber);
+}
+
+.modal-note.error {
+  border: 1px solid rgba(247, 118, 142, 0.4);
+  background: rgba(247, 118, 142, 0.08);
+  color: #f7768e;
 }
 
 .settings-modal {

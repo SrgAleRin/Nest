@@ -6,6 +6,13 @@ export const ProjectSchema = z.object({
   name: z.string().min(1),
   path: z.string().min(1),
   setupScript: z.string().nullable(),
+  /**
+   * Base ref new tasks branch from: `origin/HEAD` when it exists, otherwise the
+   * branch that was checked out when the project was registered. Resolved once
+   * and stored, so a later checkout of another branch never moves it. Null only
+   * for rows registered before the column existed; those resolve on first use.
+   */
+  defaultBaseRef: z.string().min(1).nullable(),
   createdAt: z.string().min(1),
 });
 export type Project = z.infer<typeof ProjectSchema>;

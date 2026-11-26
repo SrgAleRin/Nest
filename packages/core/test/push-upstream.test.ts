@@ -98,7 +98,7 @@ describe('task branch publication', () => {
     const task = await core.tasks.create({
       projectId,
       title: 'First push',
-      baseBranch: 'origin/main',
+      baseRef: 'origin/main',
       setupScript: null,
     });
     expect(task.branch).toBe('nest/first-push');

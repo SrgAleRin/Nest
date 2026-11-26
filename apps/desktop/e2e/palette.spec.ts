@@ -71,6 +71,7 @@ test('navigates tasks, actions and starts a harness from the palette', async () 
       const response = await window.nest!.invoke('tasks.create', {
         projectId,
         title: 'Palette navigation',
+        operationId: `palette-${Date.now()}`,
       });
       if (!response.ok) throw new Error(response.error.message);
       return response.data;

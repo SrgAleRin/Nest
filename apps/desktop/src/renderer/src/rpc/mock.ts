@@ -34,6 +34,7 @@ export function createMockClient(): NestClient {
       name: 'nest-demo',
       path: 'D:\\dev\\nest-demo',
       setupScript: 'pnpm install',
+      defaultBaseRef: 'origin/main',
       createdAt: now,
     },
   ];
@@ -563,6 +564,7 @@ export function createMockClient(): NestClient {
           name: path.split(/[\\/]/).pop() ?? 'project',
           path,
           setupScript: null,
+          defaultBaseRef: 'origin/main',
           createdAt: new Date().toISOString(),
         };
         projects.push(project);
@@ -606,20 +608,41 @@ export function createMockClient(): NestClient {
         if (!checkout) throw new Error('checkout not found');
         return { ...checkout };
       }
+      case 'tasks.preview': {
+        const project = projects.find((candidate) => candidate.id === params.projectId);
+        if (!project) throw new Error('project not found');
+        const title = String(params.title ?? '').trim();
+        const slug = title ? title.toLowerCase().replace(/[^a-z0-9]+/g, '-') : '';
+        const explicit = params.baseRef ? String(params.baseRef) : null;
+        return {
+          branch: slug ? `nest/${slug}` : null,
+          slug: slug || null,
+          workspacePath: slug ? `D:\\dev\\nest-worktrees\\nest-demo\\${slug}` : null,
+          baseRef: explicit ?? project.defaultBaseRef,
+          baseSource: explicit ? ('explicit' as const) : ('project' as const),
+          baseAvailable: true,
+        };
+      }
       case 'tasks.create': {
         const id = `task-${tasks.length + 1}`;
         const title = String(params.title ?? 'new task');
         const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+        const operationId = String(params.operationId);
         const project = projects.find((candidate) => candidate.id === params.projectId);
         if (project && params.setupScript !== undefined) {
           project.setupScript = params.setupScript ? String(params.setupScript) : null;
         }
         const progressProjectId = String(params.projectId);
-        emit({ type: 'task:progress', projectId: progressProjectId, step: 'fetch' });
+        emit({ type: 'task:progress', operationId, projectId: progressProjectId, step: 'fetch' });
         await new Promise((resolve) => setTimeout(resolve, 120));
-        emit({ type: 'task:progress', projectId: progressProjectId, step: 'worktree' });
+        emit({
+          type: 'task:progress',
+          operationId,
+          projectId: progressProjectId,
+          step: 'worktree',
+        });
         await new Promise((resolve) => setTimeout(resolve, 120));
-        emit({ type: 'task:progress', projectId: progressProjectId, step: 'setup' });
+        emit({ type: 'task:progress', operationId, projectId: progressProjectId, step: 'setup' });
         await new Promise((resolve) => setTimeout(resolve, 120));
         const task: Task = {
           id,
@@ -628,7 +651,7 @@ export function createMockClient(): NestClient {
           slug,
           title,
           branch: `nest/${slug}`,
-          baseRef: 'origin/main',
+          baseRef: params.baseRef ? String(params.baseRef) : 'origin/main',
           workspacePath: `D:\\dev\\nest-worktrees\\nest-demo\\${slug}`,
           status: 'active',
           setupError: null,
@@ -636,8 +659,17 @@ export function createMockClient(): NestClient {
           updatedAt: new Date().toISOString(),
         };
         tasks.push(task);
+        emit({
+          type: 'task:operation',
+          operationId,
+          projectId: progressProjectId,
+          state: 'done',
+          taskId: id,
+        });
         return task;
       }
+      case 'tasks.abort':
+        return { aborted: false };
       case 'tasks.remove': {
         const index = tasks.findIndex((task) => task.id === params.taskId);
         if (index >= 0) tasks.splice(index, 1);

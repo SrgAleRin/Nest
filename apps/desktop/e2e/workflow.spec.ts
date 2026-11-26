@@ -78,7 +78,10 @@ test.beforeAll(() => {
   writeFileSync(path.join(repoPath, 'README.md'), '# demo\n', 'utf8');
   writeFileSync(path.join(repoPath, 'notes.md'), 'one\ntwo\n', 'utf8');
   git(['add', '.'], repoPath);
-  git(['-c', 'user.name=Nest', '-c', 'user.email=nest@example.com', 'commit', '-m', 'init'], repoPath);
+  git(
+    ['-c', 'user.name=Nest', '-c', 'user.email=nest@example.com', 'commit', '-m', 'init'],
+    repoPath,
+  );
   git(['remote', 'add', 'origin', originPath], repoPath);
   git(['push', '-u', 'origin', 'main'], repoPath);
   git(['config', 'branch.autoSetupMerge', 'true'], repoPath);
@@ -110,8 +113,13 @@ test('task workflow: UI creation, staged review, note, commit, first push, resta
   await page.getByRole('button', { name: 'New task' }).first().click();
   const dialog = page.locator('.modal');
   await expect(dialog).toBeVisible();
-  await dialog.getByPlaceholder('Fix terminal reconnect').fill('Audit workflow');
-  await dialog.getByPlaceholder('current branch, or origin/main after fetch').fill('origin/main');
+  await dialog.getByLabel('Title').fill('Audit workflow');
+  await dialog.getByLabel('Base branch').fill('origin/main');
+  // The dialog shows the concrete branch, path and effective base before
+  // anything is created.
+  await expect(dialog.locator('[data-testid="preview-branch"]')).toHaveText('nest/audit-workflow');
+  await expect(dialog.locator('[data-testid="preview-path"]')).toContainText('audit-workflow');
+  await expect(dialog.locator('[data-testid="preview-base"]')).toContainText('origin/main');
   await dialog.getByRole('button', { name: 'Create task' }).click();
   await expect(page.locator('.sidebar')).toContainText('Audit workflow', { timeout: 60_000 });
 
@@ -130,6 +138,22 @@ test('task workflow: UI creation, staged review, note, commit, first push, resta
   expect(
     gitOrNull(['rev-parse', '--abbrev-ref', `${createdTask.branch}@{upstream}`], repoPath),
   ).toBeNull();
+
+  // --- Create & start: the harness chosen in the dialog starts by itself ----
+  await page.getByRole('button', { name: 'New task' }).first().click();
+  const startDialog = page.locator('.modal');
+  await expect(startDialog).toBeVisible();
+  await startDialog.getByLabel('Title').fill('Started on create');
+  await startDialog.getByLabel('Agent').selectOption('fake');
+  await startDialog.getByRole('button', { name: 'Create & start' }).click();
+  await expect(page.locator('.modal')).toHaveCount(0, { timeout: 60_000 });
+  // No picker: the session of the new task is already running.
+  await expect(page.locator('.terminal-view.active .xterm-rows')).toContainText('FakeHarness', {
+    timeout: 60_000,
+  });
+
+  // Back to the first task for the rest of the pass.
+  await page.locator('.task-row', { hasText: 'Audit workflow' }).locator('.task-select').click();
 
   // --- run the fake harness in the task ------------------------------------
   await startHarness(page, 'fake');
@@ -203,7 +227,15 @@ test('task workflow: UI creation, staged review, note, commit, first push, resta
 
   await expect(page.locator('.sidebar')).toContainText('Audit workflow', { timeout: 30_000 });
 
-  // --- delete the task through the UI -------------------------------------
+  // --- delete the tasks through the UI ------------------------------------
+  // The `Create & start` task goes first so the leftover check below sees no
+  // sessions at all; deleting it also stops the session it started.
+  page.once('dialog', (confirm) => void confirm.accept());
+  await page.locator('.task-row', { hasText: 'Started on create' }).locator('.task-remove').click();
+  await expect(page.locator('.sidebar')).not.toContainText('Started on create', {
+    timeout: 30_000,
+  });
+
   page.once('dialog', (confirm) => void confirm.accept());
   await page.locator('.task-row', { hasText: 'Audit workflow' }).locator('.task-remove').click();
   await expect(page.locator('.sidebar')).not.toContainText('Audit workflow', { timeout: 30_000 });

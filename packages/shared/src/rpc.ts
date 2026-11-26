@@ -36,6 +36,23 @@ export type AppInfo = z.infer<typeof AppInfoSchema>;
 const id = z.string().min(1);
 const empty = z.object({});
 
+/**
+ * What the New Task dialog shows before anything is created: the branch, the
+ * worktree path and the base ref `tasks.create` would actually use. `branch`,
+ * `slug` and `workspacePath` are null while the title is still empty.
+ */
+export const TaskPreviewSchema = z.object({
+  branch: z.string().min(1).nullable(),
+  slug: z.string().min(1).nullable(),
+  workspacePath: z.string().min(1).nullable(),
+  baseRef: z.string().min(1).nullable(),
+  /** `explicit` from the dialog, `project` from the stored default, `current` as a last resort. */
+  baseSource: z.enum(['explicit', 'project', 'current']),
+  /** False when the ref does not exist locally or as a remote-tracking branch. */
+  baseAvailable: z.boolean(),
+});
+export type TaskPreview = z.infer<typeof TaskPreviewSchema>;
+
 export const rpcMethods = {
   'app.info': { params: empty, result: AppInfoSchema },
 
@@ -61,14 +78,35 @@ export const rpcMethods = {
     params: z.object({ projectId: id.optional() }),
     result: z.array(TaskSchema),
   },
+  'tasks.preview': {
+    params: z.object({
+      projectId: id,
+      title: z.string().trim().max(200).optional(),
+      /** Overrides the project default, exactly like `tasks.create`. */
+      baseRef: z.string().min(1).max(250).optional(),
+    }),
+    result: TaskPreviewSchema,
+  },
   'tasks.create': {
     params: z.object({
       projectId: id,
       title: z.string().trim().min(1).max(200),
-      baseBranch: z.string().min(1).optional(),
+      /** Overrides the project default base ref. */
+      baseRef: z.string().min(1).max(250).optional(),
       setupScript: z.string().max(2000).nullable().optional(),
+      /** Renderer-generated handle for `task:progress` and `tasks.abort`. */
+      operationId: z.string().min(1).max(200),
     }),
     result: TaskSchema,
+  },
+  'tasks.abort': {
+    params: z.object({ operationId: z.string().min(1).max(200) }),
+    /**
+     * True when the operation was still running and will roll itself back, or
+     * when it had already finished but its task could be removed again because
+     * no session was started from it.
+     */
+    result: z.object({ aborted: z.boolean() }),
   },
   'tasks.remove': {
     params: z.object({ taskId: id, force: z.boolean().optional() }),
@@ -325,7 +363,21 @@ export type NestEvent =
     }
   | { type: 'session:status'; session: Session }
   | { type: 'task:updated'; task: Task }
-  | { type: 'task:progress'; projectId: string; step: TaskProgressStep }
+  | {
+      type: 'task:progress';
+      /** Matches the id the renderer sent to `tasks.create`. */
+      operationId: string;
+      projectId: string;
+      step: TaskProgressStep;
+    }
+  | {
+      type: 'task:operation';
+      operationId: string;
+      projectId: string;
+      state: 'done' | 'failed' | 'aborted';
+      taskId?: string;
+      message?: string;
+    }
   | { type: 'git:changed'; taskId: string }
   | { type: 'notification'; level: 'info' | 'warn' | 'error'; message: string }
   | { type: 'notification:activated'; sessionId?: string }
