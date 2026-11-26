@@ -1,7 +1,7 @@
 import type { Session } from '@nest/shared';
 import { EmptyState } from '@nest/ui';
 import { StopIcon, TerminalIcon } from './Icons';
-import { relativeTime } from '../utils';
+import { relativeTime, resumeActionLabel, resumeShortLabel, resumeTone } from '../utils';
 
 interface SessionsPanelProps {
   sessions: Session[];
@@ -70,10 +70,18 @@ export function SessionsPanel({
               {session.exitCode !== null ? <span>exit {session.exitCode}</span> : null}
               {!live ? (
                 <span
-                  className={`resume-mode ${session.harnessSessionId ? 'exact' : 'latest'}`}
-                  title={session.harnessSessionId ?? undefined}
+                  className={`resume-mode ${resumeTone(session)}`}
+                  title={
+                    session.harnessSessionId
+                      ? `continues ${session.harnessSessionId}${
+                          resumeTone(session) === 'heuristic'
+                            ? ' (unverified: not resumed automatically)'
+                            : ''
+                        }`
+                      : 'continues the latest conversation in this workspace'
+                  }
                 >
-                  resume {session.harnessSessionId ? 'exact' : 'latest'}
+                  resume {resumeShortLabel(session)}
                 </span>
               ) : null}
               {!live && session.harnessSessionId ? (
@@ -93,9 +101,7 @@ export function SessionsPanel({
                 <>
                   {resumableHarnesses.has(session.harnessId) ? (
                     <button className="mini-btn primary" onClick={() => onResume(session)}>
-                      {session.resumeMode === 'exact' && session.harnessSessionId
-                        ? 'Resume exact'
-                        : 'Resume latest'}
+                      {resumeActionLabel(session)}
                     </button>
                   ) : null}
                   <button className="mini-btn" onClick={() => onNewSession(session)}>

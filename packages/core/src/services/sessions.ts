@@ -6,17 +6,19 @@ import {
   type HarnessId,
   type HarnessProfile,
   type NestEvent,
+  type ResumeMode,
   type Session,
   type SessionStatus,
 } from '@nest/shared';
 import type { Db } from '../db/database.js';
 import { NestError } from '../errors.js';
-import { HarnessDiscovery } from '../harness/discovery.js';
+import { HarnessDiscovery, type DiscoveryResult } from '../harness/discovery.js';
 import { HarnessRegistry } from '../harness/registry.js';
 import { toSession, type SessionRow } from './rows.js';
 import type { TaskService } from './tasks.js';
 
 const MAX_SCROLLBACK = 4 * 1024 * 1024;
+const MAX_PROCESS_OUTPUT = 64 * 1024;
 const IDLE_AFTER_MS = 2000;
 const DISCOVERY_DELAYS = [1000, 2500, 5000, 10_000];
 const DISCOVERY_NUDGE_MS = 1500;
@@ -30,6 +32,8 @@ interface DiscoveryState {
   attempts: number;
   timer: NodeJS.Timeout | null;
   running: boolean;
+  /** Conversation ids we already warned about, so the notification is sent once. */
+  warnedFor: string | null;
 }
 
 interface Runtime {
@@ -40,9 +44,22 @@ interface Runtime {
   stopping: boolean;
   idleTimer: NodeJS.Timeout | null;
   harnessSessionId: string | null;
+  /** The stored id is proven to be this session's own conversation. */
+  exactId: boolean;
+  /** Output of the launched process itself, used as ownership evidence. */
+  processOutput: string;
   discovery: DiscoveryState | null;
   exactResume: boolean;
   startedAt: number;
+}
+
+type BindOutcome = 'bound' | 'kept' | 'claimed';
+
+interface SessionScope {
+  id: string;
+  harnessId: HarnessId;
+  cwd: string;
+  taskId: string;
 }
 
 export interface StartSessionInput {
@@ -120,12 +137,13 @@ export class SessionService {
       discovery: { since: new Date(timestamp), includeUpdated: false },
       exactResume: false,
       harnessSessionId: null,
+      exactId: false,
     });
 
     return this.get(id);
   }
 
-  async resume(sessionId: string): Promise<Session> {
+  async resume(sessionId: string, options: { auto?: boolean } = {}): Promise<Session> {
     const session = this.get(sessionId);
     if (
       this.runtimes.has(sessionId) ||
@@ -139,27 +157,58 @@ export class SessionService {
     // A profile disabled in Settings only disappears from the start pickers:
     // resuming a conversation that already exists must keep working.
     const harness = this.harnesses.get(session.harnessId, { allowDisabled: true });
-    const exactArgs = session.harnessSessionId
-      ? this.harnesses.exactResumeArgs(session.harnessId, session.harnessSessionId)
-      : null;
+    const storedId = session.harnessSessionId;
+    const verified = session.resumeMode === 'exact';
 
-    let extraArgs: string[];
+    if (storedId && this.conversationClaimedByOther(sessionId, storedId) && !options.auto) {
+      throw new NestError(
+        'conversation_claimed',
+        `Conversation ${storedId} already belongs to another tab in this project`,
+      );
+    }
+    // Heuristic ids are only used when the user asks for them explicitly: an
+    // automatic restart must never continue a conversation we could not prove.
+    const useStoredId =
+      storedId !== null &&
+      (verified || !options.auto) &&
+      this.canClaimConversation(sessionId, storedId);
+
+    let extraArgs: string[] | null = null;
     let discovery: { since: Date; includeUpdated: boolean } | undefined;
     let exactResume = false;
 
-    if (exactArgs && exactArgs.length > 0) {
-      extraArgs = exactArgs;
-      exactResume = true;
-    } else if (harness.resumeArgs.length > 0) {
+    if (useStoredId) {
+      const exactArgs = this.harnesses.exactResumeArgs(session.harnessId, storedId);
+      if (exactArgs && exactArgs.length > 0) {
+        extraArgs = exactArgs;
+        exactResume = true;
+      }
+    }
+
+    if (!extraArgs) {
+      if (harness.resumeArgs.length === 0) {
+        throw new NestError(
+          'resume_unsupported',
+          `${harness.label} has no resume command configured yet. Start a new session instead.`,
+        );
+      }
+      // "Continue the latest conversation" picks whatever is newest in this
+      // workspace. With another tab on the same cwd and harness that may be
+      // that tab's conversation, so an automatic resume waits for the user.
+      if (options.auto && this.siblingConversation(session)) {
+        this.db.prepare('UPDATE sessions SET resume_on_start = 0 WHERE id = ?').run(sessionId);
+        this.emit({
+          type: 'notification',
+          level: 'warn',
+          message: `${harness.label}: another tab uses this workspace, so "Resume latest" could open its conversation. Resume this session manually.`,
+        });
+        return this.get(sessionId);
+      }
       extraArgs = harness.resumeArgs;
       // We just continued the newest conversation in this workspace. Give the
-      // CLI a chance to reveal which one it picked so the next resume is exact.
+      // CLI a chance to reveal which one it picked; the result is heuristic
+      // because "latest" is chosen by the CLI, not by us.
       discovery = { since: new Date(), includeUpdated: true };
-    } else {
-      throw new NestError(
-        'resume_unsupported',
-        `${harness.label} has no resume command configured yet. Start a new session instead.`,
-      );
     }
 
     const task = this.tasks.get(session.taskId);
@@ -183,7 +232,8 @@ export class SessionService {
       initialBuffer,
       discovery,
       exactResume,
-      harnessSessionId: exactResume ? session.harnessSessionId : null,
+      harnessSessionId: exactResume ? storedId : null,
+      exactId: exactResume,
     });
 
     return this.get(sessionId);
@@ -201,6 +251,7 @@ export class SessionService {
     discovery?: { since: Date; includeUpdated: boolean };
     exactResume: boolean;
     harnessSessionId: string | null;
+    exactId: boolean;
   }): void {
     const env: Record<string, string> = {};
     for (const [key, value] of Object.entries(process.env)) {
@@ -240,6 +291,8 @@ export class SessionService {
       stopping: false,
       idleTimer: null,
       harnessSessionId: input.harnessSessionId,
+      exactId: input.exactId,
+      processOutput: '',
       discovery: null,
       exactResume: input.exactResume,
       startedAt: Date.now(),
@@ -250,6 +303,7 @@ export class SessionService {
       const active = this.runtimes.get(sessionId);
       if (!active) return;
       active.buffer = (active.buffer + data).slice(-MAX_SCROLLBACK);
+      active.processOutput = (active.processOutput + data).slice(0, MAX_PROCESS_OUTPUT);
       this.emit({ type: 'session:data', sessionId, data });
       if (active.status === 'starting' || active.status === 'idle') {
         this.setStatus(sessionId, 'running');
@@ -412,7 +466,7 @@ export class SessionService {
       .all() as Array<{ id: string }>;
 
     for (const row of rows) {
-      void this.resume(row.id).catch(() => {
+      void this.resume(row.id, { auto: true }).catch(() => {
         this.db.prepare('UPDATE sessions SET resume_on_start = 0 WHERE id = ?').run(row.id);
       });
     }
@@ -442,7 +496,7 @@ export class SessionService {
     includeUpdated: boolean,
   ): void {
     const runtime = this.runtimes.get(sessionId);
-    if (!runtime || runtime.harnessSessionId || runtime.discovery) return;
+    if (!runtime || runtime.exactId || runtime.discovery) return;
     if (!this.harnesses.supportsDiscovery(harnessId)) return;
 
     runtime.discovery = {
@@ -453,6 +507,7 @@ export class SessionService {
       attempts: 0,
       timer: null,
       running: false,
+      warnedFor: null,
     };
     this.runDiscovery(sessionId);
   }
@@ -460,22 +515,43 @@ export class SessionService {
   private runDiscovery(sessionId: string): void {
     const runtime = this.runtimes.get(sessionId);
     const state = runtime?.discovery;
-    if (!runtime || !state || state.running || runtime.harnessSessionId) return;
+    if (!runtime || !state || state.running || runtime.exactId) return;
 
     state.running = true;
     void this.discovery
       .find(state.harnessId, state.cwd, state.since, {
         includeUpdated: state.includeUpdated,
+        processOutput: runtime.processOutput,
+        claimedIds: this.claimedConversationIds(sessionId),
+        hasSiblingSession: this.siblingConversation({
+          id: sessionId,
+          harnessId: state.harnessId,
+          cwd: state.cwd,
+          taskId: runtime.taskId,
+        }),
       })
       .catch(() => null)
-      .then((harnessSessionId) => {
+      .then((result) => {
         const current = this.runtimes.get(sessionId);
         if (!current || current.discovery !== state) return;
         state.running = false;
 
-        if (harnessSessionId) {
-          this.rememberHarnessSession(sessionId, harnessSessionId);
-          return;
+        if (result?.id) {
+          const outcome = this.bindConversation(sessionId, result);
+          if (outcome === 'claimed' && state.warnedFor !== result.id) {
+            state.warnedFor = result.id;
+            this.emit({
+              type: 'notification',
+              level: 'warn',
+              message: `Conversation ${result.id} already belongs to another tab, so this one keeps the "Resume latest" fallback.`,
+            });
+          }
+          // A heuristic binding can still be upgraded to exact once the CLI
+          // prints its id, so keep a few more attempts scheduled.
+          if (outcome !== 'claimed' && result.confidence === 'exact') {
+            this.stopDiscovery(current);
+            return;
+          }
         }
 
         const delay = DISCOVERY_DELAYS[state.attempts];
@@ -498,7 +574,7 @@ export class SessionService {
   private nudgeDiscovery(sessionId: string): void {
     const runtime = this.runtimes.get(sessionId);
     const state = runtime?.discovery;
-    if (!runtime || !state || state.running || runtime.harnessSessionId) return;
+    if (!runtime || !state || state.running || runtime.exactId) return;
 
     if (state.timer) clearTimeout(state.timer);
     state.timer = setTimeout(() => {
@@ -509,18 +585,114 @@ export class SessionService {
     state.timer.unref();
   }
 
-  private rememberHarnessSession(sessionId: string, harnessSessionId: string): void {
+  /**
+   * Stores a discovered conversation id, but only when no other session in the
+   * project already holds it. The claim check lives inside the UPDATE so two
+   * tabs discovering the same conversation cannot both win.
+   */
+  private bindConversation(sessionId: string, result: DiscoveryResult): BindOutcome {
     const runtime = this.runtimes.get(sessionId);
-    if (!runtime) return;
+    const id = result.id;
+    if (!runtime || !id) return 'kept';
 
-    this.stopDiscovery(runtime);
-    runtime.harnessSessionId = harnessSessionId;
-    this.db
+    const exact = result.confidence === 'exact';
+    const mode: ResumeMode = exact ? 'exact' : 'heuristic';
+    if (runtime.harnessSessionId === id) {
+      runtime.exactId = exact;
+      return 'kept';
+    }
+    // A second guess is not better evidence than the first one: only a
+    // process-reported id may replace a heuristic binding.
+    if (runtime.harnessSessionId && !exact) return 'kept';
+    if (!this.canClaimConversation(sessionId, id)) return 'claimed';
+
+    const written = this.db
       .prepare(
-        "UPDATE sessions SET harness_session_id = ?, resume_mode = 'exact', updated_at = ? WHERE id = ?",
+        `UPDATE sessions
+            SET harness_session_id = ?, resume_mode = ?, updated_at = ?
+          WHERE id = ?
+            AND NOT EXISTS (
+              SELECT 1
+                FROM sessions other
+                JOIN tasks other_task ON other_task.id = other.task_id
+                JOIN tasks own_task ON own_task.id = sessions.task_id
+               WHERE other.harness_session_id = ?
+                 AND other.id <> sessions.id
+                 AND other_task.project_id = own_task.project_id
+            )`,
       )
-      .run(harnessSessionId, nowIso(), sessionId);
+      .run(id, mode, nowIso(), sessionId, id);
+    if (Number(written.changes) === 0) return 'claimed';
+
+    runtime.harnessSessionId = id;
+    runtime.exactId = exact;
     this.emitSession(sessionId);
+    return 'bound';
+  }
+
+  /** Conversation ids another session in the same project already owns. */
+  private claimedConversationIds(sessionId: string): string[] {
+    const rows = this.db
+      .prepare(
+        `SELECT other.harness_session_id AS id
+           FROM sessions other
+           JOIN tasks other_task ON other_task.id = other.task_id
+          WHERE other.id <> ?
+            AND other.harness_session_id IS NOT NULL
+            AND other_task.project_id = (SELECT project_id FROM tasks WHERE id = ?)`,
+      )
+      .all(sessionId, this.taskIdOf(sessionId)) as Array<{ id: string }>;
+
+    const ids = rows.map((row) => row.id);
+    for (const [otherId, runtime] of this.runtimes) {
+      if (otherId !== sessionId && runtime.harnessSessionId) ids.push(runtime.harnessSessionId);
+    }
+    return ids;
+  }
+
+  private canClaimConversation(sessionId: string, harnessSessionId: string): boolean {
+    for (const [otherId, runtime] of this.runtimes) {
+      if (otherId !== sessionId && runtime.harnessSessionId === harnessSessionId) return false;
+    }
+    return !this.conversationClaimedByOther(sessionId, harnessSessionId);
+  }
+
+  private conversationClaimedByOther(sessionId: string, harnessSessionId: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1 AS hit
+           FROM sessions other
+           JOIN tasks other_task ON other_task.id = other.task_id
+          WHERE other.id <> ?
+            AND other.harness_session_id = ?
+            AND other_task.project_id = (SELECT project_id FROM tasks WHERE id = ?)
+          LIMIT 1`,
+      )
+      .get(sessionId, harnessSessionId, this.taskIdOf(sessionId));
+    return Boolean(row);
+  }
+
+  /** Another tab runs the same harness in the same workspace. */
+  private siblingConversation(session: SessionScope): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1 AS hit
+           FROM sessions other
+           JOIN tasks other_task ON other_task.id = other.task_id
+          WHERE other.id <> ?
+            AND other.harness_id = ?
+            AND other.cwd = ?
+            AND other_task.project_id = (SELECT project_id FROM tasks WHERE id = ?)
+          LIMIT 1`,
+      )
+      .get(session.id, session.harnessId, session.cwd, session.taskId);
+    return Boolean(row);
+  }
+
+  private taskIdOf(sessionId: string): string {
+    const row = this.db.prepare('SELECT task_id FROM sessions WHERE id = ?').get(sessionId) as
+      { task_id: string } | undefined;
+    return row?.task_id ?? '';
   }
 
   private stopDiscovery(runtime: Runtime): void {
