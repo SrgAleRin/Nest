@@ -36,10 +36,10 @@ export interface LaunchNestOptions {
  * Starts the built app with its state pointed at one temporary root, so a spec
  * never reads or writes the user's own data directory.
  */
-export function launchNest(options: LaunchNestOptions): Promise<ElectronApplication> {
+export async function launchNest(options: LaunchNestOptions): Promise<ElectronApplication> {
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
-  return electron.launch({
+  const app = await electron.launch({
     args: ['.'],
     cwd: appDir,
     env: {
@@ -55,6 +55,27 @@ export function launchNest(options: LaunchNestOptions): Promise<ElectronApplicat
       NEST_DISABLE_UPDATES: '1',
     },
   });
+  // The panel is a column in a wide window and a drawer in a narrow one, and a
+  // spec that leaves the window at its default size would silently test one or
+  // the other depending on the screen. CI runners are 1024 wide, so the size is
+  // asked for instead of inherited; the drawer has its own specs that resize.
+  await app.firstWindow();
+  await app.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0];
+    if (window) window.setSize(1440, 900);
+  });
+  return app;
+}
+
+/** Opens the panel when the window is narrow enough to show the rail instead. */
+export async function openRightPanel(page: Page): Promise<void> {
+  const rail = page.locator('.right-rail');
+  if (await rail.count()) {
+    await page.locator('.rail-toggle').click();
+  }
+  await expect(
+    page.locator('.right-drawer, [data-testid="source-control-panel"]').first(),
+  ).toBeVisible({ timeout: 30_000 });
 }
 
 /**

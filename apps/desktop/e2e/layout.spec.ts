@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { _electron as electron, type ElectronApplication } from 'playwright';
-import { addProject, startHarness } from './helpers';
+import { addProject, openRightPanel, startHarness } from './helpers';
 
 /**
  * The Windows smoke from `docs/right-panel-plan.md` §4, asserted instead of
@@ -221,9 +221,12 @@ test('keeps the shell readable at 1100x700 and in a wide window with the panel o
 });
 
 test('survives 150 % scaling without clipped actions or a horizontal scroll', async () => {
-  const { app, page, root } = await openOnce({ width: 1440, height: 900, scale: 1.5 });
+  // At 150 % the same window keeps roughly two thirds of the CSS pixels, which
+  // is the drawer path for a fractional-scaling user on a small laptop. The
+  // drawer is opened on purpose: that is the layout being checked.
+  const { app, page, root } = await openOnce({ width: 1100, height: 700, scale: 1.5 });
   try {
-    await expect(page.locator('[data-testid="source-control-panel"]')).toBeVisible();
+    await openRightPanel(page);
     const scaled = await shellOverflow(page);
     expect(scaled.horizontal).toBeLessThanOrEqual(1);
     expect(scaled.clipped).toEqual([]);
