@@ -10,7 +10,7 @@
 | ADR-002 | **Windows-first** | Windows 11 — основной таргет CI и ручных тестов; macOS вторичен; Linux best effort |
 | ADR-003 | **Main checkout — singleton-workspace проекта** | можно работать без worktree; один на проект, не удаляется, сессии и git доступны |
 | ADR-004 | **Без daemon в MVP** | Закрытие окна скрывает Nest в трей, PTY продолжают работать; полный выход завершает PTY, а живые сессии автоматически возобновляются через resume harness; scrollback сохраняется |
-| ADR-005 | **Harness-профили MVP** | Claude Code, Codex, DeepSeek Harness, OpenCode, pi, GitHub Copilot CLI, custom |
+| ADR-005 | **Harness-профили MVP** | Claude Code, Codex, DeepSeek Harness, OpenCode, pi, GitHub Copilot CLI, ZCode, Qwen Code, встроенный терминал, custom |
 | ADR-006 | **Комментарии к diff — в MVP** | хранятся в SQLite, привязаны к task/file/line, отправляются в активную PTY-сессию |
 | ADR-007 | **PR-провайдеров нет в MVP** | только commit/push; GitHub/GitLab PR и checks — позже |
 | ADR-008 | **Remote/SSH/mobile — долгий ящик** | `HostAdapter` остаётся тонким и локальным; remote не проектируем |
@@ -404,7 +404,8 @@ pty.onData(chunk)
 - Порядок LRU по выбранной сессии: выбранная поднимается в начало, девятая вытесняется.
 - Вытесненный терминал dispose-ится; PTY продолжает работать, новый вывод копится в scrollback, и при повторном выборе xterm монтируется заново и проигрывает сохранённый scrollback.
 - При переключении задачи не убиваем PTY; скрываем контейнер.
-- При закрытии таба спрашиваем: `Stop session` или `Keep running` (P1).
+- Крестик на вкладке (или средний клик) закрывает её окончательно: PTY останавливается, строка сессии и scrollback удаляются из БД; `Stop` в терминале, наоборот, оставляет сессию для resume.
+- Кнопка `+` открывает новую вкладку, стрелка рядом — общий пикер профилей (Terminal + агенты). Что делает сам `+`, задаёт настройка `newSessionDefault`: `ask` (пикер) или конкретный профиль.
 
 ### 6.6 Жизненный цикл и приложение
 
@@ -414,7 +415,7 @@ pty.onData(chunk)
 - полный выход (**Quit Nest** в меню трея) завершает все PTY-процессы;
 - сессии, которые были живы в этот момент, помечаются `resume_on_start = 1`;
 - при следующем запуске они автоматически возобновляются в тех же вкладках: по сохранённому `harness_session_id` (exact), иначе через `--continue` / `resume --last` (latest);
-- id беседы определяется discovery-адаптером после старта: OpenCode — `session list --format json`, Codex/pi/Claude — свежие JSONL по `cwd`, Copilot — `workspace.yaml`; поиск повторяется после ввода;
+- id беседы определяется discovery-адаптером после старта: OpenCode — `session list --format json`, Codex/pi/Claude/Qwen — свежие JSONL по `cwd`, Copilot — `workspace.yaml`; поиск повторяется после ввода;
 - в БД сессии, завершившиеся сами или остановленные пользователем, помечаются `exited`/`failed`;
 - snapshot/scrollback сохраняется, новый вывод дописывается после маркера `── resume <harness> ──`;
 - для остальных завершённых сессий доступна кнопка `Resume exact` / `Resume latest`; неудачный exact-resume сбрасывает id и оставляет сессию для latest-повтора;
@@ -653,7 +654,7 @@ Diff приходит от core уже разобранным на файлы, �
 
 ```ts
 export interface HarnessProfile {
-  id: HarnessId; // claude | codex | dsh | opencode | pi | copilot | fake | custom
+  id: HarnessId; // claude | codex | dsh | opencode | pi | copilot | zcode | qwen | shell | fake | custom
   label: string;
   description: string;
   command: string;
@@ -674,7 +675,12 @@ export interface HarnessProfile {
 | `opencode` | `opencode` | `--session <id>` / `--continue` |
 | `pi` | `pi` | `--session-id <id>` / `--continue` |
 | `copilot` | `copilot` | `--resume <id>` / `--continue` |
+| `zcode` | `zcode` | `--resume <id>` / `--continue` |
+| `qwen` | `qwen` | `--resume <id>` / `--continue` |
+| `shell` | `$NEST_SHELL`, `pwsh` / `powershell.exe` / `cmd.exe` или `$SHELL` / `bash` | нет |
 | `fake` | `node scripts/fake-harness.mjs` | `--session-id <id>` / `--continue` |
+
+`fake` скрыт из обычных списков и показывается только при заданном `NEST_FAKE_SESSION_DIR` (так делают e2e) или `NEST_ENABLE_FAKE_HARNESS=1`; через `get()` он остаётся доступен уже сохранённым сессиям и тестам. Профиль `shell` запускает обычный терминал в workspace задачи: команда берётся из `NEST_SHELL`, иначе на Windows — первый найденный `pwsh` / `powershell.exe` / `ComSpec`, а на остальных платформах — `$SHELL` или `bash`.
 
 Доступность (`where.exe` / `which`) кешируется на процесс; `harnesses.invalidate()` сбрасывает кеш после смены custom-команды. Неустановленный профиль показывается в настройках как `not found` и не даёт себя запустить, но приложение не падает. Discovery conversation id — `harness/discovery.ts`; для `dsh` он пока не реализован.
 
@@ -683,10 +689,10 @@ Custom-команда задаётся в настройках (⚙ в стат�
 Настройки — одна JSON-строка в таблице `settings` (ключ `app`):
 
 ```ts
-{ disabledHarnesses: HarnessId[], customCommand: string }
+{ disabledHarnesses: HarnessId[], customCommand: string, updateFeedUrl: string, newSessionDefault: HarnessId | 'ask' }
 ```
 
-`disabledHarnesses` скрывает профили из `Start harness…` и стартового экрана; `harness.list` с `includeDisabled: true` возвращает их для диалога настроек. Запуск новой сессии с выключенным профилем даёт `harness_disabled`, но `sessions.resume` продолжает уже существующую беседу (`get(id, { allowDisabled: true })`): выключение — это про выбор в UI, а не про отзыв доступа к разговору.
+`newSessionDefault` решает, что делает кнопка `+` в панели вкладок: `ask` открывает пикер, значение профиля запускает его сразу (стрелка рядом всё равно открывает пикер). `disabledHarnesses` скрывает профили из пикера новой вкладки и стартового экрана; `harness.list` с `includeDisabled: true` возвращает их для диалога настроек. Запуск новой сессии с выключенным профилем даёт `harness_disabled`, но `sessions.resume` продолжает уже существующую беседу (`get(id, { allowDisabled: true })`): выключение — это про выбор в UI, а не про отзыв доступа к разговору.
 
 ### 8.2 Определение статуса
 

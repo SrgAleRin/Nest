@@ -5,6 +5,7 @@ import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { _electron as electron, type ElectronApplication } from 'playwright';
 import type { NestBridge } from '@nest/shared';
+import { openNewTabPicker } from './helpers';
 
 declare global {
   interface Window {
@@ -50,6 +51,7 @@ test('saves harness settings and keeps a disabled harness resumable', async () =
       NEST_USER_DATA: path.join(tempRoot, 'user-data'),
       NEST_DB_PATH: path.join(tempRoot, 'nest.db'),
       NEST_WORKTREES_ROOT: path.join(tempRoot, 'worktrees'),
+      NEST_FAKE_SESSION_DIR: path.join(tempRoot, 'fake-sessions'),
       NEST_DISABLE_SINGLE_INSTANCE: '1',
       NEST_DISABLE_TRAY: '1',
     },
@@ -104,15 +106,13 @@ test('saves harness settings and keeps a disabled harness resumable', async () =
 
     await expect(page.locator('.settings-modal')).toHaveCount(0);
     await expect(page.locator('.toast')).toContainText('Settings saved');
-    await expect(
-      page.locator('.terminal-actions select option', { hasText: 'Custom command' }),
-    ).toHaveCount(1, { timeout: 20_000 });
-
-    const optionLabels = (
-      await page.locator('.terminal-actions select option').allTextContents()
-    ).join('|');
-    expect(optionLabels).not.toContain('Fake harness');
-    expect(optionLabels).toContain('Custom command');
+    await openNewTabPicker(page);
+    await expect(page.locator('[data-harness-id="custom"]')).toBeVisible({ timeout: 20_000 });
+    const itemLabels = (await page.locator('.new-tab-item').allTextContents()).join('|');
+    expect(itemLabels).not.toContain('Fake harness');
+    expect(itemLabels).toContain('Custom command');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.new-tab-menu')).toHaveCount(0);
 
     // The exited session still offers Resume in the UI, even though its
     // profile is gone from the pickers.
@@ -144,6 +144,7 @@ test('saves harness settings and keeps a disabled harness resumable', async () =
       disabledHarnesses: ['fake'],
       customCommand: 'node',
       updateFeedUrl: 'https://updates.example.com/nest/',
+      newSessionDefault: 'ask',
     });
 
     await page.getByRole('button', { name: 'Settings', exact: true }).click();

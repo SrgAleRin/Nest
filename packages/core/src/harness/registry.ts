@@ -90,6 +90,33 @@ export class HarnessRegistry {
         source: 'builtin',
       },
       {
+        id: 'zcode',
+        label: 'ZCode',
+        description: 'Z.ai ZCode CLI',
+        command: 'zcode',
+        args: [],
+        resumeArgs: ['--continue'],
+        source: 'builtin',
+      },
+      {
+        id: 'qwen',
+        label: 'Qwen Code',
+        description: 'Qwen Code CLI',
+        command: 'qwen',
+        args: [],
+        resumeArgs: ['--continue'],
+        source: 'builtin',
+      },
+      {
+        id: 'shell',
+        label: 'Terminal',
+        description: 'Plain shell in the task workspace',
+        command: resolveShellCommand(),
+        args: [],
+        resumeArgs: [],
+        source: 'builtin',
+      },
+      {
         id: 'fake',
         label: 'Fake harness',
         description: 'Built-in deterministic harness for development and e2e',
@@ -108,6 +135,7 @@ export class HarnessRegistry {
   list(options: { includeDisabled?: boolean } = {}): HarnessProfile[] {
     const disabled = this.disabledIds();
     return this.definitions()
+      .filter((definition) => definition.id !== 'fake' || this.fakeEnabled())
       .filter((definition) => options.includeDisabled || !disabled.has(definition.id))
       .map((definition) => this.toProfile(definition));
   }
@@ -153,6 +181,10 @@ export class HarnessRegistry {
         return ['--session-id', sessionId];
       case 'copilot':
         return ['--resume', sessionId];
+      case 'zcode':
+        return ['--resume', sessionId];
+      case 'qwen':
+        return ['--resume', sessionId];
       case 'fake':
         return ['--session-id', sessionId];
       default:
@@ -167,6 +199,7 @@ export class HarnessRegistry {
       case 'opencode':
       case 'pi':
       case 'copilot':
+      case 'qwen':
       case 'fake':
         return true;
       default:
@@ -199,6 +232,12 @@ export class HarnessRegistry {
     return new Set(this.currentSettings().disabledHarnesses);
   }
 
+  private fakeEnabled(): boolean {
+    return (
+      Boolean(process.env.NEST_FAKE_SESSION_DIR) || process.env.NEST_ENABLE_FAKE_HARNESS === '1'
+    );
+  }
+
   private toProfile(definition: Definition): HarnessProfile {
     return {
       id: definition.id,
@@ -223,6 +262,19 @@ export class HarnessRegistry {
     this.cache.set(definition.command, available);
     return available;
   }
+}
+
+function resolveShellCommand(): string {
+  const override = process.env.NEST_SHELL?.trim();
+  if (override) return override;
+
+  if (process.platform === 'win32') {
+    if (commandExists('pwsh')) return 'pwsh';
+    if (commandExists('powershell.exe')) return 'powershell.exe';
+    return process.env.ComSpec || 'cmd.exe';
+  }
+
+  return process.env.SHELL || 'bash';
 }
 
 function commandExists(command: string): boolean {

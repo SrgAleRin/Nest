@@ -3,7 +3,7 @@
 [![CI](https://github.com/SrgAleRin/Nest/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/SrgAleRin/Nest/actions/workflows/ci.yml)
 [![MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Nest — настольное приложение для параллельной работы с CLI-агентами: Claude Code, Codex, DeepSeek Harness, OpenCode, pi, GitHub Copilot CLI и любыми другими командами.
+Nest — настольное приложение для параллельной работы с CLI-агентами: Claude Code, Codex, DeepSeek Harness, OpenCode, pi, GitHub Copilot CLI, ZCode, Qwen Code и любыми другими командами.
 
 Один git-репозиторий, несколько изолированных задач, в каждой — свой терминал с агентом, git-панель и diff с комментариями. Задачи не мешают друг другу: Nest создаёт для каждой отдельный `git worktree` и ветку, а основная рабочая копия остаётся нетронутой.
 
@@ -39,7 +39,7 @@ Nest — настольное приложение для параллельно
 
 1. Нажмите **Add project** и выберите корень git-репозитория. Nest создаст основную рабочую копию и покажет её в дереве.
 2. Нажмите **New task**, чтобы получить изолированный worktree, или выберите основную копию, если хотите работать прямо в ней.
-3. В панели терминала выберите агента в списке **Start harness…**. Если нужной команды нет, установите её и проверьте **Settings**: Nest ищет агентов в `PATH`.
+3. В панели терминала нажмите **+**: плюс открывает новую вкладку (по умолчанию — выбор профиля, можно назначить конкретный в **Settings → New tab**), стрелка рядом всегда показывает список. В нём есть **Terminal** — обычный shell в workspace задачи — и установленные агенты. Если нужной команды нет, установите её и проверьте **Settings**: Nest ищет агентов в `PATH`.
 4. Работайте как обычно. Справа открываются **Git**, **Diff** и **Sessions**.
 
 Закрытие окна прячет Nest в трей. Чтобы завершить приложение и все PTY-процессы, выберите **Quit Nest** в меню трея.
@@ -56,6 +56,9 @@ Nest не встраивает агентов в себя — он запуск�
 | OpenCode           | `opencode` | да, по session id  |
 | pi                 | `pi`       | да, по session id  |
 | GitHub Copilot CLI | `copilot`  | да, по session id  |
+| ZCode              | `zcode`    | да, по session id  |
+| Qwen Code          | `qwen`     | да, по session id  |
+| Терминал           | `$NEST_SHELL` / `pwsh` / `$SHELL` | без resume |
 | Своя команда       | любая      | без resume         |
 
 Если агент не появился в списке, проверьте, что команда доступна в `where <команда>`, и откройте **Settings** заново. Подробности о флагах и совместимости — в [docs/harness-compat.md](docs/harness-compat.md).

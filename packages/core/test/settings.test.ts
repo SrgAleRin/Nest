@@ -8,6 +8,9 @@ import { migrate, openDatabase } from '../src/db/database.js';
 import { HarnessRegistry } from '../src/harness/registry.js';
 import { DEFAULT_SETTINGS, SettingsService } from '../src/services/settings.js';
 
+// The fake harness is hidden from lists unless explicitly enabled for tests.
+process.env.NEST_ENABLE_FAKE_HARNESS = '1';
+
 const fakeHarnessScript = fileURLToPath(
   new URL('../../../scripts/fake-harness.mjs', import.meta.url),
 );
@@ -51,6 +54,7 @@ describe('settings service', () => {
     expect(settings.update({ customCommand: 'agent-2' }).updateFeedUrl).toBe(
       'https://updates.example.com/nest/',
     );
+    expect(settings.update({ newSessionDefault: 'shell' }).newSessionDefault).toBe('shell');
     db.close();
   });
 
@@ -64,6 +68,7 @@ describe('settings service', () => {
       disabledHarnesses: ['fake'],
       customCommand: 'agent',
       updateFeedUrl: '',
+      newSessionDefault: 'ask',
     });
 
     second.db.prepare('UPDATE settings SET value = ? WHERE key = ?').run('{not json', 'app');
@@ -81,6 +86,7 @@ describe('settings service', () => {
       disabledHarnesses: ['fake'],
       customCommand: 'agent',
       updateFeedUrl: '',
+      newSessionDefault: 'ask',
     });
     db.close();
   });
@@ -100,6 +106,25 @@ describe('settings-aware harness registry', () => {
   const registry = new HarnessRegistry({
     fakeHarnessScript,
     getSettings: () => state,
+  });
+
+  it('hides the fake harness unless it is enabled for tests', () => {
+    const enabled = process.env.NEST_ENABLE_FAKE_HARNESS;
+    const sessionDir = process.env.NEST_FAKE_SESSION_DIR;
+    delete process.env.NEST_ENABLE_FAKE_HARNESS;
+    delete process.env.NEST_FAKE_SESSION_DIR;
+
+    try {
+      expect(registry.list({ includeDisabled: true }).some((profile) => profile.id === 'fake')).toBe(
+        false,
+      );
+      expect(registry.get('fake', { allowDisabled: true }).id).toBe('fake');
+    } finally {
+      if (enabled === undefined) delete process.env.NEST_ENABLE_FAKE_HARNESS;
+      else process.env.NEST_ENABLE_FAKE_HARNESS = enabled;
+      if (sessionDir === undefined) delete process.env.NEST_FAKE_SESSION_DIR;
+      else process.env.NEST_FAKE_SESSION_DIR = sessionDir;
+    }
   });
 
   it('hides disabled profiles but keeps them for settings and resume', () => {

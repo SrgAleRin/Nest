@@ -37,7 +37,8 @@ export function SessionsPanel({
   if (sessions.length === 0) {
     return (
       <EmptyState title="No sessions yet">
-        Start a harness from the terminal toolbar. Sessions are killed when the app exits.
+        Start a session with the plus button above the terminal. Sessions are killed when the app
+        exits.
       </EmptyState>
     );
   }

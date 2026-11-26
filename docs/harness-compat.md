@@ -19,8 +19,14 @@ Nest запускает harness как обычный CLI в PTY. Поэтому
 | OpenCode | `opencode` | `opencode` | PTY | `opencode --session <id>` / `opencode --continue` | generic | tested: exact resume проверен вручную |
 | pi | `pi` | `pi` | PTY | `pi --session-id <id>` / `pi --continue` | generic | supported |
 | GitHub Copilot CLI | `copilot` | `copilot` | PTY | `copilot --resume <id>` / `copilot --continue` | generic | supported |
-| Blank terminal | `shell` | `$SHELL` / `pwsh` | PTY | — | — | tested |
+| ZCode | `zcode` | `zcode` | PTY | `zcode --resume <id>` / `zcode --continue` | generic | supported |
+| Qwen Code | `qwen` | `qwen` | PTY | `qwen --resume <id>` / `qwen --continue` | generic | supported |
+| Blank terminal | `shell` | `$NEST_SHELL` / `pwsh` / `$SHELL` | PTY | — | — | tested |
 | Custom | `custom` | любая | PTY | — | — | generic |
+
+`fake` — служебный профиль для e2e и разработки; в обычных списках он скрыт и появляется только при заданном `NEST_FAKE_SESSION_DIR` или `NEST_ENABLE_FAKE_HARNESS=1`. Через `get()` он остаётся доступен уже сохранённым сессиям и тестам.
+
+Для `shell` команда резолвится так: `NEST_SHELL`, если задан; на Windows — `pwsh` при наличии в `PATH`, иначе `powershell.exe`, иначе `ComSpec`/`cmd.exe`; на остальных платформах — `$SHELL` или `bash`.
 
 ## Resume в Nest
 
@@ -39,7 +45,7 @@ Nest запускает harness как обычный CLI в PTY. Поэтому
 
 ### Как определяется id беседы
 
-После старта сессии Nest запускает discovery-адаптер: OpenCode — через `opencode session list --format json`, Codex/pi/Claude — по свежим JSONL в домашней директории CLI, Copilot — по `workspace.yaml`. Совпадение проверяется по `cwd` и времени создания, побеждает самая новая беседа.
+После старта сессии Nest запускает discovery-адаптер: OpenCode — через `opencode session list --format json`, Codex/pi/Claude — по свежим JSONL в домашней директории CLI, Qwen — по `~/.qwen/projects/<sanitized-cwd>/chats/*.jsonl` (учитываются `QWEN_HOME` и `QWEN_RUNTIME_DIR`), Copilot — по `workspace.yaml`. Совпадение проверяется по `cwd` и времени создания, побеждает самая новая беседа.
 
 Поиск повторяется с backoff, а также после ввода в терминал: большинство CLI создают беседу только после первого промпта. Когда id найден, сессия получает `resume_mode = exact`; иначе остаётся `latest`.
 
@@ -103,7 +109,7 @@ Claude не блокирует MVP: профиль можно выпустить
 Свой CLI подключается в **Settings** (⚙ в статусбаре):
 
 - поле **Custom command** — имя исполняемого файла на `PATH` или полный путь; аргументов нет, процесс стартует в workspace задачи;
-- пустое поле убирает профиль из `Start harness…` и стартового экрана;
+- пустое поле убирает профиль из пикера новой вкладки и стартового экрана;
 - встроенные профили выключаются чекбоксами: они пропадают из выбора, но уже существующие сессии продолжают возобновляться;
 - список показывает `found` / `not found` — так видно, что команда действительно находится в `PATH`.
 

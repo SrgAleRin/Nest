@@ -71,6 +71,8 @@ export class HarnessDiscovery {
         return this.findCopilot(cwd, sinceMs);
       case 'claude':
         return this.findClaude(cwd, sinceMs);
+      case 'qwen':
+        return this.findQwen(cwd, sinceMs);
       case 'fake':
         return this.findFake(cwd, sinceMs);
       default:
@@ -228,6 +230,19 @@ export class HarnessDiscovery {
     return null;
   }
 
+  private async findQwen(cwd: string, sinceMs: number): Promise<string | null> {
+    const base =
+      this.env.QWEN_HOME || this.env.QWEN_RUNTIME_DIR || path.join(this.homeDir, '.qwen');
+    const projectDir = path.join(base, 'projects', encodeQwenCwd(cwd));
+    if (!(await directoryExists(projectDir))) return null;
+
+    const files = await recentFiles(path.join(projectDir, 'chats'), sinceMs, (candidate) =>
+      candidate.path.endsWith('.jsonl'),
+    );
+    const newest = files[0];
+    return newest ? path.basename(newest.path, '.jsonl') : null;
+  }
+
   private async findFake(cwd: string, sinceMs: number): Promise<string | null> {
     const root = this.env.NEST_FAKE_SESSION_DIR;
     if (!root) return null;
@@ -263,6 +278,18 @@ export function normalizeCwd(value: string): string {
 
 function encodeCwd(cwd: string): string {
   return normalizeCwd(cwd).replace(/[^a-z0-9]/g, '-');
+}
+
+function encodeQwenCwd(cwd: string): string {
+  return normalizeCwd(cwd).replace(/[^a-zA-Z0-9]/g, '-');
+}
+
+async function directoryExists(dirPath: string): Promise<boolean> {
+  try {
+    return (await fs.stat(dirPath)).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 async function recentFiles(

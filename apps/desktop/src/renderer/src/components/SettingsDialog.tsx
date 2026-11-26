@@ -5,6 +5,7 @@ import {
   type HarnessId,
   type HarnessProfile,
   type NestClient,
+  type NewSessionDefault,
   type UpdateStatus,
 } from '@nest/shared';
 import { Button } from '@nest/ui';
@@ -23,6 +24,7 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
   const [disabled, setDisabled] = useState<Set<string>>(new Set());
   const [customCommand, setCustomCommand] = useState('');
   const [updateFeedUrl, setUpdateFeedUrl] = useState('');
+  const [newSessionDefault, setNewSessionDefault] = useState<NewSessionDefault>('ask');
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -52,6 +54,7 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
       setDisabled(new Set(settings.disabledHarnesses));
       setCustomCommand(settings.customCommand);
       setUpdateFeedUrl(settings.updateFeedUrl);
+      setNewSessionDefault(settings.newSessionDefault);
       if (status) setUpdateStatus(status);
     } catch (loadError) {
       if (aliveRef.current) setError(errorMessage(loadError));
@@ -93,6 +96,7 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
         disabledHarnesses: [...disabled] as HarnessId[],
         customCommand: customCommand.trim(),
         updateFeedUrl: updateFeedUrl.trim(),
+        newSessionDefault,
       });
       onSaved(settings);
     } catch (saveError) {
@@ -191,6 +195,36 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
                   );
                 })}
               </div>
+            </div>
+
+            <div className="settings-section">
+              <span className="section-label">New tab</span>
+              <label className="field">
+                <span>Plus button starts</span>
+                <select
+                  className="settings-select"
+                  value={newSessionDefault}
+                  onChange={(event) =>
+                    setNewSessionDefault(event.target.value as NewSessionDefault)
+                  }
+                >
+                  <option value="ask">Ask every time</option>
+                  {profiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.label}
+                      {disabled.has(profile.id)
+                        ? ' (disabled)'
+                        : profile.available
+                          ? ''
+                          : ' (not found)'}
+                    </option>
+                  ))}
+                </select>
+                <small className="field-hint">
+                  The plus button starts this profile directly. The arrow next to it always opens
+                  the full picker. A disabled or missing default opens the picker instead.
+                </small>
+              </label>
             </div>
 
             <label className="field">

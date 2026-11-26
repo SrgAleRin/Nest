@@ -8,6 +8,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   disabledHarnesses: [],
   customCommand: '',
   updateFeedUrl: '',
+  newSessionDefault: 'ask',
 };
 
 /**
@@ -58,5 +59,6 @@ function normalize(settings: AppSettings): AppSettings {
     customCommand: settings.customCommand.trim(),
     disabledHarnesses: [...new Set(settings.disabledHarnesses)],
     updateFeedUrl: settings.updateFeedUrl.trim(),
+    newSessionDefault: settings.newSessionDefault,
   };
 }

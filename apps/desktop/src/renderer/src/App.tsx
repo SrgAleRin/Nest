@@ -508,6 +508,31 @@ export function App() {
     [client, notify],
   );
 
+  const closeSession = useCallback(
+    async (session: Session) => {
+      try {
+        await client.invoke('sessions.close', { sessionId: session.id });
+        const remaining = sessions.filter((candidate) => candidate.id !== session.id);
+        setSessions(remaining);
+        setSelectedSessionId((current) => {
+          if (current !== session.id) return current;
+          if (remaining.length === 0) return null;
+          const index = sessions.findIndex((candidate) => candidate.id === session.id);
+          return remaining[Math.min(Math.max(index, 0), remaining.length - 1)]?.id ?? null;
+        });
+        setUnread((prev) => {
+          if (!(session.id in prev)) return prev;
+          const next = { ...prev };
+          delete next[session.id];
+          return next;
+        });
+      } catch (error) {
+        notify('error', errorMessage(error));
+      }
+    },
+    [client, notify, sessions],
+  );
+
   const selectSession = useCallback(
     (sessionId: string) => {
       const session = sessions.find((candidate) => candidate.id === sessionId);
@@ -812,6 +837,8 @@ export function App() {
           busy={busy}
           onSelectSession={setSelectedSessionId}
           onStart={(harnessId) => void startSession(harnessId)}
+          onCloseSession={(session) => void closeSession(session)}
+          newSessionDefault={settings?.newSessionDefault ?? 'ask'}
           onResume={(session) => void resumeSession(session)}
           onNewSession={restartSession}
           resumableHarnesses={resumableHarnesses}

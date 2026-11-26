@@ -192,6 +192,7 @@ export const rpcMethods = {
     result: z.void(),
   },
   'sessions.stop': { params: z.object({ sessionId: id }), result: z.void() },
+  'sessions.close': { params: z.object({ sessionId: id }), result: z.void() },
   'sessions.resume': { params: z.object({ sessionId: id }), result: SessionSchema },
   'sessions.resize': {
     params: z.object({

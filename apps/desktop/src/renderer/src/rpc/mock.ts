@@ -66,8 +66,8 @@ export function createMockClient(): NestClient {
     {
       id: 'session-fake',
       taskId: 'task-checkout',
-      harnessId: 'fake',
-      title: 'Fake harness 1',
+      harnessId: 'claude',
+      title: 'Claude Code 1',
       status: 'idle',
       cwd: 'D:\\dev\\nest-demo',
       exitCode: null,
@@ -79,8 +79,8 @@ export function createMockClient(): NestClient {
     {
       id: 'session-old',
       taskId: 'task-term',
-      harnessId: 'fake',
-      title: 'Fake harness 1',
+      harnessId: 'claude',
+      title: 'Claude Code 1',
       status: 'exited',
       cwd: 'D:\\dev\\nest-worktrees\\nest-demo\\terminal-reconnect',
       exitCode: 0,
@@ -128,13 +128,33 @@ export function createMockClient(): NestClient {
       source: 'builtin',
     },
     {
-      id: 'fake',
-      label: 'Fake harness',
-      description: 'Built-in deterministic harness for development and e2e',
-      command: 'node',
-      args: ['scripts/fake-harness.mjs'],
-      resumeArgs: ['--continue'],
+      id: 'shell',
+      label: 'Terminal',
+      description: 'Plain shell in the task workspace',
+      command: 'bash',
+      args: [],
+      resumeArgs: [],
       available: true,
+      source: 'builtin',
+    },
+    {
+      id: 'zcode',
+      label: 'ZCode',
+      description: 'Z.ai ZCode CLI',
+      command: 'zcode',
+      args: [],
+      resumeArgs: ['--continue'],
+      available: false,
+      source: 'builtin',
+    },
+    {
+      id: 'qwen',
+      label: 'Qwen Code',
+      description: 'Qwen Code CLI',
+      command: 'qwen',
+      args: [],
+      resumeArgs: ['--continue'],
+      available: false,
       source: 'builtin',
     },
   ];
@@ -143,6 +163,7 @@ export function createMockClient(): NestClient {
     disabledHarnesses: [],
     customCommand: '',
     updateFeedUrl: '',
+    newSessionDefault: 'ask',
   };
 
   const updateStatus = (): UpdateStatus => ({
@@ -433,6 +454,10 @@ export function createMockClient(): NestClient {
             typeof params.updateFeedUrl === 'string'
               ? params.updateFeedUrl.trim()
               : settings.updateFeedUrl,
+          newSessionDefault:
+            params.newSessionDefault === undefined
+              ? settings.newSessionDefault
+              : (params.newSessionDefault as AppSettings['newSessionDefault']),
         };
         return settings;
       }
@@ -536,7 +561,7 @@ export function createMockClient(): NestClient {
         const session: Session = {
           id: `session-${sessions.length + 1}`,
           taskId: String(params.taskId),
-          harnessId: harness?.id ?? 'fake',
+          harnessId: harness?.id ?? 'shell',
           title: `${harness?.label ?? 'Harness'} ${sessions.length + 1}`,
           status: 'running',
           cwd: task?.workspacePath ?? '',
@@ -569,6 +594,10 @@ export function createMockClient(): NestClient {
           session.updatedAt = new Date().toISOString();
           emit({ type: 'session:status', session: { ...session } });
         }
+        return undefined;
+      }
+      case 'sessions.close': {
+        sessions = sessions.filter((candidate) => candidate.id !== params.sessionId);
         return undefined;
       }
       case 'sessions.resume': {

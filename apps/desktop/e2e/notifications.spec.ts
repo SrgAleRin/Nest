@@ -55,6 +55,7 @@ test('marks finished sessions unread and routes notification clicks', async () =
       // Keep the developer's notification center quiet; the toggle is also the
       // switch the renderer observes through `shown`.
       NEST_DISABLE_NOTIFICATIONS: '1',
+      NEST_ENABLE_FAKE_HARNESS: '1',
     },
   });
 

@@ -353,6 +353,29 @@ export class SessionService {
     }
   }
 
+  /**
+   * Closes a tab for good: stops the PTY when it is alive and deletes the
+   * session row with its scrollback. Closing is intentionally different from
+   * Stop, which keeps the row so the conversation can be resumed.
+   */
+  close(sessionId: string): void {
+    this.get(sessionId);
+    const runtime = this.runtimes.get(sessionId);
+    if (runtime) {
+      if (runtime.idleTimer) clearTimeout(runtime.idleTimer);
+      this.stopDiscovery(runtime);
+      runtime.stopping = true;
+      // onExit must not persist or broadcast a session that no longer exists.
+      this.runtimes.delete(sessionId);
+      try {
+        runtime.pty.kill();
+      } catch {
+        // already gone
+      }
+    }
+    this.db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
+  }
+
   stopForTask(taskId: string): void {
     for (const runtime of this.runtimes.values()) {
       if (runtime.taskId === taskId) {

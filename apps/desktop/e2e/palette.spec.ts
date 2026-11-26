@@ -50,6 +50,7 @@ test('navigates tasks, actions and starts a harness from the palette', async () 
       NEST_USER_DATA: path.join(tempRoot, 'user-data'),
       NEST_DB_PATH: path.join(tempRoot, 'nest.db'),
       NEST_WORKTREES_ROOT: path.join(tempRoot, 'worktrees'),
+      NEST_FAKE_SESSION_DIR: path.join(tempRoot, 'fake-sessions'),
       NEST_DISABLE_SINGLE_INSTANCE: '1',
       NEST_DISABLE_TRAY: '1',
       NEST_DISABLE_NOTIFICATIONS: '1',

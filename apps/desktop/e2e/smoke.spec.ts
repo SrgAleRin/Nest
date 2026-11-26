@@ -5,6 +5,7 @@ import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { _electron as electron, type ElectronApplication } from 'playwright';
 import type { NestBridge } from '@nest/shared';
+import { startHarness } from './helpers';
 
 declare global {
   interface Window {
@@ -74,7 +75,7 @@ test('runs the fake harness, persists scrollback and recovers after restart', as
   await expect(page.locator('.project-name')).toHaveText('demo-repo');
   await expect(page.locator('.task-kind-main')).toBeVisible();
 
-  await page.locator('.select').selectOption('fake');
+  await startHarness(page, 'fake');
   await expect(page.locator('.terminal-tab')).toContainText('Fake harness', { timeout: 30_000 });
   await expect(page.locator('.xterm-rows')).toContainText('FakeHarness', { timeout: 30_000 });
 

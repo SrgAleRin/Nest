@@ -25,6 +25,11 @@ function since(): Date {
   return new Date(Date.now() - 10_000);
 }
 
+function encodeQwen(cwd: string): string {
+  const normalized = process.platform === 'win32' ? cwd.toLowerCase() : cwd;
+  return normalized.replace(/[^a-zA-Z0-9]/g, '-');
+}
+
 describe('harness session discovery', () => {
   it('treats equivalent cwd spellings as the same path', () => {
     expect(samePath(repo, repo + path.sep)).toBe(true);
@@ -93,6 +98,34 @@ describe('harness session discovery', () => {
 
     const discovery = new HarnessDiscovery({ homeDir: home, env: {} });
     await expect(discovery.find('claude', repo, since())).resolves.toBe('claude-uuid');
+  });
+
+  it('finds the newest Qwen chat under the encoded project directory', async () => {
+    const qwenHome = path.join(root, 'qwen-home');
+    const chatsDir = path.join(qwenHome, 'projects', encodeQwen(repo), 'chats');
+    writeFile(path.join(chatsDir, 'qwen-old.jsonl'), '{}\n', 60 * 60_000);
+    writeFile(path.join(chatsDir, 'qwen-new.jsonl'), '{}\n');
+    writeFile(
+      path.join(qwenHome, 'projects', encodeQwen(otherRepo), 'chats', 'qwen-other.jsonl'),
+      '{}\n',
+    );
+
+    const discovery = new HarnessDiscovery({
+      homeDir: path.join(root, 'qwen-default-home'),
+      env: { QWEN_HOME: qwenHome },
+    });
+    await expect(discovery.find('qwen', repo, since())).resolves.toBe('qwen-new');
+
+    const runtimeDiscovery = new HarnessDiscovery({
+      homeDir: path.join(root, 'qwen-default-home'),
+      env: { QWEN_RUNTIME_DIR: qwenHome },
+    });
+    await expect(runtimeDiscovery.find('qwen', repo, since())).resolves.toBe('qwen-new');
+
+    // A missing encoded project directory returns null instead of scanning every project.
+    await expect(
+      discovery.find('qwen', path.join(root, 'missing-repo'), since()),
+    ).resolves.toBeNull();
   });
 
   it('asks OpenCode for recent sessions and picks the newest for cwd', async () => {

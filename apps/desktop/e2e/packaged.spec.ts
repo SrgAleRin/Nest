@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { _electron as electron } from 'playwright';
+import { startHarness } from './helpers';
 
 /**
  * Smoke test for the packaged application (pnpm dist output). It proves that
@@ -96,7 +97,7 @@ test('the packaged app starts, runs a PTY and keeps its database', async () => {
 
   // The fake harness is launched from resources/fake-harness.mjs, so a broken
   // extraResources copy fails right here.
-  await page.locator('.select').selectOption('fake');
+  await startHarness(page, 'fake');
   await expect(page.locator('.xterm-rows')).toContainText('FakeHarness', { timeout: 60_000 });
 
   await page.locator('.xterm-helper-textarea').focus();

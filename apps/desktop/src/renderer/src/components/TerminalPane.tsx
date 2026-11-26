@@ -5,7 +5,13 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
 import type { HarnessProfile, NestClient, Session, Task } from '@nest/shared';
 import { Button, EmptyState } from '@nest/ui';
-import { PlayIcon, TerminalIcon } from './Icons';
+import {
+  ChevronIcon,
+  CloseIcon,
+  PlayIcon,
+  PlusIcon,
+  TerminalIcon,
+} from './Icons';
 import { onSessionData } from '../state/terminalBus';
 import { errorMessage } from '../utils';
 
@@ -38,6 +44,9 @@ interface TerminalPaneProps {
   busy: boolean;
   onSelectSession: (sessionId: string) => void;
   onStart: (harnessId: string) => void;
+  onCloseSession: (session: Session) => void;
+  /** Harness started by the plus button without opening the picker, or `ask`. */
+  newSessionDefault: string;
   onResume: (session: Session) => void;
   onNewSession: (session: Session) => void;
   resumableHarnesses: ReadonlySet<string>;
@@ -75,10 +84,25 @@ export function TerminalPane(props: TerminalPaneProps) {
       <div className="terminal-tabs">
         <div className="terminal-tab-list">
           {sessions.map((session) => (
-            <button
+            <div
               key={session.id}
+              role="tab"
+              aria-selected={session.id === selectedSessionId}
+              tabIndex={0}
               className={`terminal-tab ${session.id === selectedSessionId ? 'selected' : ''}`}
               onClick={() => props.onSelectSession(session.id)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  props.onSelectSession(session.id);
+                }
+              }}
+              onAuxClick={(event) => {
+                if (event.button === 1) {
+                  event.preventDefault();
+                  props.onCloseSession(session);
+                }
+              }}
               title={`${session.harnessId} · ${session.status}`}
             >
               <span className={`dot dot-${session.status}`} />
@@ -89,29 +113,32 @@ export function TerminalPane(props: TerminalPaneProps) {
                 </span>
               ) : null}
               {session.status === 'failed' ? <span className="tab-exit">!</span> : null}
-            </button>
+              <button
+                type="button"
+                className="terminal-tab-close"
+                aria-label={`Close ${session.title}`}
+                title="Close tab (stops the session)"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  props.onCloseSession(session);
+                }}
+              >
+                <CloseIcon size={10} />
+              </button>
+            </div>
           ))}
           {sessions.length === 0 ? <span className="terminal-tab-muted">no sessions</span> : null}
         </div>
 
         <div className="terminal-actions">
-          <select
-            className="select"
-            value=""
-            disabled={!task || props.busy}
-            onChange={(event) => {
-              const value = event.target.value;
-              if (value) props.onStart(value);
-            }}
-          >
-            <option value="">{props.busy ? 'Starting…' : 'Start harness…'}</option>
-            {props.harnesses.map((harness) => (
-              <option key={harness.id} value={harness.id} disabled={!harness.available}>
-                {harness.label}
-                {harness.available ? '' : ' (not found)'}
-              </option>
-            ))}
-          </select>
+          <NewTabControl
+            harnesses={props.harnesses}
+            busy={props.busy}
+            disabled={!task}
+            defaultId={props.newSessionDefault}
+            onStart={props.onStart}
+            onOpenSettings={props.onOpenSettings}
+          />
         </div>
       </div>
 
@@ -165,6 +192,141 @@ export function TerminalPane(props: TerminalPaneProps) {
   );
 }
 
+function NewTabControl({
+  harnesses,
+  busy,
+  disabled,
+  defaultId,
+  onStart,
+  onOpenSettings,
+}: {
+  harnesses: HarnessProfile[];
+  busy: boolean;
+  disabled: boolean;
+  defaultId: string;
+  onStart: (harnessId: string) => void;
+  onOpenSettings: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('mousedown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('mousedown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  // Terminal first, agents after it; the registry order is kept otherwise.
+  const ordered = [...harnesses].sort((left, right) => {
+    if (left.id === 'shell') return -1;
+    if (right.id === 'shell') return 1;
+    return 0;
+  });
+  const terminal = ordered.find((harness) => harness.id === 'shell') ?? null;
+  const agents = ordered.filter((harness) => harness.id !== 'shell');
+  const defaultHarness = harnesses.find((harness) => harness.id === defaultId) ?? null;
+
+  const start = (harnessId: string) => {
+    setOpen(false);
+    onStart(harnessId);
+  };
+
+  const startDefault = () => {
+    if (defaultId !== 'ask' && defaultHarness?.available) start(defaultHarness.id);
+    else setOpen((current) => !current);
+  };
+
+  const renderItem = (harness: HarnessProfile) => (
+    <button
+      key={harness.id}
+      type="button"
+      role="menuitem"
+      className="new-tab-item"
+      data-harness-id={harness.id}
+      disabled={busy || !harness.available}
+      onClick={() => start(harness.id)}
+      title={harness.available ? harness.description : `${harness.command} was not found on PATH`}
+    >
+      <span className="new-tab-item-icon">
+        <TerminalIcon size={13} />
+      </span>
+      <span className="new-tab-item-text">
+        <strong>{harness.label}</strong>
+        <em>{harness.available ? harness.description : 'Not found on PATH'}</em>
+      </span>
+      {!harness.available ? <span className="new-tab-item-badge">not found</span> : null}
+    </button>
+  );
+
+  return (
+    <div className="terminal-new" ref={rootRef}>
+      <button
+        type="button"
+        className="terminal-new-main"
+        disabled={disabled || busy}
+        onClick={startDefault}
+        title={
+          defaultId === 'ask'
+            ? 'New tab'
+            : `New ${defaultHarness?.label ?? 'session'} (right arrow for other profiles)`
+        }
+        aria-label="New tab"
+      >
+        <PlusIcon size={14} />
+      </button>
+      <button
+        type="button"
+        className="terminal-new-caret"
+        disabled={disabled || busy}
+        onClick={() => setOpen((current) => !current)}
+        title="Choose what to open"
+        aria-label="Choose what to open"
+        aria-expanded={open}
+      >
+        <ChevronIcon size={10} />
+      </button>
+
+      {open ? (
+        <div className="new-tab-menu" role="menu" aria-label="New tab">
+          <div className="new-tab-heading">Terminal</div>
+          {terminal ? renderItem(terminal) : null}
+          <div className="new-tab-heading">Agents</div>
+          {agents.length > 0 ? (
+            agents.map(renderItem)
+          ) : (
+            <div className="new-tab-empty">No agent profiles are enabled.</div>
+          )}
+          <div className="new-tab-foot">
+            <span>
+              Default: {defaultId === 'ask' ? 'ask every time' : (defaultHarness?.label ?? defaultId)}
+            </span>
+            <button
+              type="button"
+              className="link-btn"
+              onClick={() => {
+                setOpen(false);
+                onOpenSettings();
+              }}
+            >
+              Change
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function StartScreen({
   harnesses,
   busy,
@@ -178,16 +340,22 @@ function StartScreen({
   onStart: (harnessId: string) => void;
   onOpenSettings: () => void;
 }) {
-  const available = harnesses.filter((harness) => harness.available);
+  const available = harnesses
+    .filter((harness) => harness.available)
+    .sort((left, right) => {
+      if (left.id === 'shell') return -1;
+      if (right.id === 'shell') return 1;
+      return 0;
+    });
   return (
     <div className="start-screen">
       <div className="start-icon">
         <TerminalIcon size={22} />
       </div>
-      <h2>Start a harness</h2>
+      <h2>Start an agent or a terminal</h2>
       <p>
-        The session runs inside this task workspace and dies with the app. Scrollback and metadata
-        are stored locally.
+        A session runs inside this task workspace and dies with the app. Scrollback and metadata are
+        stored locally. Use the plus button above to open more tabs at any time.
       </p>
       <div className="start-grid">
         {available.length === 0 ? (
@@ -202,8 +370,8 @@ function StartScreen({
               </>
             ) : (
               <>
-                No harness commands found on PATH. Install Claude Code, Codex or OpenCode, or use
-                the built-in Fake harness in development.
+                No harness commands found on PATH. Install Claude Code, Codex, Qwen Code or OpenCode,
+                or add a custom command in Settings.
               </>
             )}
           </div>

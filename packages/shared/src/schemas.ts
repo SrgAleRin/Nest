@@ -40,6 +40,9 @@ export const HarnessIdSchema = z.enum([
   'opencode',
   'pi',
   'copilot',
+  'zcode',
+  'qwen',
+  'shell',
   'fake',
   'custom',
 ]);
@@ -57,6 +60,10 @@ export const HarnessProfileSchema = z.object({
 });
 export type HarnessProfile = z.infer<typeof HarnessProfileSchema>;
 
+/** Profile started by the plus button without opening the picker. */
+export const NewSessionDefaultSchema = z.union([HarnessIdSchema, z.literal('ask')]);
+export type NewSessionDefault = z.infer<typeof NewSessionDefaultSchema>;
+
 export const AppSettingsSchema = z.object({
   /** Harness ids hidden from the start pickers; existing sessions still resume. */
   disabledHarnesses: z.array(HarnessIdSchema),
@@ -64,6 +71,8 @@ export const AppSettingsSchema = z.object({
   customCommand: z.string().max(2000),
   /** Generic update feed (electron-updater latest.yml); empty uses the built-in feed. */
   updateFeedUrl: z.string().max(2000).default(''),
+  /** What the new-tab plus button starts: ask every time or a specific profile. */
+  newSessionDefault: NewSessionDefaultSchema.default('ask'),
 });
 export type AppSettings = z.infer<typeof AppSettingsSchema>;
 
@@ -71,6 +80,7 @@ export const AppSettingsPatchSchema = z.object({
   disabledHarnesses: z.array(HarnessIdSchema).optional(),
   customCommand: z.string().max(2000).optional(),
   updateFeedUrl: z.string().max(2000).optional(),
+  newSessionDefault: NewSessionDefaultSchema.optional(),
 });
 export type AppSettingsPatch = z.infer<typeof AppSettingsPatchSchema>;
 
