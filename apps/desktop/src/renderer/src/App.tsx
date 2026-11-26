@@ -38,6 +38,7 @@ import {
   resolveSelectedSession,
   type SessionTabs,
 } from './state/sessionTabs';
+import { resolveShortcut } from './shortcuts';
 import { eventSessionData } from './state/terminalBus';
 import { sessionEndEffect, unreadTotal } from './notifications';
 import { errorMessage, resumeTone, shortPath, upsert } from './utils';
@@ -146,16 +147,6 @@ export function App() {
     setPaletteOpen(true);
   }, [newTaskProject, settingsOpen]);
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'p') {
-        event.preventDefault();
-        openPalette();
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [openPalette]);
 
   const refreshAll = useCallback(async () => {
     // The revision is read before the request: on arrival, rows touched after
@@ -608,6 +599,95 @@ export function App() {
     },
     [selectedTaskId],
   );
+
+  /** Puts the caret back into the selected terminal (Ctrl+`). */
+  const focusTerminal = useCallback(() => {
+    document.querySelector<HTMLElement>('.terminal-view.active .xterm-helper-textarea')?.focus();
+  }, []);
+
+  // Shortcut actions are read from a ref: the listener is registered once, yet
+  // it always sees the current tab, task and modal state.
+  const shortcutsRef = useRef({
+    openPalette,
+    focusTerminal,
+    settingsOpen,
+    paletteOpen,
+    newTaskProjectId,
+    selectedProjectId: selectedProject?.id ?? null,
+    selectedSessionId,
+    tabs: selectedSessions,
+    closeSession,
+    selectSession,
+    openNewTask: (projectId: string) => setNewTaskProjectId(projectId),
+  });
+  shortcutsRef.current = {
+    openPalette,
+    focusTerminal,
+    settingsOpen,
+    paletteOpen,
+    newTaskProjectId,
+    selectedProjectId: selectedProject?.id ?? null,
+    selectedSessionId,
+    tabs: selectedSessions,
+    closeSession,
+    selectSession,
+    openNewTask: (projectId: string) => setNewTaskProjectId(projectId),
+  };
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      // The terminal owns its shell bindings: Ctrl+N and Ctrl+W stay with the
+      // PTY while focus is inside xterm (see shortcuts.ts).
+      const terminalFocused = Boolean(
+        (document.activeElement as HTMLElement | null)?.closest('.terminal-view'),
+      );
+      const shortcut = resolveShortcut(event, { terminalFocused });
+      if (!shortcut) return;
+      const actions = shortcutsRef.current;
+
+      if (shortcut === 'palette') {
+        event.preventDefault();
+        actions.openPalette();
+        return;
+      }
+      // Every other shortcut belongs to the app only while no modal owns the
+      // keyboard.
+      if (actions.settingsOpen || actions.paletteOpen || actions.newTaskProjectId) return;
+
+      switch (shortcut) {
+        case 'new-task':
+          if (!actions.selectedProjectId) return;
+          event.preventDefault();
+          actions.openNewTask(actions.selectedProjectId);
+          return;
+        case 'close-tab': {
+          const session = actions.tabs.find((candidate) => candidate.id === actions.selectedSessionId);
+          if (!session) return;
+          event.preventDefault();
+          void actions.closeSession(session);
+          return;
+        }
+        case 'next-tab':
+        case 'previous-tab': {
+          if (actions.tabs.length < 2) return;
+          event.preventDefault();
+          const step = shortcut === 'next-tab' ? 1 : -1;
+          const index = actions.tabs.findIndex(
+            (candidate) => candidate.id === actions.selectedSessionId,
+          );
+          const next = actions.tabs[(index + step + actions.tabs.length) % actions.tabs.length];
+          if (next) actions.selectSession(next.id);
+          return;
+        }
+        case 'focus-terminal':
+          event.preventDefault();
+          actions.focusTerminal();
+          return;
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   const refreshHarnesses = useCallback(async () => {
     try {

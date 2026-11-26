@@ -165,6 +165,15 @@ function restart(fixture: Fixture, options: SessionServiceOptions = {}): Session
       },
     },
   );
+  // The restarted service owns fresh discovery timers; stop them before the
+  // database closes, the way the cleanup of a fresh fixture does.
+  cleanup.push(() => {
+    try {
+      sessions.shutdownAll();
+    } catch {
+      // the database may already be closed
+    }
+  });
   sessions.recoverStale();
   sessions.resumePending();
   return sessions;

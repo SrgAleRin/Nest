@@ -600,6 +600,10 @@ function TerminalView({
         onOpenPaletteRef.current();
         return false;
       }
+      // Tab cycling and terminal focus are app shortcuts, not shell input.
+      // Ctrl+N and Ctrl+W are deliberately not listed: bash uses them.
+      if (mod && key === 'tab') return false;
+      if (mod && event.key === '`') return false;
       // Ctrl+C is SIGINT unless the user selected text first.
       if (mod && !event.shiftKey && key === 'c' && term.hasSelection()) {
         copySelection();

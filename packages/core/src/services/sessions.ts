@@ -694,8 +694,9 @@ export class SessionService {
     if (!runtime || !state || state.running || runtime.exactId) return;
 
     state.running = true;
-    void this.discovery
-      .find(state.harnessId, state.cwd, state.since, {
+    let pending: ReturnType<HarnessDiscovery['find']>;
+    try {
+      pending = this.discovery.find(state.harnessId, state.cwd, state.since, {
         includeUpdated: state.includeUpdated,
         processOutput: runtime.processOutput,
         claimedIds: this.claimedConversationIds(sessionId),
@@ -705,7 +706,14 @@ export class SessionService {
           cwd: state.cwd,
           taskId: runtime.taskId,
         }),
-      })
+      });
+    } catch {
+      // The database was closed under a timer that was already scheduled
+      // (shutdown, quit, test teardown). Discovery is optional: drop it.
+      state.running = false;
+      return;
+    }
+    void pending
       .catch(() => null)
       .then((result) => {
         const current = this.runtimes.get(sessionId);

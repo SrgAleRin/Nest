@@ -79,6 +79,19 @@ commit → первый push в локальный bare origin → рестар�
    `flatworm/` и на самих воркспейсах Orca.
 4. `docs/product.md`: поиск везде `Ctrl+Shift+P`.
 
+## Клавиатурные сокращения (запрос пользователя)
+
+`Ctrl+N`, `Ctrl+W`, `Ctrl+Tab`/`Ctrl+Shift+Tab`, `Ctrl+`` реализованы: `renderer/src/shortcuts.ts`
++ `shortcuts.test.ts`, проводка в `App`, xterm-хендлер не отдаёт PTY только `Ctrl+Tab`/`Ctrl+``,
+а `Ctrl+N`/`Ctrl+W` остаются шеллу при фокусе в терминале. Покрыто e2e в `terminals.spec.ts`,
+описано в `docs/architecture.md` §6.9 и `docs/product.md` §7.
+
+## Отменено по решению пользователя
+
+Не считаем блокерами и не ждём результатов: packaged/update e2e, чистая Windows без Node.js,
+smoke реальных CLI, нагрузочный прогон 10 сессий. NFR-01/02/03 замерами не подтверждаем —
+в отчётах это указывать как «не измерялось», а не как дефект.
+
 ## Остаётся за координатором
 
 1. Слияние веток в `audit/2026-11-fixes`, разрешение конфликтов в `ipc.ts`/`rpc.ts`/`App.tsx`.
