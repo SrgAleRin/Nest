@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { Session, Task, UpdateStatus } from './schemas.js';
+import { CommentViewSchema } from './comments.js';
 import {
   AppSettingsPatchSchema,
   AppSettingsSchema,
@@ -163,8 +164,16 @@ export const rpcMethods = {
   },
 
   'comments.list': {
-    params: z.object({ taskId: id }),
-    result: z.array(ReviewCommentSchema),
+    params: z.object({
+      taskId: id,
+      /**
+       * Comparison the panel is showing. The server keeps every saved note and
+       * reports where it belongs in this view: on a row, stale, or outside the
+       * patch with a reason.
+       */
+      mode: DiffModeSchema.optional(),
+    }),
+    result: z.array(CommentViewSchema),
   },
   'comments.create': {
     params: z.object({
@@ -174,6 +183,20 @@ export const rpcMethods = {
       endLine: z.number().int().positive().optional(),
       side: z.enum(['old', 'new']),
       body: z.string().trim().min(1).max(10000),
+      /**
+       * The comparison the line numbers came from. Its sides decide which
+       * content the anchor text is read from (index for the unstaged old side,
+       * HEAD for staged, the task base for `base`).
+       */
+      anchor: z
+        .object({
+          mode: DiffModeSchema,
+          /** Base ref of the diff that was on screen; required for `base`. */
+          baseRef: z.string().min(1).max(250).nullable().optional(),
+          /** The row was the staged side of a `both` view. */
+          staged: z.boolean().optional(),
+        })
+        .optional(),
     }),
     result: ReviewCommentSchema,
   },
@@ -188,7 +211,17 @@ export const rpcMethods = {
   'comments.remove': { params: z.object({ commentId: id }), result: z.void() },
   'comments.send': {
     params: z.object({ commentId: id, sessionId: id.optional() }),
-    result: z.object({ sent: z.boolean(), reason: z.string().optional() }),
+    /**
+     * `sent: false` with a reason is a failure, never a silent drop: the panel
+     * shows the reason and offers the formatted `text` for the clipboard.
+     */
+    result: z.object({
+      sent: z.boolean(),
+      reason: z
+        .enum(['no_active_session', 'session_not_running', 'session_belongs_to_another_task'])
+        .optional(),
+      text: z.string(),
+    }),
   },
 
   'sessions.list': {

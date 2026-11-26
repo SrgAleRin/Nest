@@ -62,7 +62,7 @@ export function createCore(options: CoreOptions): Core {
   const sessions = new SessionService(db, tasks, harnesses, discovery, emit, options.sessions);
   sessions.recoverStale();
   sessions.resumePending();
-  const comments = new CommentsService(db, tasks, sessions);
+  const comments = new CommentsService(db, tasks, sessions, git);
 
   tasks.onBeforeRemove((task) =>
     sessions.stopTasksAndWait([task.id], { subject: 'task' }),

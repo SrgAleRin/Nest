@@ -182,4 +182,25 @@ export const migrations: Migration[] = [
         ADD COLUMN stop_requested INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    id: 11,
+    name: 'comment_anchor_descriptor',
+    sql: `
+      -- The comparison a note was written against. Re-anchoring reads the old
+      -- and new side of *that* diff (index/worktree for unstaged, HEAD/index
+      -- for staged, task base for base) instead of a fixed HEAD -> workspace
+      -- pair, which pointed an old-side anchor at the wrong content in a
+      -- partially staged file.
+
+      ALTER TABLE review_comments
+        ADD COLUMN anchor_mode TEXT;
+
+      ALTER TABLE review_comments
+        ADD COLUMN anchor_base TEXT;
+
+      -- 1 when the anchored row was the staged side of a mixed "both" view.
+      ALTER TABLE review_comments
+        ADD COLUMN anchor_staged INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ];

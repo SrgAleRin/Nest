@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import type { AppSettings, HarnessId, HarnessProfile } from '@nest/shared';
 import { NestError } from '../errors.js';
 import { splitArgs } from './args.js';
+import type { PasteInputMode } from './paste.js';
 
 export interface HarnessRegistryOptions {
   fakeHarnessScript: string;
@@ -15,6 +16,9 @@ export interface HarnessRegistryOptions {
   >;
 }
 
+/** Profiles without confirmed bracketed-paste handling, also for stored sessions. */
+const PLAIN_LINE_IDS: ReadonlySet<string> = new Set(['shell', 'dsh', 'custom']);
+
 interface Definition {
   id: HarnessId;
   label: string;
@@ -23,6 +27,15 @@ interface Definition {
   args: string[];
   resumeArgs: string[];
   source: 'builtin' | 'custom';
+  /**
+   * How multi-line text (a review note, a pasted block) goes into this CLI.
+   *
+   * `bracketed-paste` is the default for agent TUIs: they enable `CSI 200~`
+   * mode, so the whole note arrives as one input and a single Enter submits
+   * it. Profiles without confirmed bracketed-paste handling get `line`, which
+   * writes no escape sequences and submits each line with `\r`.
+   */
+  inputMode: PasteInputMode;
 }
 
 export class HarnessRegistry {
@@ -46,6 +59,7 @@ export class HarnessRegistry {
         command: 'claude',
         args: [],
         resumeArgs: ['--continue'],
+        inputMode: 'bracketed-paste',
         source: 'builtin',
       },
       {
@@ -55,6 +69,7 @@ export class HarnessRegistry {
         command: 'codex',
         args: [],
         resumeArgs: ['resume', '--last'],
+        inputMode: 'bracketed-paste',
         source: 'builtin',
       },
       {
@@ -64,6 +79,7 @@ export class HarnessRegistry {
         command: 'dsh',
         args: [],
         resumeArgs: [],
+        inputMode: 'line',
         source: 'builtin',
       },
       {
@@ -73,6 +89,7 @@ export class HarnessRegistry {
         command: 'opencode',
         args: [],
         resumeArgs: ['--continue'],
+        inputMode: 'bracketed-paste',
         source: 'builtin',
       },
       {
@@ -82,6 +99,7 @@ export class HarnessRegistry {
         command: 'pi',
         args: [],
         resumeArgs: ['--continue'],
+        inputMode: 'bracketed-paste',
         source: 'builtin',
       },
       {
@@ -91,6 +109,7 @@ export class HarnessRegistry {
         command: 'copilot',
         args: [],
         resumeArgs: ['--continue'],
+        inputMode: 'bracketed-paste',
         source: 'builtin',
       },
       {
@@ -100,6 +119,7 @@ export class HarnessRegistry {
         command: 'zcode',
         args: [],
         resumeArgs: ['--continue'],
+        inputMode: 'bracketed-paste',
         source: 'builtin',
       },
       {
@@ -109,6 +129,7 @@ export class HarnessRegistry {
         command: 'qwen',
         args: [],
         resumeArgs: ['--continue'],
+        inputMode: 'bracketed-paste',
         source: 'builtin',
       },
       {
@@ -118,6 +139,7 @@ export class HarnessRegistry {
         command: resolveShellCommand(),
         args: [],
         resumeArgs: [],
+        inputMode: 'line',
         source: 'builtin',
       },
       {
@@ -127,6 +149,7 @@ export class HarnessRegistry {
         command: fakeCommand,
         args: [options.fakeHarnessScript],
         resumeArgs: ['--continue'],
+        inputMode: 'bracketed-paste',
         source: 'builtin',
       },
     ];
@@ -167,6 +190,19 @@ export class HarnessRegistry {
   /** Drops cached PATH lookups, e.g. after the custom command changed. */
   invalidate(): void {
     this.cache.clear();
+  }
+
+  /**
+   * Paste mode of a registered profile. Capability only: it stays answerable
+   * for disabled profiles and for stored sessions whose command is gone, since
+   * the write path must not fail just because the picker was cleaned up.
+   */
+  inputMode(harnessId: string): PasteInputMode {
+    const definition = this.definitions().find((candidate) => candidate.id === harnessId);
+    if (definition) return definition.inputMode;
+    // A stored session whose profile is gone: keep the plain-line fallback for
+    // the generic ids, the common case (an agent TUI) otherwise.
+    return PLAIN_LINE_IDS.has(harnessId) ? 'line' : 'bracketed-paste';
   }
 
   /**
@@ -237,6 +273,8 @@ export class HarnessRegistry {
         args: [],
         resumeArgs: [],
         source: 'custom',
+        // Unknown CLI: no escape sequences, plain submitted lines.
+        inputMode: 'line',
       }),
     ];
   }

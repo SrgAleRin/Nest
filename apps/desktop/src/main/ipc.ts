@@ -127,7 +127,7 @@ export function registerIpc(context: IpcContext): void {
 
     'files.read': ({ taskId, path }) => core.files.read(taskId, path),
 
-    'comments.list': ({ taskId }) => core.comments.list(taskId),
+    'comments.list': ({ taskId, mode }) => core.comments.list(taskId, { mode }),
 
     'comments.create': (input) => core.comments.create(input),
 

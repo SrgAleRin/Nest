@@ -1,6 +1,7 @@
 import type {
   CommentSide,
   CommentStatus,
+  DiffMode,
   HarnessId,
   Project,
   ResumeMode,
@@ -63,6 +64,11 @@ export interface CommentRow {
   side: CommentSide;
   body: string;
   status: CommentStatus;
+  /** Comparison the note was written against; null on rows from before it was stored. */
+  anchor_mode: string | null;
+  anchor_base: string | null;
+  /** 1 when the note came from the staged side of a `both` view. */
+  anchor_staged: number;
   created_at: string;
   updated_at: string;
 }
@@ -122,7 +128,21 @@ export function toComment(row: CommentRow): ReviewComment {
     body: row.body,
     status: row.status,
     stale: false,
+    excerpt: row.anchor_text,
+    anchorMode: toDiffMode(row.anchor_mode),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function toDiffMode(value: string | null): DiffMode | null {
+  switch (value) {
+    case 'both':
+    case 'unstaged':
+    case 'staged':
+    case 'base':
+      return value;
+    default:
+      return null;
+  }
 }

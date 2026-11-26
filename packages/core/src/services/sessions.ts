@@ -12,6 +12,7 @@ import {
 import type { Db } from '../db/database.js';
 import { NestError } from '../errors.js';
 import { HarnessDiscovery, type DiscoveryResult } from '../harness/discovery.js';
+import { buildPaste } from '../harness/paste.js';
 import { HarnessRegistry } from '../harness/registry.js';
 import {
   stopSessionsAndWait,
@@ -484,9 +485,15 @@ export class SessionService {
     this.nudgeDiscovery(sessionId);
   }
 
+  /**
+   * Writes a composed block (a review note) into the PTY. Bracketed paste plus
+   * one Enter when the profile understands it; otherwise plain submitted lines.
+   * See `buildPaste` and `HarnessRegistry.inputMode` for the choice per profile.
+   */
   writeText(sessionId: string, text: string): void {
-    const normalized = text.replace(/\r\n/g, '\n').replace(/\x1b\[201~/g, ''); // eslint-disable-line no-control-regex
-    this.runtime(sessionId).pty.write(`\x1b[200~${normalized}\x1b[201~\r`);
+    const runtime = this.runtime(sessionId);
+    const mode = this.harnesses.inputMode(this.get(sessionId).harnessId);
+    runtime.pty.write(buildPaste(text, mode));
     this.nudgeDiscovery(sessionId);
   }
 

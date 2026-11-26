@@ -1,19 +1,33 @@
-import { readFile } from 'node:fs/promises';
 import {
+  DEFAULT_DIFF_MODE,
   newId,
   nowIso,
+  type CommentOutsideReason,
+  type CommentPlacement,
   type CommentSide,
   type CommentStatus,
+  type CommentView,
+  type DiffMode,
+  type GitDiff,
   type ReviewComment,
 } from '@nest/shared';
 import type { Db } from '../db/database.js';
 import { NestError } from '../errors.js';
-import { git } from '../git/exec.js';
-import { isSafeRelativePath, resolveInsideWorkspace } from '../paths.js';
+import { readSideLines, sidesFor, type AnchorDescriptor, type SideSource } from '../git/sides.js';
 import { anchorBlockText, findAnchorLine } from './anchor.js';
 import { toComment, type CommentRow } from './rows.js';
+import type { GitService } from './git.js';
 import type { SessionService } from './sessions.js';
 import type { TaskService } from './tasks.js';
+
+export interface CommentAnchorInput {
+  /** Comparison the commented line numbers came from. */
+  mode: DiffMode;
+  /** Base ref of the comparison on screen; used by `base` mode. */
+  baseRef?: string | null;
+  /** The commented row was the staged side of a `both` view. */
+  staged?: boolean;
+}
 
 export interface CreateCommentInput {
   taskId: string;
@@ -22,6 +36,19 @@ export interface CreateCommentInput {
   endLine?: number;
   side: CommentSide;
   body: string;
+  anchor?: CommentAnchorInput;
+}
+
+export type CommentSendFailure =
+  | 'no_active_session'
+  | 'session_not_running'
+  | 'session_belongs_to_another_task';
+
+export interface CommentSendResult {
+  sent: boolean;
+  reason?: CommentSendFailure;
+  /** Formatted note, also when nothing was sent: the panel copies it instead. */
+  text: string;
 }
 
 export class CommentsService {
@@ -29,14 +56,18 @@ export class CommentsService {
     private readonly db: Db,
     private readonly tasks: TaskService,
     private readonly sessions: SessionService,
+    private readonly git: GitService,
   ) {}
 
   /**
-   * Returns comments with their anchors refreshed against the current file:
-   * a comment follows the text it was written on, and is flagged stale when the
-   * text no longer exists.
+   * Every saved note of the task, re-anchored against the content of the side
+   * it was written on, plus where it belongs in the requested view: on a
+   * visible row, stale, or outside the patch with the reason.
+   *
+   * A note is never dropped because its hunk left the current diff (staged,
+   * committed, another mode): it is real, so it stays listed and sendable.
    */
-  async list(taskId: string): Promise<ReviewComment[]> {
+  async list(taskId: string, options: { mode?: DiffMode } = {}): Promise<CommentView[]> {
     const task = this.tasks.get(taskId);
     const rows = this.db
       .prepare(
@@ -45,7 +76,8 @@ export class CommentsService {
       )
       .all(taskId) as unknown as CommentRow[];
 
-    const sideCache = new Map<string, Promise<string[] | null>>();
+    const mode = options.mode ?? DEFAULT_DIFF_MODE;
+    const contentCache = new Map<string, Promise<string[] | null>>();
     const comments: ReviewComment[] = [];
 
     for (const row of rows) {
@@ -55,11 +87,17 @@ export class CommentsService {
         continue;
       }
 
-      const cacheKey = `${row.file_path}\u0000${row.side}`;
-      let lines = sideCache.get(cacheKey);
+      const source = sourceForRow(row);
+      if (!source) {
+        comments.push({ ...comment, stale: true });
+        continue;
+      }
+
+      const cacheKey = `${row.file_path}\u0000${sourceKey(source)}`;
+      let lines = contentCache.get(cacheKey);
       if (!lines) {
-        lines = this.sideLines(task.workspacePath, row.file_path, row.side);
-        sideCache.set(cacheKey, lines);
+        lines = readSideLines(task.workspacePath, row.file_path, source);
+        contentCache.set(cacheKey, lines);
       }
       const content = await lines;
 
@@ -88,7 +126,12 @@ export class CommentsService {
         a.line - b.line ||
         a.createdAt.localeCompare(b.createdAt),
     );
-    return comments;
+
+    const placements = await this.place(taskId, mode, comments);
+    return comments.map((comment, index) => ({
+      ...comment,
+      placement: placements[index] ?? { kind: 'inline' },
+    }));
   }
 
   get(commentId: string): ReviewComment {
@@ -101,11 +144,13 @@ export class CommentsService {
   async create(input: CreateCommentInput): Promise<ReviewComment> {
     const task = this.tasks.get(input.taskId);
     const endLine = Math.max(input.line, input.endLine ?? input.line);
+    const descriptor = this.descriptorFor(task.baseRef, input.anchor);
+    const sides = sidesFor(descriptor);
 
     // The line text is stored as the anchor: it is what re-anchoring follows
     // after the file changes. Without readable content the comment still works,
     // it just cannot move.
-    const lines = await this.sideLines(task.workspacePath, input.filePath, input.side);
+    const lines = await readSideLines(task.workspacePath, input.filePath, sides[input.side]);
     const anchorText = lines ? anchorBlockText(lines, input.line, endLine) : null;
 
     const id = newId();
@@ -113,8 +158,9 @@ export class CommentsService {
     this.db
       .prepare(
         `INSERT INTO review_comments
-           (id, task_id, file_path, line, end_line, anchor_text, side, body, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)`,
+           (id, task_id, file_path, line, end_line, anchor_text, side, body, status,
+            anchor_mode, anchor_base, anchor_staged, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -125,6 +171,9 @@ export class CommentsService {
         anchorText,
         input.side,
         input.body,
+        descriptor.mode,
+        descriptor.baseRef,
+        descriptor.staged ? 1 : 0,
         timestamp,
         timestamp,
       );
@@ -144,67 +193,233 @@ export class CommentsService {
     this.db.prepare('DELETE FROM review_comments WHERE id = ?').run(commentId);
   }
 
-  send(commentId: string, sessionId?: string): { sent: boolean; reason?: string } {
+  /**
+   * Sends one note to a session. A missing or finished session is reported,
+   * never dropped: the caller keeps the formatted text and offers the
+   * clipboard (product §5.4, step 8).
+   */
+  send(commentId: string, sessionId?: string): CommentSendResult {
     const comment = this.get(commentId);
     const task = this.tasks.get(comment.taskId);
+    const text = formatSendText(comment);
 
     const target = sessionId
       ? this.sessions.get(sessionId)
       : this.sessions.activeForTask(comment.taskId);
 
     if (!target) {
-      return { sent: false, reason: 'no_active_session' };
+      return { sent: false, reason: 'no_active_session', text };
     }
     if (target.taskId !== task.id) {
-      return { sent: false, reason: 'session_belongs_to_another_task' };
+      return { sent: false, reason: 'session_belongs_to_another_task', text };
     }
     if (target.status !== 'running' && target.status !== 'idle') {
-      return { sent: false, reason: 'session_not_running' };
+      return { sent: false, reason: 'session_not_running', text };
     }
 
-    const text = [
-      `Review comment — ${comment.filePath}:${formatRange(comment)}`,
-      '',
-      comment.body,
-      '',
-    ].join('\n');
     this.sessions.writeText(target.id, text);
-    return { sent: true };
+    return { sent: true, text };
   }
 
-  /** Lines of one diff side: the workspace file for `new`, HEAD for `old`. */
-  private async sideLines(
-    workspacePath: string,
-    filePath: string,
-    side: CommentSide,
-  ): Promise<string[] | null> {
-    if (!isSafeRelativePath(filePath)) return null;
+  /** Comparison a new note is anchored against; `both` when the caller omits it. */
+  private descriptorFor(
+    taskBaseRef: string | null,
+    anchor: CommentAnchorInput | undefined,
+  ): AnchorDescriptor {
+    if (!anchor) {
+      // Legacy callers commented on the default view. Its old side is the
+      // index, so anchoring no longer reads HEAD for old-side notes.
+      return { mode: DEFAULT_DIFF_MODE, baseRef: null, staged: false };
+    }
+    const baseRef =
+      anchor.mode === 'base' ? (anchor.baseRef ?? taskBaseRef ?? 'HEAD') : (anchor.baseRef ?? null);
+    return {
+      mode: anchor.mode,
+      baseRef,
+      staged: anchor.staged ?? false,
+    };
+  }
+
+  /**
+   * Decides where each note belongs in the view the panel is showing. The
+   * answer is computed here because only core may read git: the renderer just
+   * groups what it is given.
+   */
+  private async place(
+    taskId: string,
+    mode: DiffMode,
+    comments: ReviewComment[],
+  ): Promise<CommentPlacement[]> {
+    if (comments.length === 0) return [];
+
+    let viewed: GitDiff | null = null;
     try {
-      if (side === 'new') {
-        // The anchor is read from the file the comment points at, so the path
-        // is resolved through symlinks and junctions first: a link leaving the
-        // workspace is refused instead of read.
-        const content = await readFile(
-          await resolveInsideWorkspace(workspacePath, filePath),
-          'utf8',
-        );
-        return splitLines(content);
+      viewed = await this.git.diff(taskId, { mode });
+    } catch {
+      // Without a diff nothing can be matched to a row; notes stay reachable
+      // in the outside-patch area instead of disappearing.
+      viewed = null;
+    }
+
+    const anchors = viewed ? visibleAnchors(viewed) : new Set<string>();
+    const onPatch = new Set(viewed?.files.map((file) => file.path) ?? []);
+    const localChanges = new Map<string, Promise<LocalChange>>();
+    const indexText = new Map<string, Promise<string[] | null>>();
+
+    const placements: CommentPlacement[] = [];
+    for (const comment of comments) {
+      if (comment.stale) {
+        placements.push({ kind: 'stale' });
+        continue;
       }
-      const { stdout } = await git(workspacePath, ['show', `HEAD:${filePath}`]);
-      return splitLines(stdout);
-    } catch (error) {
-      // A path that escapes the workspace is an error, not a missing file.
-      if (error instanceof NestError) throw error;
-      // A deleted file (new side) or a file absent from HEAD (old side).
-      return null;
+      if (anchors.has(anchorKey(comment.filePath, comment.side, comment.line))) {
+        placements.push({ kind: 'inline' });
+        continue;
+      }
+
+      let changes = localChanges.get(comment.filePath);
+      if (!changes) {
+        changes = this.localChange(taskId, comment.filePath);
+        localChanges.set(comment.filePath, changes);
+      }
+      const local = await changes;
+
+      const reason = await this.outsideReason({
+        comment,
+        mode,
+        fileOnPatch: onPatch.has(comment.filePath),
+        local,
+        taskId,
+        indexText,
+      });
+      placements.push({ kind: 'outside', reason });
+    }
+    return placements;
+  }
+
+  private async outsideReason(input: {
+    comment: ReviewComment;
+    mode: DiffMode;
+    fileOnPatch: boolean;
+    local: LocalChange;
+    taskId: string;
+    indexText: Map<string, Promise<string[] | null>>;
+  }): Promise<CommentOutsideReason> {
+    const { comment, mode, fileOnPatch, local } = input;
+
+    // The whole change of this file sits in the index, so the viewed side
+    // (unstaged or both) has nothing left to show for it.
+    if (!fileOnPatch && local.staged && !local.unstaged) return 'staged';
+    // No local change at all: the hunk the note was written on is in history.
+    if (!fileOnPatch && !local.staged && !local.unstaged) return 'committed';
+    // The note belongs to another comparison; say so instead of guessing.
+    if (comment.anchorMode !== null && comment.anchorMode !== mode) return 'other_mode';
+    if (fileOnPatch) {
+      // Same file and comparison, but this hunk moved into the index while
+      // other hunks of the file are still unstaged.
+      if (local.staged && (await this.anchorInIndex(input.taskId, comment, input.indexText))) {
+        return 'staged';
+      }
+      return 'not_in_patch';
+    }
+    return 'file_not_in_diff';
+  }
+
+  /** True when the note's block is part of the staged content of its file. */
+  private async anchorInIndex(
+    taskId: string,
+    comment: ReviewComment,
+    cache: Map<string, Promise<string[] | null>>,
+  ): Promise<boolean> {
+    if (!comment.excerpt) return false;
+    const task = this.tasks.get(taskId);
+    let lines = cache.get(comment.filePath);
+    if (!lines) {
+      lines = readSideLines(task.workspacePath, comment.filePath, { kind: 'index' });
+      cache.set(comment.filePath, lines);
+    }
+    const content = await lines;
+    return content !== null && findAnchorLine(content, comment.excerpt, comment.line) !== null;
+  }
+
+  /** Which of the two local diffs still touch this file. */
+  private async localChange(taskId: string, filePath: string): Promise<LocalChange> {
+    try {
+      const diff = await this.git.diff(taskId, { mode: 'both', path: filePath });
+      return {
+        staged: diff.files.some((file) => file.staged),
+        unstaged: diff.files.some((file) => !file.staged),
+      };
+    } catch {
+      return { staged: false, unstaged: false };
     }
   }
 }
 
-function splitLines(content: string): string[] {
-  const normalized = content.replace(/\r\n/g, '\n');
-  const body = normalized.endsWith('\n') ? normalized.slice(0, -1) : normalized;
-  return body.split('\n');
+interface LocalChange {
+  staged: boolean;
+  unstaged: boolean;
+}
+
+/**
+ * Anchor keys of every line the patch actually draws. The rule matches the
+ * Diff panel: a removed line belongs to the old side, everything else to the
+ * new side.
+ */
+function visibleAnchors(diff: GitDiff): Set<string> {
+  const anchors = new Set<string>();
+  for (const file of diff.files) {
+    for (const hunk of file.hunks) {
+      for (const line of hunk.lines) {
+        const side: CommentSide = line.type === 'del' ? 'old' : 'new';
+        const anchor = side === 'old' ? line.oldLine : line.newLine;
+        if (anchor !== null) anchors.add(anchorKey(file.path, side, anchor));
+      }
+    }
+  }
+  return anchors;
+}
+
+function anchorKey(filePath: string, side: CommentSide, line: number): string {
+  return `${filePath}\u0000${side}\u0000${line}`;
+}
+
+/** Side a stored note is read from, from the comparison it was written on. */
+function sourceForRow(row: CommentRow): SideSource | null {
+  try {
+    return sidesFor({
+      mode: toDiffMode(row.anchor_mode) ?? DEFAULT_DIFF_MODE,
+      baseRef: row.anchor_base,
+      staged: Number(row.anchor_staged) === 1,
+    })[row.side];
+  } catch {
+    return null;
+  }
+}
+
+function toDiffMode(value: string | null): DiffMode | null {
+  switch (value) {
+    case 'both':
+    case 'unstaged':
+    case 'staged':
+    case 'base':
+      return value;
+    default:
+      return null;
+  }
+}
+
+function sourceKey(source: SideSource): string {
+  return source.kind === 'ref' ? `ref:${source.ref}` : source.kind;
+}
+
+export function formatSendText(comment: ReviewComment): string {
+  return [
+    `Review comment — ${comment.filePath}:${formatRange(comment)} (${comment.side})`,
+    '',
+    comment.body,
+    '',
+  ].join('\n');
 }
 
 export function formatRange(comment: Pick<ReviewComment, 'line' | 'endLine'>): string {

@@ -3380,3 +3380,144 @@ code,
   align-self: flex-start;
   margin-top: 2px;
 }
+
+/* ---------- notes outside the patch ---------- */
+
+/*
+ * Saved notes whose hunk left the current comparison. Separate from the stale
+ * notes (whose text is gone) and always counted, so a staged or committed note
+ * stays openable, sendable and resolvable.
+ */
+.outside-notes {
+  flex: 0 0 auto;
+  max-height: 40%;
+  overflow: auto;
+  border-top: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
+  background: #090c11;
+}
+
+.outside-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(9, 12, 17, 0.97);
+}
+
+.outside-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.outside-toggle svg {
+  transition: transform 120ms ease;
+  color: var(--dim);
+}
+
+.outside-notes.expanded .outside-toggle svg {
+  transform: rotate(90deg);
+}
+
+.outside-counts {
+  flex: 1;
+  color: var(--dim);
+  font: 10px var(--mono);
+}
+
+.outside-group {
+  padding: 2px 10px 6px;
+}
+
+.outside-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 0 3px;
+}
+
+.outside-reason {
+  padding: 0 4px;
+  border-radius: 4px;
+  font: 9px var(--mono);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.outside-reason.staged {
+  background: rgba(158, 206, 106, 0.14);
+  color: var(--green);
+}
+
+.outside-reason.committed {
+  background: rgba(122, 162, 247, 0.14);
+  color: var(--blue);
+}
+
+.outside-reason.other_mode,
+.outside-reason.file_not_in_diff,
+.outside-reason.not_in_patch {
+  background: rgba(187, 154, 247, 0.14);
+  color: var(--purple);
+}
+
+.outside-group-count {
+  color: var(--muted);
+  font: 10px var(--mono);
+}
+
+.outside-group-hint {
+  flex: 1;
+  color: var(--dim);
+  font: 9.5px var(--mono);
+}
+
+.outside-note {
+  margin: 2px 0 4px;
+  padding: 5px 7px;
+  border: 1px solid #2a3442;
+  border-left: 2px solid var(--purple);
+  border-radius: 6px;
+  background: #0b0e13;
+}
+
+.outside-note.resolved {
+  border-left-color: var(--green);
+  opacity: 0.75;
+}
+
+.outside-note .comment-head {
+  margin-bottom: 2px;
+}
+
+.outside-side {
+  color: var(--dim);
+  text-transform: uppercase;
+}
+
+.outside-excerpt {
+  margin: 0 0 3px;
+  padding: 3px 5px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #0e131b;
+  color: var(--muted);
+  font: 10px/1.45 var(--mono);
+  white-space: pre;
+  text-overflow: ellipsis;
+}
+
+.comment-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
