@@ -93,11 +93,27 @@ test('navigates tasks, actions and starts a harness from the palette', async () 
     await expect(page.locator('.command-palette')).toHaveCount(0);
     await expect(page.locator('.crumb.current')).toHaveText('Palette navigation');
 
-    // Panel commands switch the right column.
+    // Panel commands switch the right column, and the selected section says so.
+    await page.locator('#right-tab-files').click();
+    await expect(page.locator('#right-tab-files')).toHaveAttribute('aria-selected', 'true');
     await page.keyboard.press('Control+Shift+P');
-    await page.locator('.palette-search input').fill('diff');
+    await page.locator('.palette-search input').fill('source control');
     await page.keyboard.press('Enter');
-    await expect(page.locator('.right-tab.selected')).toHaveText('Diff');
+    await expect(page.locator('#right-tab-source-control')).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await expect(page.locator('[data-testid="source-control-panel"]')).toBeVisible();
+
+    // A comparison is a sub-view of the section, and it names itself.
+    await page.keyboard.press('Control+Shift+P');
+    await page.locator('.palette-search input').fill('show diff');
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.right-subhead-title')).toHaveText('Diff');
+    await expect(page.locator('#right-tab-source-control')).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
 
     // Actions run after the palette closes.
     await page.keyboard.press('Control+Shift+P');

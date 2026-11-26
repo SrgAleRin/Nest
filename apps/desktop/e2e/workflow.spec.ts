@@ -5,7 +5,7 @@ import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { _electron as electron, type ElectronApplication } from 'playwright';
 import type { NestBridge } from '@nest/shared';
-import { startHarness } from './helpers';
+import { annotateEnvironment, startHarness, waitForRemoteOutcome } from './helpers';
 
 declare global {
   interface Window {
@@ -172,27 +172,31 @@ test('task workflow: UI creation, staged review, note, commit, first push, resta
   writeFileSync(path.join(createdTask.workspacePath, 'notes.md'), 'one\nTWO\nthree\n', 'utf8');
   writeFileSync(path.join(createdTask.workspacePath, 'added.md'), '# added\n', 'utf8');
 
-  await page.getByRole('tab', { name: 'Diff' }).click();
-  const unstaged = page.getByRole('tab', { name: /^Unstaged/ });
-  await expect(unstaged).toBeVisible({ timeout: 30_000 });
-  await expect(page.locator('.diff-path', { hasText: 'added.md' })).toBeVisible();
+  // The change list is the entry point: one click on a row opens its patch.
+  const notesRow = page.locator(
+    '[data-testid="change-row"][data-path="notes.md"][data-side="unstaged"]',
+  );
+  await expect(notesRow).toBeVisible({ timeout: 30_000 });
+  await notesRow.locator('.change-open').click();
+  await expect(page.locator('.diff-target-bar')).toHaveText('notes.md · unstaged side');
+  await expect(page.locator('.diff-file-head .diff-path')).toHaveText('notes.md');
 
-  // Stage one file from the diff without leaving the panel.
-  const addedFile = page.locator('.diff-file-head', { hasText: 'added.md' });
-  await addedFile.locator('button[title^="Stage this file"]').click();
-  await page.getByRole('tab', { name: /^Staged/ }).click();
-  await expect(page.locator('.diff-path', { hasText: 'added.md' })).toBeVisible();
-  await expect(page.locator('.panel-empty')).toHaveCount(0);
-  await page.getByRole('tab', { name: /^Both/ }).click();
-  await expect(page.locator('.diff-path', { hasText: 'notes.md' })).toBeVisible();
+  // Stage the untracked file from the list, without leaving the panel.
+  await page.locator('#right-tab-source-control').click();
+  const addedRow = page.locator('[data-testid="change-row"][data-path="added.md"]');
+  await addedRow.getByRole('button', { name: 'Stage', exact: true }).click();
+  await expect(
+    page.locator('[data-testid="changes-staged"] [data-testid="change-row"][data-path="added.md"]'),
+  ).toBeVisible({ timeout: 30_000 });
+  // A normal commit records the index only, so the scope says what it covers.
+  await expect(page.locator('[data-testid="commit-scope"]')).toHaveText('1 staged');
 
   // --- save a note and send it to the harness ------------------------------
-  await page.getByRole('tab', { name: /^Unstaged/ }).click();
-  // The panel keeps the previous comparison until the new one lands. Without
-  // this wait the first changed line still belongs to the staged file and the
-  // note is anchored to a line this view does not show.
-  await expect(page.locator('.diff-path', { hasText: 'notes.md' })).toBeVisible();
-  await expect(page.locator('.diff-path', { hasText: 'added.md' })).toHaveCount(0);
+  await notesRow.locator('.change-open').click();
+  await expect(page.locator('.diff-target-bar')).toHaveText('notes.md · unstaged side');
+  await expect(page.locator('.diff-file-head .diff-path')).toHaveText('notes.md', {
+    timeout: 30_000,
+  });
   const changedLine = page.locator('.diff-line.diff-add, .diff-line.diff-del').first();
   await changedLine.hover();
   await changedLine.locator('.diff-comment-btn').click();
@@ -214,21 +218,32 @@ test('task workflow: UI creation, staged review, note, commit, first push, resta
     { timeout: 30_000 },
   );
 
-  // --- commit and push to the local bare remote ---------------------------
-  await page.getByRole('tab', { name: 'Git' }).click();
+  // --- commit and publish to the local bare remote ------------------------
+  await page.locator('#right-tab-source-control').click();
   await page.locator('.commit-message').fill('audit workflow change');
-  await page.getByRole('button', { name: 'Commit', exact: true }).click();
-  await expect(page.locator('.commit-list')).toContainText('audit workflow change', {
-    timeout: 30_000,
-  });
-  await page.getByRole('button', { name: 'Push', exact: true }).click();
-  // Push reports git's own output ("branch ... set up to track ... * [new branch]").
-  await expect(page.locator('.toast')).toContainText(`nest/audit-workflow`, { timeout: 60_000 });
+  await page.locator('.commit-submit').click();
+  await expect(page.locator('.toast').first()).toContainText('Committed', { timeout: 30_000 });
+  // Only the staged file was committed; the unstaged edit is still there.
+  expect(git(['show', '--name-status', '--format=', 'HEAD'], createdTask.workspacePath)).toBe(
+    'A\tadded.md',
+  );
+  await expect(notesRow).toBeVisible();
 
-  expect(
-    git(['for-each-ref', '--format=%(refname)', 'refs/heads'], originPath).split('\n'),
-  ).toContain(`refs/heads/${createdTask.branch}`);
-  expect(git(['rev-parse', 'main'], originPath)).toBe(git(['rev-parse', 'main'], repoPath));
+  // The branch has no upstream yet, so the one remote action is `Publish branch`.
+  await expect(page.locator('.sync-action')).toHaveText('Publish branch', { timeout: 30_000 });
+  await page.locator('.sync-action').click();
+  // Push reports git's own output ("branch ... set up to track ... * [new branch]").
+  if ((await waitForRemoteOutcome(page)) === 'blocked') {
+    annotateEnvironment(
+      'this Windows session refuses the shell helper git needs for a local remote',
+    );
+  } else {
+    await expect(page.locator('.toast').first()).toContainText(`nest/audit-workflow`);
+    expect(
+      git(['for-each-ref', '--format=%(refname)', 'refs/heads'], originPath).split('\n'),
+    ).toContain(`refs/heads/${createdTask.branch}`);
+    expect(git(['rev-parse', 'main'], originPath)).toBe(git(['rev-parse', 'main'], repoPath));
+  }
 
   // --- restart: the note and the task survive -----------------------------
   await app.close();

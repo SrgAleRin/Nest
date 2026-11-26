@@ -29,6 +29,26 @@ function git(args: string[], cwd: string): void {
   execFileSync('git', args, { cwd, stdio: 'ignore', windowsHide: true });
 }
 
+/**
+ * The fixture is created inside this worktree, so hiding `.git` would let git
+ * walk up into the Nest repository and report *its* changes. A `.git` file that
+ * points at a directory that is not there fails the lookup instead.
+ */
+function breakRepository(): void {
+  renameSync(gitDir, gitDirHidden);
+  writeFileSync(
+    gitDir,
+    `gitdir: ${path.join(gitDirHidden, 'gone')}
+`,
+    'utf8',
+  );
+}
+
+function restoreRepository(): void {
+  rmSync(gitDir, { force: true });
+  renameSync(gitDirHidden, gitDir);
+}
+
 test.beforeAll(() => {
   tempRoot = mkdtempSync(path.join(os.tmpdir(), 'nest-resilience-'));
   repoPath = path.join(tempRoot, 'resilient-repo');
@@ -42,6 +62,8 @@ test.beforeAll(() => {
     ['-c', 'user.name=Nest', '-c', 'user.email=nest@example.com', 'commit', '-m', 'init'],
     repoPath,
   );
+  // One change, so the list has a row to keep showing when git stops answering.
+  writeFileSync(path.join(repoPath, 'README.md'), '# demo\n\nmore\n', 'utf8');
 });
 
 test.afterAll(async () => {
@@ -77,28 +99,56 @@ test('shows inline panel errors and recovers after a retry', async () => {
   await page.reload();
   await page.waitForSelector('.app', { timeout: 60_000 });
   await expect(page.locator('.git-branch-name')).toHaveText('main');
-  await expect(page.locator('.git-files .panel-empty')).toHaveText('Working tree is clean');
+  const readmeRow = page.locator('[data-testid="change-row"][data-path="README.md"]');
+  await expect(readmeRow).toBeVisible({ timeout: 30_000 });
+  const syncAction = page.locator('.sync-action');
+  await expect(syncAction).toHaveText('Fetch');
+  // No remote is a state, and the tooltip says so instead of failing silently.
+  await expect(syncAction).toHaveAttribute('title', 'This repository has no remotes');
 
-  // Git panel: a failed refresh keeps the error and retry in the panel.
-  renameSync(gitDir, gitDirHidden);
-  await page.getByTitle('Refresh status').click();
-  await expect(page.locator('.error-state-title')).toHaveText('Git status unavailable');
-  await expect(page.locator('.error-state-body')).toContainText('not a git repository');
-  await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible();
-
-  renameSync(gitDirHidden, gitDir);
-  await page.getByRole('button', { name: 'Try again' }).click();
+  // A failed refresh does not empty the column: the last list stays readable,
+  // one note explains the failure with its own retry, and only the remote
+  // action is turned off, because the remote state is unknown.
+  breakRepository();
+  await page.getByRole('button', { name: 'Refresh git status' }).click();
+  const statusNote = page.locator('.source-control-note.warn', {
+    hasText: 'Could not read the git status',
+  });
+  await expect(statusNote).toContainText('not a git repository', { timeout: 30_000 });
+  // The branches slice fails on its own and only explains the remote action.
+  const branchesNote = page.locator('.source-control-note.warn', {
+    hasText: 'Branches could not be read',
+  });
+  await expect(branchesNote).toBeVisible();
+  await expect(readmeRow).toBeVisible();
+  await expect(page.locator('[data-testid="change-count"]')).toHaveText('All changes · 1');
   await expect(page.locator('.error-state')).toHaveCount(0);
-  await expect(page.locator('.git-branch-name')).toHaveText('main');
-  await expect(page.locator('.git-files .panel-empty')).toHaveText('Working tree is clean');
+  // The commit block is still there and still explains itself.
+  await expect(page.locator('.commit-message')).toBeEditable();
+  await expect(page.locator('.commit-submit')).toBeDisabled();
+  await expect(page.locator('.commit-reason')).toHaveText('Write a commit message');
+  await expect(syncAction).toBeDisabled();
+  await expect(syncAction).toHaveAttribute('title', /Branches could not be read/);
 
-  // Diff panel: switching tabs mounts it, so the failure happens on its own.
-  renameSync(gitDir, gitDirHidden);
-  await page.getByRole('tab', { name: 'Diff' }).click();
-  await expect(page.locator('.error-state-title')).toHaveText('Diff unavailable');
+  // The patch asks for itself, so the same broken workspace is a panel state
+  // with a retry rather than a stale diff.
+  await page.keyboard.press('Control+Shift+P');
+  await page.locator('.palette-search input').fill('show diff');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.error-state-title')).toHaveText('Diff unavailable', {
+    timeout: 30_000,
+  });
 
-  renameSync(gitDirHidden, gitDir);
+  restoreRepository();
   await page.getByRole('button', { name: 'Try again' }).click();
-  await expect(page.locator('.error-state')).toHaveCount(0);
-  await expect(page.locator('.diff-panel .panel-empty')).toHaveText('No changes to review');
+  await expect(page.locator('.error-state')).toHaveCount(0, { timeout: 30_000 });
+  await expect(page.locator('.diff-file-head .diff-path')).toHaveText('README.md');
+
+  // And back in the list both notes and the remote action recover together.
+  await page.getByRole('button', { name: '← Source Control' }).click();
+  await expect(statusNote).toContainText('Could not read the git status');
+  await branchesNote.getByRole('button', { name: 'Retry' }).click();
+  await expect(page.locator('.source-control-note.warn')).toHaveCount(0, { timeout: 30_000 });
+  await expect(readmeRow).toBeVisible();
+  await expect(syncAction).toHaveAttribute('title', 'This repository has no remotes');
 });

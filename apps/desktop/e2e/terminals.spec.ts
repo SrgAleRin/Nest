@@ -30,9 +30,17 @@ test.beforeAll(() => {
 
 test.afterAll(async () => {
   await app?.close().catch(() => {});
-  // Windows may keep the SQLite/PTY files locked for a moment after exit.
-  if (tempRoot) {
+  // Windows may keep the SQLite/PTY files locked for a moment after exit. A
+  // temp directory that outlives the run is the harness's problem, not the
+  // product's, so it must not turn a green scenario red.
+  if (!tempRoot) return;
+  try {
     rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+  } catch (error) {
+    test.info().annotations.push({
+      type: 'environment',
+      description: `could not remove ${tempRoot}: ${String(error)}`,
+    });
   }
 });
 
@@ -163,14 +171,14 @@ test('opens a plain terminal and closes tabs for good', async () => {
       .locator('.terminal-tab')
       .evaluateAll((tabs) => tabs.findIndex((tab) => tab.classList.contains('selected')));
   const firstIndex = await selectedIndex();
-  await page.locator('.right-tab').first().click();
+  await page.locator('#right-tab-sessions').click();
   await page.keyboard.press('Control+Tab');
   await expect.poll(selectedIndex).not.toBe(firstIndex);
   await page.keyboard.press('Control+Shift+Tab');
   await expect.poll(selectedIndex).toBe(firstIndex);
 
   // Ctrl+` puts the caret back into the terminal.
-  await page.locator('.right-tab').first().click();
+  await page.locator('#right-tab-sessions').click();
   await page.keyboard.press('Control+Backquote');
   await expect
     .poll(() =>
@@ -181,7 +189,7 @@ test('opens a plain terminal and closes tabs for good', async () => {
     .toBe(true);
 
   // Ctrl+N opens the new-task dialog whenever no modal owns the keyboard.
-  await page.locator('.right-tab').first().click();
+  await page.locator('#right-tab-sessions').click();
   await page.keyboard.press('Control+n');
   await expect(page.locator('.modal')).toBeVisible();
   // The header X and the footer button are both labelled Close; the footer one
@@ -191,7 +199,7 @@ test('opens a plain terminal and closes tabs for good', async () => {
 
   // Ctrl+W closes the active tab while the focus is outside the terminal; with
   // focus inside xterm it stays a shell kill-word.
-  await page.locator('.right-tab').first().click();
+  await page.locator('#right-tab-sessions').click();
   await page.keyboard.press('Control+w');
   await expect(page.locator('.terminal-tab')).toHaveCount(1, { timeout: 30_000 });
   await expect.poll(countSessions, { timeout: 30_000 }).toBe(1);

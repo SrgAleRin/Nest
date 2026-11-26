@@ -5,6 +5,7 @@ import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { _electron as electron, type ElectronApplication } from 'playwright';
 import type { NestBridge } from '@nest/shared';
+import { openPanelMenu } from './helpers';
 
 declare global {
   interface Window {
@@ -90,10 +91,16 @@ test('browses changes, commits and branch comparison', async () => {
   await page.reload();
   await page.waitForSelector('.app', { timeout: 60_000 });
 
-  // The git panel groups the two changed files under src/ and README stays flat.
+  // The change list groups the two changed files under src/; notes.md stays flat.
   await expect(page.locator('.file-tree .tree-dir')).toContainText('src', { timeout: 20_000 });
   await expect(page.locator('.file-tree .git-file')).toHaveCount(2);
-  await expect(page.locator('.recent-commits .commit-row').first()).toContainText('feat: add app');
+  // The two sides are separate sections, each with its own count.
+  await expect(page.locator('[data-testid="changes-unstaged"] .section-label')).toHaveText(
+    'Unstaged (1)',
+  );
+  await expect(page.locator('[data-testid="changes-untracked"] .section-label')).toHaveText(
+    'Untracked (1)',
+  );
 
   // Tree/list toggle switches the grouping.
   await page.getByRole('button', { name: 'List', exact: true }).click();
@@ -101,9 +108,11 @@ test('browses changes, commits and branch comparison', async () => {
   await page.getByRole('button', { name: 'Tree', exact: true }).click();
   await expect(page.locator('.file-tree .tree-dir')).toBeVisible();
 
-  // The most recent commit opens in History with its patches behind a file row.
-  await page.locator('.recent-commits .commit-row').first().click();
-  await expect(page.getByRole('tab', { name: 'History' })).toHaveAttribute('aria-selected', 'true');
+  // The most recent commit opens in History with its patch behind a file row.
+  const panelMenu = await openPanelMenu(page);
+  await panelMenu.getByRole('menuitem', { name: 'History' }).click();
+  await expect(page.locator('.right-subhead-title')).toHaveText('History');
+  await page.locator('.commit-list .commit-row').first().click();
   await expect(page.locator('.commit-detail-subject')).toHaveText('feat: add app');
   await expect(page.locator('.commit-detail .git-file')).toHaveCount(2);
   await page.locator('.commit-detail .git-file', { hasText: 'app.ts' }).click();
@@ -112,7 +121,10 @@ test('browses changes, commits and branch comparison', async () => {
 
   // Compare defaults to the upstream/base ref; picking feature as head shows
   // the commit it adds on top of the merge base.
-  await page.getByRole('tab', { name: 'Compare' }).click();
+  await page.getByRole('button', { name: '← Source Control' }).click();
+  const menu = await openPanelMenu(page);
+  await menu.getByRole('menuitem', { name: 'Compare branches' }).click();
+  await expect(page.locator('.right-subhead-title')).toHaveText('Compare');
   const pickers = page.locator('.compare-picker select');
   await expect(pickers).toHaveCount(2);
   await pickers.nth(1).selectOption('feature');
@@ -121,7 +133,7 @@ test('browses changes, commits and branch comparison', async () => {
   await expect(page.locator('.compare-summary')).toContainText('↑ 1');
 
   // Switching branches from the panel head updates the checkout.
-  await page.getByRole('tab', { name: 'Git' }).click();
+  await page.getByRole('button', { name: '← Source Control' }).click();
   await page.locator('.branch-button').click();
   await expect(page.locator('.branch-menu')).toBeVisible();
   await page.locator('.branch-item', { hasText: 'feature' }).click();

@@ -84,8 +84,15 @@ test('virtualizes a large diff, keeps comments working and highlights syntax', a
 
   await page.reload();
   await page.waitForSelector('.app', { timeout: 60_000 });
-  await page.getByRole('tab', { name: 'Diff' }).click();
+
+  // `Show Diff panel` opens the whole working tree, with no single target.
+  await page.keyboard.press('Control+Shift+P');
+  await page.locator('.palette-search input').fill('show diff');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.right-subhead-title')).toHaveText('Diff');
+  await expect(page.locator('.diff-target-bar')).toHaveCount(0);
   await expect(page.locator('.diff-file-head .diff-path').first()).toHaveText('a-small.ts');
+  await expect(page.locator('.diff-file-head .diff-path', { hasText: 'big.ts' })).toHaveCount(1);
 
   // 1600 diff lines must not become 1600 DOM rows.
   await expect(page.locator('.diff-line').first()).toBeVisible({ timeout: 30_000 });
@@ -131,6 +138,29 @@ test('virtualizes a large diff, keeps comments working and highlights syntax', a
   writeSmall(['zero', 'one', 'CHANGED', 'three', 'four']);
   await expect(page.locator('.comment-stale')).toBeVisible({ timeout: 20_000 });
   await expect(page.locator('.comment-thread')).toContainText('range note');
+
+  // The change list opens the same viewer narrowed to one side of one file.
+  await page.locator('#right-tab-source-control').click();
+  const smallRow = page.locator(
+    '[data-testid="change-row"][data-path="a-small.ts"][data-side="unstaged"]',
+  );
+  await smallRow.locator('.change-open').click();
+  await expect(page.locator('.diff-target-bar')).toHaveText('a-small.ts · unstaged side');
+  await expect(page.locator('.diff-file-head .diff-path')).toHaveCount(1);
+  await expect(page.locator('.diff-file-head .diff-path')).toHaveText('a-small.ts');
+  await expect(page.locator('.diff-file-head .diff-path', { hasText: 'big.ts' })).toHaveCount(0);
+
+  // Escape on the list drops the selection, so the viewer goes back to the
+  // whole working tree: one viewer, two ways in.
+  await page.locator('#right-tab-source-control').click();
+  await smallRow.locator('.change-open').focus();
+  await page.keyboard.press('Escape');
+  await expect(smallRow).not.toHaveAttribute('data-selected', 'true');
+  await page.keyboard.press('Control+Shift+P');
+  await page.locator('.palette-search input').fill('show diff');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.diff-target-bar')).toHaveCount(0);
+  await expect(page.locator('.diff-file-head .diff-path')).toHaveCount(2);
 
   // Scrolling to the end mounts the last lines and shows the sticky file header.
   await page.locator('.diff-scroll').evaluate((element) => {
