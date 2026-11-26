@@ -114,5 +114,14 @@ smoke реальных CLI, нагрузочный прогон 10 сессий.
 | FR-03/06/14 | `Idle` вместо «Waiting for you», `needs_input` из статусов убран, панель Sessions — по выбранной задаче | координатор |
 | FR-09 / §5.5 | `Commit` и `Push` раздельно, упавший push не откатывает коммит и говорит об этом | координатор |
 
-После мерджа: удалить дочерние воркспейсы волн 1–3 и ветки `Serge/*` (по слову пользователя),
-прогнать `typecheck`/`lint`/`test`/e2e на интеграционной ветке.
+Волна 4 смерджена: `deb1cec` (settings) и `8c0ddb7` (New Task + base ref). Конфликт
+`TaskService.create` сведён вручную: `planNames` получает разрешённый worktree root, `preview`
+использует тот же резолвер, что и `create`.
+
+Итог на интеграционной ветке: `typecheck`, `lint`, `build`, тесты 5 shared + 202 core (2 skipped)
++ 126 desktop, e2e 12 passed (кроме отменённых пользователем packaged/update и «plain HTTP feed»).
+
+Уборка: 12 дочерних воркспейсов удалены (`orca worktree rm --force --delete-branch`), ветки
+`Serge/a*`, `Serge/boundaries-electron`, `Serge/w11-new-task`, `Serge/w12-settings`,
+`Serge/probe-perm` удалены. Вложенный checkout `flatworm` с веткой `Serge/read-only-glob-grep`
+не тронут. Ничего не запушено.
