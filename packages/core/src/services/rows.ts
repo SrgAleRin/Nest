@@ -43,7 +43,9 @@ export interface SessionRow {
   cwd: string;
   exit_code: number | null;
   scrollback: string;
+  stream_position: number;
   resume_on_start: number;
+  stop_requested: number;
   harness_session_id: string | null;
   resume_mode: ResumeMode;
   created_at: string;

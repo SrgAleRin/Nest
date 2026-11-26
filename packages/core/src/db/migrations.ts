@@ -149,4 +149,27 @@ export const migrations: Migration[] = [
       WHERE resume_mode = 'exact';
     `,
   },
+  {
+    id: 8,
+    name: 'session_stream_position',
+    sql: `
+      -- Monotonic position of the session output stream, always equal to the
+      -- end of the stored scrollback snapshot. Older rows start at 0.
+
+      ALTER TABLE sessions
+        ADD COLUMN stream_position INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
+  {
+    id: 9,
+    name: 'session_stop_requested',
+    sql: `
+      -- Explicit "the user stopped this session" marker. Recovery reads it
+      -- instead of deriving resumability from an unfinished status, so a stop
+      -- that races a quit can never make the session resumable again.
+
+      ALTER TABLE sessions
+        ADD COLUMN stop_requested INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ];

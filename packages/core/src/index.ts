@@ -7,7 +7,7 @@ import { CommentsService } from './services/comments.js';
 import { FilesService } from './services/files.js';
 import { GitService } from './services/git.js';
 import { ProjectService } from './services/projects.js';
-import { SessionService } from './services/sessions.js';
+import { SessionService, type SessionServiceOptions } from './services/sessions.js';
 import { SettingsService } from './services/settings.js';
 import { TaskService } from './services/tasks.js';
 
@@ -16,6 +16,8 @@ export interface CoreOptions {
   worktreesRoot: string;
   fakeHarnessScript: string;
   customCommand?: string;
+  /** Test seams: PTY factory and crash-snapshot tuning. */
+  sessions?: SessionServiceOptions;
   onEvent?: (event: NestEvent) => void;
 }
 
@@ -57,7 +59,7 @@ export function createCore(options: CoreOptions): Core {
   const git = new GitService(db, tasks, emit);
   const files = new FilesService(tasks);
   const discovery = new HarnessDiscovery();
-  const sessions = new SessionService(db, tasks, harnesses, discovery, emit);
+  const sessions = new SessionService(db, tasks, harnesses, discovery, emit, options.sessions);
   sessions.recoverStale();
   sessions.resumePending();
   const comments = new CommentsService(db, tasks, sessions);

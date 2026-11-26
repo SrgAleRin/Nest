@@ -22,7 +22,7 @@ import { Sidebar } from './components/Sidebar';
 import { TerminalPane } from './components/TerminalPane';
 import type { CommandItem } from './commands';
 import { createClient } from './rpc/client';
-import { emitSessionData } from './state/terminalBus';
+import { eventSessionData } from './state/terminalBus';
 import { sessionEndEffect, unreadTotal } from './notifications';
 import { errorMessage, resumeTone, shortPath, upsert } from './utils';
 
@@ -185,7 +185,7 @@ export function App() {
     return client.on((event) => {
       switch (event.type) {
         case 'session:data':
-          emitSessionData(event.sessionId, event.data);
+          eventSessionData(event);
           return;
         case 'session:status': {
           const session = event.session;

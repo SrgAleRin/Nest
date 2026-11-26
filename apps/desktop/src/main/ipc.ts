@@ -166,7 +166,7 @@ export function registerIpc(context: IpcContext): void {
       core.sessions.resize(sessionId, cols, rows);
     },
 
-    'sessions.scrollback': ({ sessionId }) => ({ data: core.sessions.scrollback(sessionId) }),
+    'sessions.scrollback': ({ sessionId }) => core.sessions.snapshot(sessionId),
 
     'harness.list': ({ includeDisabled }) =>
       core.harnesses.list({ includeDisabled: includeDisabled ?? false }),
