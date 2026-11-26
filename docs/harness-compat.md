@@ -60,7 +60,9 @@ Nest пишет многострочный блок в PTY сам; свобод�
 
 ### Как определяется id беседы
 
-После старта сессии Nest запускает discovery-адаптер: OpenCode — через `opencode session list --format json`, Codex/pi/Claude — по свежим JSONL в домашней директории CLI, Qwen — по `~/.qwen/projects/<sanitized-cwd>/chats/*.jsonl` (учитываются `QWEN_HOME` и `QWEN_RUNTIME_DIR`), Copilot — по `workspace.yaml`. Адаптер собирает все беседы этого `cwd`, попавшие во временное окно, а решение о принадлежности принимается отдельно.
+После старта сессии Nest запускает discovery-адаптер: OpenCode — через `opencode session list --format json`, Codex/pi/Claude — по свежим JSONL в домашней директории CLI, Qwen — по `~/.qwen/projects/<sanitized-cwd>/chats/*.jsonl` (учитываются `QWEN_HOME` и `QWEN_RUNTIME_DIR`), Copilot — по `~/.copilot/session-state/<id>/events.jsonl`. Адаптер собирает все беседы этого `cwd`, попавшие во временное окно, а решение о принадлежности принимается отдельно.
+
+У Copilot разговор (`events.jsonl`) появляется только с первым ходом, а `workspace.yaml` — уже при старте. Поэтому кандидатом считается лишь сессия с `events.jsonl`: Copilot отказывается продолжать сессию без разговора (`No session, task, or name matched`), и привязка такого id давала вечно падающий Resume. Время создания берётся из `created_at` в `workspace.yaml`, так что старая беседа, продолженная в другой вкладке, не привязывается как `exact`.
 
 Правила выбора:
 
@@ -75,7 +77,7 @@ Nest пишет многострочный блок в PTY сам; свобод�
 Ограничения:
 
 - discovery — best effort; при отложенном создании беседы или молчащем CLI id может не найтись;
-- для `dsh` источник id пока неизвестен, поэтому доступен только latest/best effort;
+- для `dsh` discovery не подключён, поэтому exact-id не появляется и доступен только latest (`--continue`); на случай ручного id exact-команда в реестре уже есть;
 - Claude-адаптер написан по формату `~/.claude/projects`, но вручную не проверялся;
 - автоматический resume не запускает `--continue`, если на том же `cwd` есть другая вкладка того же harness, и никогда не подставляет `heuristic` id;
 - если exact resume падает в первые 20 секунд, Nest сбрасывает id и предлагает `Resume latest`.

@@ -80,17 +80,57 @@ describe('harness session discovery', () => {
     await expect(discovery.find('pi', repo, since())).resolves.toMatchObject({ id: 'pi-1' });
   });
 
-  it('finds a Copilot workspace by cwd', async () => {
+  it('finds a Copilot workspace once it has a conversation', async () => {
     const home = path.join(root, 'copilot-home');
     const stateDir = path.join(home, '.copilot', 'session-state', 'copilot-uuid');
+    const createdAt = new Date().toISOString();
     writeFile(
       path.join(stateDir, 'workspace.yaml'),
-      ['id: copilot-uuid', `cwd: ${repo}`, 'created_at: 2026-01-01T00:00:00.000Z'].join('\n'),
+      ['id: copilot-uuid', `cwd: ${repo}`, `created_at: ${createdAt}`].join('\n'),
     );
+    writeFile(path.join(stateDir, 'events.jsonl'), '{"type":"user"}\n');
 
     const discovery = new HarnessDiscovery({ homeDir: home, env: {} });
     await expect(discovery.find('copilot', repo, since())).resolves.toMatchObject({
       id: 'copilot-uuid',
+    });
+  });
+
+  it('ignores a Copilot session that has no conversation yet', async () => {
+    // Copilot creates `workspace.yaml` at launch but refuses to resume a
+    // session without `events.jsonl`, so binding that id only produces a
+    // "No session, task, or name matched" failure on the next resume.
+    const home = path.join(root, 'copilot-empty-home');
+    const stateDir = path.join(home, '.copilot', 'session-state', 'copilot-empty');
+    writeFile(
+      path.join(stateDir, 'workspace.yaml'),
+      ['id: copilot-empty', `cwd: ${repo}`, `created_at: ${new Date().toISOString()}`].join('\n'),
+    );
+
+    const discovery = new HarnessDiscovery({ homeDir: home, env: {} });
+    await expect(discovery.find('copilot', repo, since())).resolves.toMatchObject({
+      id: null,
+      reason: 'no_candidates',
+    });
+  });
+
+  it('never adopts a Copilot conversation created before the tab started', async () => {
+    const home = path.join(root, 'copilot-old-home');
+    const stateDir = path.join(home, '.copilot', 'session-state', 'copilot-old');
+    writeFile(
+      path.join(stateDir, 'workspace.yaml'),
+      [
+        'id: copilot-old',
+        `cwd: ${repo}`,
+        `created_at: ${new Date(Date.now() - 60 * 60_000).toISOString()}`,
+      ].join('\n'),
+    );
+    writeFile(path.join(stateDir, 'events.jsonl'), '{"type":"user"}\n');
+
+    const discovery = new HarnessDiscovery({ homeDir: home, env: {} });
+    await expect(discovery.find('copilot', repo, since())).resolves.toMatchObject({
+      id: null,
+      reason: 'predates_launch',
     });
   });
 

@@ -253,19 +253,29 @@ export class HarnessDiscovery {
 
   private async findCopilot(cwd: string, sinceMs: number): Promise<Conversation[]> {
     const root = path.join(this.homeDir, '.copilot', 'session-state');
+    // `workspace.yaml` is written when the session starts, before any turn, and
+    // Copilot refuses to resume a session it has no conversation for ("No
+    // session, task, or name matched"). `events.jsonl` is the conversation
+    // itself, so it only appears once the session is actually resumable.
     const files = await recentFiles(
       root,
       sinceMs,
-      (candidate) => path.basename(candidate.path) === 'workspace.yaml',
+      (candidate) => path.basename(candidate.path) === 'events.jsonl',
     );
 
     const found: Conversation[] = [];
     for (const file of files) {
-      const text = await readText(file.path);
+      const dir = path.dirname(file.path);
+      const text = await readText(path.join(dir, 'workspace.yaml'));
       if (!text) continue;
-      const id = yamlField(text, 'id') ?? path.basename(path.dirname(file.path));
+      const id = yamlField(text, 'id') ?? path.basename(dir);
       const sessionCwd = yamlField(text, 'cwd');
-      if (sessionCwd && samePath(sessionCwd, cwd)) found.push(fileConversation(id, file));
+      if (!sessionCwd || !samePath(sessionCwd, cwd)) continue;
+      // The conversation was created when its workspace was written, however
+      // recently it was updated, so a session that already existed before this
+      // tab started can never be adopted as `exact`.
+      const createdAtMs = parseTimestamp(yamlField(text, 'created_at')) ?? file.mtimeMs;
+      found.push({ id, createdAtMs, updatedAtMs: file.mtimeMs });
     }
     return found;
   }
@@ -568,6 +578,12 @@ function yamlField(text: string, key: string): string | null {
   const match = new RegExp(`^${key}:\\s*(.+)$`, 'm').exec(text);
   if (!match?.[1]) return null;
   return match[1].trim().replace(/^['"]|['"]$/g, '');
+}
+
+function parseTimestamp(value: string | null): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function runCommand(command: string, args: string[], cwd: string): Promise<string> {
