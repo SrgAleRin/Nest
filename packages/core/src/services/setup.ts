@@ -15,20 +15,24 @@ export function normalizeSetupScript(value: string | null | undefined): string |
 }
 
 /**
- * Prepares a freshly created worktree: copies local env files and runs the
- * project setup script. Returns a human readable error, or null on success.
- * The worktree is never removed here: a failed setup leaves it on disk so the
- * user can inspect it.
+ * Prepares a freshly created worktree: optionally copies local env files and
+ * runs the project setup script. Returns a human readable error, or null on
+ * success. The worktree is never removed here: a failed setup leaves it on
+ * disk so the user can inspect it.
  */
 export async function prepareWorkspace(input: {
   projectPath: string;
   workspacePath: string;
   setupScript: string | null;
+  /** Copying `.env` files is an explicit choice, off by default. */
+  copyEnvFiles: boolean;
 }): Promise<string | null> {
-  try {
-    await copyEnvFiles(input.projectPath, input.workspacePath);
-  } catch (error) {
-    return `could not copy env files: ${errorMessage(error)}`;
+  if (input.copyEnvFiles) {
+    try {
+      await copyEnvFiles(input.projectPath, input.workspacePath);
+    } catch (error) {
+      return `could not copy env files: ${errorMessage(error)}`;
+    }
   }
   if (!input.setupScript) return null;
   return runSetupScript(input.workspacePath, input.setupScript);

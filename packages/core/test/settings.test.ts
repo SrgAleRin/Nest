@@ -76,7 +76,10 @@ describe('settings service', () => {
       harnessArgs: {},
       shellCommand: '',
       terminal: DEFAULT_SETTINGS.terminal,
+      worktreeRoot: '',
+      copyEnvFiles: false,
       updateFeedUrl: '',
+      updatesEnabled: true,
       newSessionDefault: 'ask',
     });
 
@@ -97,8 +100,52 @@ describe('settings service', () => {
       harnessArgs: {},
       shellCommand: '',
       terminal: DEFAULT_SETTINGS.terminal,
+      worktreeRoot: '',
+      copyEnvFiles: false,
       updateFeedUrl: '',
+      updatesEnabled: true,
       newSessionDefault: 'ask',
+    });
+    db.close();
+  });
+
+  it('round-trips the worktree root, the env copy switch and the updates switch', () => {
+    const { db, settings } = openSettings('surface.db');
+
+    // Empty root and no copies are the defaults, so old rows keep behaving.
+    expect(settings.get()).toMatchObject({
+      worktreeRoot: '',
+      copyEnvFiles: false,
+      updatesEnabled: true,
+    });
+
+    const updated = settings.update({
+      worktreeRoot: '  D:\\nest-worktrees  ',
+      copyEnvFiles: true,
+      updatesEnabled: false,
+    });
+    expect(updated).toMatchObject({
+      worktreeRoot: 'D:\\nest-worktrees',
+      copyEnvFiles: true,
+      updatesEnabled: false,
+    });
+
+    // Both switches stay independent of each other and of an unrelated patch.
+    expect(settings.update({ customCommand: 'agent' })).toMatchObject({
+      worktreeRoot: 'D:\\nest-worktrees',
+      copyEnvFiles: true,
+      updatesEnabled: false,
+    });
+
+    // A row written by an older build fills the new fields with their defaults.
+    db.prepare('UPDATE settings SET value = ? WHERE key = ?').run(
+      JSON.stringify({ disabledHarnesses: [], customCommand: 'agent' }),
+      'app',
+    );
+    expect(settings.get()).toMatchObject({
+      worktreeRoot: '',
+      copyEnvFiles: false,
+      updatesEnabled: true,
     });
     db.close();
   });

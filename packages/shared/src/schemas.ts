@@ -110,8 +110,18 @@ export const AppSettingsSchema = z.object({
   shellCommand: z.string().max(2000).default(''),
   /** Fonts, cursor and colours used by every xterm instance. */
   terminal: TerminalPreferencesSchema.default(DEFAULT_TERMINAL_PREFERENCES),
+  /**
+   * Directory new worktrees are created in; empty keeps the root Nest was
+   * started with (`NEST_WORKTREES_ROOT` or `userData/worktrees`). Existing
+   * worktrees are never moved.
+   */
+  worktreeRoot: z.string().max(2000).default(''),
+  /** Copy `.env`/`.env.local` from the project into a new worktree. Off by default. */
+  copyEnvFiles: z.boolean().default(false),
   /** Generic update feed (electron-updater latest.yml); empty uses the built-in feed. */
   updateFeedUrl: z.string().max(2000).default(''),
+  /** Automatic update checks; false turns them off completely. */
+  updatesEnabled: z.boolean().default(true),
   /** What the new-tab plus button starts: ask every time or a specific profile. */
   newSessionDefault: NewSessionDefaultSchema.default('ask'),
 });
@@ -123,7 +133,10 @@ export const AppSettingsPatchSchema = z.object({
   harnessArgs: z.partialRecord(HarnessIdSchema, z.string().max(2000)).optional(),
   shellCommand: z.string().max(2000).optional(),
   terminal: TerminalPreferencesSchema.optional(),
+  worktreeRoot: z.string().max(2000).optional(),
+  copyEnvFiles: z.boolean().optional(),
   updateFeedUrl: z.string().max(2000).optional(),
+  updatesEnabled: z.boolean().optional(),
   newSessionDefault: NewSessionDefaultSchema.optional(),
 });
 export type AppSettingsPatch = z.infer<typeof AppSettingsPatchSchema>;

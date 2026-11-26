@@ -1,7 +1,7 @@
 import { app, BrowserWindow, Menu, nativeImage, shell, Tray } from 'electron';
 import path from 'node:path';
 import { mkdirSync } from 'node:fs';
-import { createCore, type Core } from '@nest/core';
+import { createCore, resolveWorktreesRoot, type Core } from '@nest/core';
 import type { AppInfo, NestEvent } from '@nest/shared';
 import { currentAppUrl } from './appUrl';
 import { decideExternalLink, decideNavigation, isAppUrl } from './boundaries';
@@ -32,7 +32,10 @@ if (process.env.NEST_USER_DATA) {
 
 const userData = app.getPath('userData');
 const dbPath = process.env.NEST_DB_PATH ?? path.join(userData, 'nest.db');
-const worktreesRoot = process.env.NEST_WORKTREES_ROOT ?? path.join(userData, 'worktrees');
+// The default root: the environment override or the platform user-data folder.
+// A path saved in Settings replaces it for new worktrees only.
+const defaultWorktreesRoot =
+  process.env.NEST_WORKTREES_ROOT ?? path.join(userData, 'worktrees');
 const fakeHarnessScript = app.isPackaged
   ? path.join(process.resourcesPath, 'fake-harness.mjs')
   : path.resolve(app.getAppPath(), '../../scripts/fake-harness.mjs');
@@ -162,8 +165,19 @@ function info(): AppInfo {
     profile,
     userData,
     dbPath,
-    worktreesRoot,
+    worktreesRoot: resolvedWorktreesRoot(),
+    defaultWorktreesRoot,
   };
+}
+
+/** What an empty worktree root in Settings resolves to, shown in the dialog. */
+function resolvedWorktreesRoot(): string {
+  if (!core) return defaultWorktreesRoot;
+  try {
+    return resolveWorktreesRoot(defaultWorktreesRoot, core.settings.get().worktreeRoot);
+  } catch {
+    return defaultWorktreesRoot;
+  }
 }
 
 const allowMultipleInstances = process.env.NEST_DISABLE_SINGLE_INSTANCE === '1';
@@ -180,7 +194,7 @@ if (!allowMultipleInstances && !app.requestSingleInstanceLock()) {
 
     core = createCore({
       dbPath,
-      worktreesRoot,
+      worktreesRoot: defaultWorktreesRoot,
       fakeHarnessScript,
       customCommand: process.env.NEST_CUSTOM_COMMAND,
       onEvent: broadcast,

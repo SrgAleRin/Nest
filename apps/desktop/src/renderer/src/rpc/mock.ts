@@ -210,7 +210,10 @@ export function createMockClient(): NestClient {
     harnessArgs: {},
     shellCommand: '',
     terminal: { ...DEFAULT_TERMINAL_PREFERENCES },
+    worktreeRoot: '',
+    copyEnvFiles: false,
     updateFeedUrl: '',
+    updatesEnabled: true,
     newSessionDefault: 'ask',
   };
 
@@ -221,7 +224,9 @@ export function createMockClient(): NestClient {
     feedUrl: settings.updateFeedUrl || DEFAULT_UPDATE_FEED_URL,
     availableVersion: null,
     percent: null,
-    message: 'Updates are available in packaged builds only.',
+    message: settings.updatesEnabled
+      ? 'Updates are available in packaged builds only.'
+      : 'Update checks are turned off in Settings.',
     checkedAt: null,
   });
 
@@ -493,6 +498,7 @@ export function createMockClient(): NestClient {
     userData: 'C:\\Users\\mock\\AppData\\Roaming\\Nest',
     dbPath: 'C:\\Users\\mock\\AppData\\Roaming\\Nest\\nest.db',
     worktreesRoot: 'C:\\Users\\mock\\AppData\\Roaming\\Nest\\worktrees',
+    defaultWorktreesRoot: 'C:\\Users\\mock\\AppData\\Roaming\\Nest\\worktrees',
   };
 
   async function handle(method: RpcMethod, params: Record<string, unknown>): Promise<unknown> {
@@ -532,10 +538,22 @@ export function createMockClient(): NestClient {
             params.terminal === undefined
               ? settings.terminal
               : (params.terminal as AppSettings['terminal']),
+          worktreeRoot:
+            typeof params.worktreeRoot === 'string'
+              ? params.worktreeRoot.trim()
+              : settings.worktreeRoot,
+          copyEnvFiles:
+            params.copyEnvFiles === undefined
+              ? settings.copyEnvFiles
+              : Boolean(params.copyEnvFiles),
           updateFeedUrl:
             typeof params.updateFeedUrl === 'string'
               ? params.updateFeedUrl.trim()
               : settings.updateFeedUrl,
+          updatesEnabled:
+            params.updatesEnabled === undefined
+              ? settings.updatesEnabled
+              : Boolean(params.updatesEnabled),
           newSessionDefault:
             params.newSessionDefault === undefined
               ? settings.newSessionDefault

@@ -156,7 +156,10 @@ test('saves harness settings and keeps a disabled harness resumable', async () =
       harnessArgs: { fake: '--demo' },
       shellCommand: '',
       terminal: { ...DEFAULT_TERMINAL_PREFERENCES, fontSize: 15 },
+      worktreeRoot: '',
+      copyEnvFiles: false,
       updateFeedUrl: 'https://updates.example.com/nest/',
+      updatesEnabled: true,
       newSessionDefault: 'ask',
     });
 

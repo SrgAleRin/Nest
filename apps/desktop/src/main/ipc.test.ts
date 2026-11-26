@@ -37,6 +37,7 @@ const info: AppInfo = {
   userData: '/tmp/nest',
   dbPath: '/tmp/nest/nest.db',
   worktreesRoot: '/tmp/nest/worktrees',
+  defaultWorktreesRoot: '/tmp/nest/worktrees',
 };
 
 interface FakeFrame {
