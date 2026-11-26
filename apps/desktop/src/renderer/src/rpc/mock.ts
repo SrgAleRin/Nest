@@ -106,6 +106,26 @@ export function createMockClient(): NestClient {
     },
   ];
 
+  const mockFiles = [
+    { path: '.gitignore' },
+    { path: 'README.md' },
+    { path: 'docs/notes.md' },
+    { path: 'package.json' },
+    { path: 'src/App.tsx' },
+    { path: 'src/terminal/bus.ts' },
+  ];
+
+  const mockFileContent: Record<string, string> = {
+    '.gitignore': 'node_modules\ndist\n.env\n',
+    'README.md': '# nest-demo\n\nA mock project for the browser preview.\n',
+    'docs/notes.md': '# Notes\n\n- the mock client has no filesystem\n',
+    'package.json': '{\n  "name": "nest-demo",\n  "private": true\n}\n',
+    'src/App.tsx':
+      "export function App() {\n  const client = useMemo(createClient, []);\n  return <main>{client ? 'ready' : 'loading'}</main>;\n}\n",
+    'src/terminal/bus.ts':
+      'const listeners = new Map<string, Set<Listener>>();\n\nexport function onSessionData(sessionId: string, listener: Listener) {\n  const set = listeners.get(sessionId) ?? new Set();\n  set.add(listener);\n  listeners.set(sessionId, set);\n}\n',
+  };
+
   const harnesses: HarnessProfile[] = [
     {
       id: 'claude',
@@ -703,6 +723,13 @@ export function createMockClient(): NestClient {
         status.files = status.files.filter((file) => !paths.has(file.path));
         emit({ type: 'git:changed', taskId: String(params.taskId) });
         return status;
+      }
+      case 'files.list':
+        return { files: mockFiles, truncated: false };
+      case 'files.read': {
+        const path = String(params.path ?? '');
+        const text = mockFileContent[path] ?? `// ${path}\n`;
+        return { path, size: text.length, text, binary: false, truncated: false };
       }
       case 'comments.list':
         return comments;

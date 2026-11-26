@@ -4,6 +4,7 @@ import { migrate, openDatabase, type Db } from './db/database.js';
 import { HarnessDiscovery } from './harness/discovery.js';
 import { HarnessRegistry } from './harness/registry.js';
 import { CommentsService } from './services/comments.js';
+import { FilesService } from './services/files.js';
 import { GitService } from './services/git.js';
 import { ProjectService } from './services/projects.js';
 import { SessionService } from './services/sessions.js';
@@ -23,6 +24,7 @@ export interface Core {
   projects: ProjectService;
   tasks: TaskService;
   git: GitService;
+  files: FilesService;
   sessions: SessionService;
   comments: CommentsService;
   settings: SettingsService;
@@ -53,6 +55,7 @@ export function createCore(options: CoreOptions): Core {
   const projects = new ProjectService(db);
   const tasks = new TaskService(db, projects, options.worktreesRoot, emit);
   const git = new GitService(db, tasks, emit);
+  const files = new FilesService(tasks);
   const discovery = new HarnessDiscovery();
   const sessions = new SessionService(db, tasks, harnesses, discovery, emit);
   sessions.recoverStale();
@@ -66,6 +69,7 @@ export function createCore(options: CoreOptions): Core {
     projects,
     tasks,
     git,
+    files,
     sessions,
     comments,
     settings,

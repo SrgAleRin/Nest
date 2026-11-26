@@ -205,6 +205,34 @@ async function run(hunk: DiffHunk, spec: LanguageSpec): Promise<HunkHighlight | 
   };
 }
 
+/** Highlighting a whole file caches by text, so a watcher refresh does not re-tokenize. */
+const MAX_CACHED_FILES = 2;
+const fileCache = new Map<string, Promise<ThemedToken[][] | null>>();
+
+/** Tokenize a whole file for the read-only preview; null for unknown languages. */
+export function highlightLines(text: string, filePath: string): Promise<ThemedToken[][] | null> {
+  const spec = languageForPath(filePath);
+  if (!spec) return Promise.resolve(null);
+
+  const key = `${spec.lang}\u0000${text}`;
+  const cached = fileCache.get(key);
+  if (cached) return cached;
+
+  const pending = runLines(text, spec).catch(() => null);
+  fileCache.set(key, pending);
+  if (fileCache.size > MAX_CACHED_FILES) {
+    const oldest = fileCache.keys().next().value;
+    if (oldest !== undefined) fileCache.delete(oldest);
+  }
+  return pending;
+}
+
+async function runLines(text: string, spec: LanguageSpec): Promise<ThemedToken[][] | null> {
+  await Promise.all(spec.modules.map(ensureGrammar));
+  const { highlighter, theme } = await getHighlighter();
+  return highlighter.codeToTokensBase(text, { lang: spec.lang, theme });
+}
+
 export function tokenStyle(token: ThemedToken): {
   color?: string;
   fontStyle?: string;

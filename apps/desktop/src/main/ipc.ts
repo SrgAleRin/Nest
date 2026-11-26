@@ -124,6 +124,10 @@ export function registerIpc(context: IpcContext): void {
 
     'git.discard': async ({ taskId, paths }) => core.git.discard(taskId, paths),
 
+    'files.list': ({ taskId }) => core.files.list(taskId),
+
+    'files.read': ({ taskId, path }) => core.files.read(taskId, path),
+
     'comments.list': ({ taskId }) => core.comments.list(taskId),
 
     'comments.create': (input) => core.comments.create(input),

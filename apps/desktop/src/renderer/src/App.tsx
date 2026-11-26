@@ -723,6 +723,7 @@ export function App() {
   }
   for (const [tab, label] of [
     ['git', 'Git'],
+    ['files', 'Files'],
     ['history', 'History'],
     ['compare', 'Compare'],
     ['diff', 'Diff'],

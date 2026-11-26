@@ -18,6 +18,7 @@ import {
   GitLogSchema,
   GitStatusSchema,
 } from './git.js';
+import { FileContentSchema, WorkspaceFilesSchema } from './files.js';
 
 export const AppInfoSchema = z.object({
   version: z.string(),
@@ -143,6 +144,12 @@ export const rpcMethods = {
   'git.discard': {
     params: z.object({ taskId: id, paths: z.array(z.string().min(1)).min(1) }),
     result: GitStatusSchema,
+  },
+
+  'files.list': { params: z.object({ taskId: id }), result: WorkspaceFilesSchema },
+  'files.read': {
+    params: z.object({ taskId: id, path: z.string().min(1).max(4096) }),
+    result: FileContentSchema,
   },
 
   'comments.list': {

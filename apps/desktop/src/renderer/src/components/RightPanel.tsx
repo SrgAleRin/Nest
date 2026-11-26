@@ -2,11 +2,12 @@ import { useState } from 'react';
 import type { NestClient, Session, Task } from '@nest/shared';
 import { ComparePanel } from './ComparePanel';
 import { DiffPanel } from './DiffPanel';
+import { FilesPanel } from './FilesPanel';
 import { GitPanel } from './GitPanel';
 import { HistoryPanel } from './HistoryPanel';
 import { SessionsPanel } from './SessionsPanel';
 
-export type RightTab = 'git' | 'history' | 'compare' | 'diff' | 'sessions';
+export type RightTab = 'git' | 'files' | 'history' | 'compare' | 'diff' | 'sessions';
 
 interface RightPanelProps {
   client: NestClient;
@@ -51,6 +52,7 @@ export function RightPanel(props: RightPanelProps) {
         {(
           [
             ['git', 'Git'],
+            ['files', 'Files'],
             ['history', 'History'],
             ['compare', 'Compare'],
             ['diff', 'Diff'],
@@ -83,6 +85,15 @@ export function RightPanel(props: RightPanelProps) {
               selectCommit(null);
               setTab('history');
             }}
+          />
+        ) : null}
+
+        {tab === 'files' ? (
+          <FilesPanel
+            key={props.task?.id ?? 'none'}
+            client={props.client}
+            task={props.task}
+            refreshKey={props.refreshKey}
           />
         ) : null}
 

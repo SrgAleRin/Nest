@@ -2,6 +2,7 @@ import { Skeleton } from '@nest/ui';
 
 const GIT_ROW_WIDTHS = [52, 71, 44, 63, 58, 77];
 const DIFF_LINE_WIDTHS = [64, 82, 46, 73, 58, 88, 69];
+const FILE_ROW_WIDTHS = [58, 42, 67, 36, 74, 50, 63, 45, 70, 54];
 
 export function SettingsListSkeleton() {
   return (
@@ -55,6 +56,26 @@ export function GitPanelSkeleton() {
         <Skeleton width={120} height={20} radius={6} />
       </div>
       <span className="sr-only">Loading git status…</span>
+    </div>
+  );
+}
+
+export function FilesPanelSkeleton() {
+  return (
+    <div className="files-panel" role="status" aria-label="Loading files">
+      <div className="files-head">
+        <Skeleton width={64} height={8} />
+        <Skeleton width={52} height={16} radius={5} />
+      </div>
+      <div className="files-scroll">
+        {FILE_ROW_WIDTHS.map((width, row) => (
+          <div className="files-skeleton-row" key={row}>
+            <Skeleton width={12} height={10} radius={3} />
+            <Skeleton width={`${width}%`} height={9} />
+          </div>
+        ))}
+      </div>
+      <span className="sr-only">Loading files…</span>
     </div>
   );
 }
