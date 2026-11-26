@@ -7,10 +7,12 @@ import {
   nowIso,
   slugify,
   type NestEvent,
+  type Project,
   type Task,
 } from '@nest/shared';
 import type { Db } from '../db/database.js';
 import { NestError } from '../errors.js';
+import { baseRefExists, currentBranch } from '../git/base.js';
 import { git, gitOrNull } from '../git/exec.js';
 import { ProjectService, normalizePath } from './projects.js';
 import { prepareWorkspace } from './setup.js';
@@ -20,10 +22,49 @@ import { toTask, type TaskRow } from './rows.js';
 export interface CreateTaskInput {
   projectId: string;
   title: string;
-  baseBranch?: string;
+  /** Overrides the project default base ref. */
+  baseRef?: string;
   /** Replaces the project setup script when provided (undefined keeps it). */
   setupScript?: string | null;
+  /**
+   * Renderer-generated handle for progress events and `tasks.abort`. Optional
+   * for internal callers; every creation still runs as one operation.
+   */
+  operationId?: string;
 }
+
+export interface PreviewTaskInput {
+  projectId: string;
+  title?: string;
+  baseRef?: string;
+}
+
+export interface TaskPreview {
+  /** Null while the title is still empty: no slug, no branch, no path yet. */
+  branch: string | null;
+  slug: string | null;
+  workspacePath: string | null;
+  baseRef: string | null;
+  baseSource: 'explicit' | 'project' | 'current';
+  baseAvailable: boolean;
+}
+
+/**
+ * One `tasks.create` call. The renderer generates the id, listens for
+ * `task:progress` events tagged with it, and can abort it through
+ * `tasks.abort` even after the dialog was closed.
+ */
+interface Operation {
+  projectId: string;
+  state: 'running' | 'settled';
+  aborted: boolean;
+  taskId: string | null;
+  startedAt: number;
+}
+
+/** How long a finished operation stays abortable (its task removable again). */
+const OPERATION_TTL_MS = 5 * 60_000;
+const MAX_SETTLED_OPERATIONS = 20;
 
 const FETCH_TIMEOUT_MS = 60_000;
 
@@ -47,6 +88,8 @@ export class TaskService {
    * a failed creation does not block the next one.
    */
   private readonly creating = new Map<string, Promise<unknown>>();
+  /** Live and recently finished creations, keyed by the renderer's operation id. */
+  private readonly operations = new Map<string, Operation>();
 
   constructor(
     private readonly db: Db,
@@ -113,23 +156,130 @@ export class TaskService {
     return checkout;
   }
 
+  /**
+   * What `tasks.create` would produce right now, so the dialog can show the
+   * branch, the worktree path and the effective base before anything exists.
+   * Read-only: nothing is fetched, created or stored (except a lazily resolved
+   * project default, which is the same value `create` would use).
+   */
+  async preview(input: PreviewTaskInput): Promise<TaskPreview> {
+    const project = this.projects.get(input.projectId);
+    const base = await this.effectiveBase(project, input.baseRef);
+    const baseAvailable = base.ref ? await baseRefExists(project.path, base.ref) : false;
+    const title = input.title?.trim() ?? '';
+    if (!title) {
+      return {
+        branch: null,
+        slug: null,
+        workspacePath: null,
+        baseRef: base.ref,
+        baseSource: base.source,
+        baseAvailable,
+      };
+    }
+    const plan = await this.planNames(project, title, this.worktreesRoot());
+    return {
+      branch: plan.branch,
+      slug: plan.slug,
+      workspacePath: plan.worktreePath,
+      baseRef: base.ref,
+      baseSource: base.source,
+      baseAvailable,
+    };
+  }
+
   /** Creates a task, serialized per project. */
   async create(input: CreateTaskInput): Promise<Task> {
+    const operationId = input.operationId ?? newId();
+    const operation: Operation = {
+      projectId: input.projectId,
+      state: 'running',
+      aborted: false,
+      taskId: null,
+      startedAt: Date.now(),
+    };
+    this.pruneOperations();
+    this.operations.set(operationId, operation);
+
     const previous = this.creating.get(input.projectId) ?? Promise.resolve();
     const run = previous.then(
-      () => this.createTask(input),
-      () => this.createTask(input),
+      () => this.createTask(input, operation, operationId),
+      () => this.createTask(input, operation, operationId),
     );
     const tail = run.catch(() => {});
     this.creating.set(input.projectId, tail);
     try {
-      return await run;
+      const task = await run;
+      operation.state = 'settled';
+      operation.taskId = task.id;
+      this.emit({
+        type: 'task:operation',
+        operationId,
+        projectId: input.projectId,
+        state: 'done',
+        taskId: task.id,
+      });
+      return task;
+    } catch (error) {
+      operation.state = 'settled';
+      const aborted = isAbort(error);
+      this.emit({
+        type: 'task:operation',
+        operationId,
+        projectId: input.projectId,
+        state: aborted ? 'aborted' : 'failed',
+        ...(operation.taskId ? { taskId: operation.taskId } : {}),
+        ...(aborted ? {} : { message: errorText(error) }),
+      });
+      throw error;
     } finally {
       if (this.creating.get(input.projectId) === tail) this.creating.delete(input.projectId);
     }
   }
 
-  private async createTask(input: CreateTaskInput): Promise<Task> {
+  /**
+   * Cancels a creation. A running operation is flagged and unwinds at its next
+   * checkpoint, removing only the worktree, branch and row it created itself.
+   * A just-finished operation can be cancelled too, as long as nobody started a
+   * session in its task yet: then the same artefacts are removed here.
+   */
+  async abort(operationId: string): Promise<{ aborted: boolean }> {
+    const operation = this.operations.get(operationId);
+    if (!operation) return { aborted: false };
+
+    if (operation.state === 'running') {
+      operation.aborted = true;
+      return { aborted: true };
+    }
+
+    if (!operation.taskId || this.hasSessions(operation.taskId)) return { aborted: false };
+    const taskId = operation.taskId;
+    const task = this.get(taskId);
+    if (task.kind === 'checkout') return { aborted: false };
+    const project = this.projects.get(task.projectId);
+    // The same rollback an interrupted creation uses: worktree, then the row,
+    // then the branch if no worktree uses it any more.
+    await this.rollbackCreate(project.path, task.workspacePath, task.branch, {
+      worktree: existsSync(task.workspacePath),
+      branch: true,
+    });
+    this.operations.delete(operationId);
+    this.deleteRow(taskId);
+    this.emit({
+      type: 'task:operation',
+      operationId,
+      projectId: operation.projectId,
+      state: 'aborted',
+      taskId,
+    });
+    return { aborted: true };
+  }
+
+  private async createTask(
+    input: CreateTaskInput,
+    operation: Operation,
+    operationId: string,
+  ): Promise<Task> {
     let project = this.projects.get(input.projectId);
     if (input.setupScript !== undefined) {
       project = this.projects.update(project.id, { setupScript: input.setupScript });
@@ -148,41 +298,24 @@ export class TaskService {
 
     // Refresh remote refs so a task created from origin/main does not start on
     // a stale base. Best effort: offline or remote-less repos still work.
-    this.emit({ type: 'task:progress', projectId: project.id, step: 'fetch' });
+    this.emit({ type: 'task:progress', operationId, projectId: project.id, step: 'fetch' });
     await this.fetch(project.path);
+    this.throwIfAborted(operation);
 
-    const base = await this.resolveBaseBranch(project.path, input.baseBranch);
-    const existing = new Set(
-      (this.db
-        .prepare('SELECT slug FROM tasks WHERE project_id = ?')
-        .all(project.id) as Array<{ slug: string }>).map((row) => row.slug),
-    );
-
-    const baseSlug = slugify(input.title);
-    let slug = baseSlug === 'main' ? 'main-task' : baseSlug;
-    let counter = 2;
-    while (existing.has(slug)) {
-      slug = `${baseSlug}-${counter}`;
-      counter += 1;
-    }
-
-    let branch = `nest/${slug}`;
-    let branchCounter = 2;
-    while (await branchExists(project.path, branch)) {
-      branch = `nest/${slug}-${branchCounter}`;
-      branchCounter += 1;
-    }
-
-    const worktreePath = path.join(worktreesRoot, projectDirName(project), slug);
+    const base = await this.resolveBase(project, input.baseRef);
+    const plan = await this.planNames(project, input.title, worktreesRoot);
+    const { slug, branch, worktreePath } = plan;
     const worktreeExisted = existsSync(worktreePath);
     const branchExisted = await branchExists(project.path, branch);
 
-    this.emit({ type: 'task:progress', projectId: project.id, step: 'worktree' });
+    this.emit({ type: 'task:progress', operationId, projectId: project.id, step: 'worktree' });
     try {
+      this.throwIfAborted(operation);
       // --no-track keeps base and upstream apart: nest/<slug> starts at
       // origin/main without inheriting it as its own upstream, so push.default
       // cannot turn the first push into an update of main.
       await git(project.path, ['worktree', 'add', '--no-track', '-b', branch, worktreePath, base]);
+      this.throwIfAborted(operation);
     } catch (error) {
       // git may have created the branch or a half-made directory first.
       await this.rollbackCreate(project.path, worktreePath, branch, {
@@ -211,9 +344,17 @@ export class TaskService {
           timestamp,
           timestamp,
         );
+      operation.taskId = id;
+      // Cancelled between the worktree and the row: the row is this operation's
+      // own, so it goes away together with the worktree and the branch.
+      this.throwIfAborted(operation);
     } catch (error) {
       // Only this call's artifacts: the worktree created just above and, if
       // nobody else uses it, the branch. Other tasks are never touched.
+      if (operation.taskId === id) {
+        this.deleteRow(id);
+        operation.taskId = null;
+      }
       await this.rollbackCreate(project.path, worktreePath, branch, {
         worktree: true,
         branch: !branchExisted,
@@ -223,7 +364,7 @@ export class TaskService {
 
     // Setup runs after the row exists, so a failing script leaves a visible
     // task with its worktree and an explanation instead of an orphan folder.
-    this.emit({ type: 'task:progress', projectId: project.id, step: 'setup' });
+    this.emit({ type: 'task:progress', operationId, projectId: project.id, step: 'setup' });
     const setupError = await prepareWorkspace({
       projectPath: project.path,
       workspacePath: worktreePath,
@@ -236,7 +377,116 @@ export class TaskService {
         .run(setupError, nowIso(), id);
     }
 
+    // A cancel that arrived while setup ran still removes everything.
+    if (operation.aborted) {
+      this.deleteRow(id);
+      operation.taskId = null;
+      await this.rollbackCreate(project.path, worktreePath, branch, {
+        worktree: true,
+        branch: !branchExisted,
+      });
+      throw new NestError('task_aborted', 'Task creation was cancelled');
+    }
+
     return this.get(id);
+  }
+
+  private throwIfAborted(operation: Operation): void {
+    if (operation.aborted) {
+      throw new NestError('task_aborted', 'Task creation was cancelled');
+    }
+  }
+
+  /** Slug and branch stay unique inside the project, exactly as `create` needs them. */
+  /** Also used by `preview`, which must not create the directory. */
+  private worktreesRoot(): string {
+    return resolveWorktreesRoot(this.defaultWorktreesRoot, this.workspaceSettings().worktreeRoot);
+  }
+
+  private async planNames(
+    project: Project,
+    title: string,
+    worktreesRoot: string,
+  ): Promise<{ slug: string; branch: string; worktreePath: string }> {
+    const existing = new Set(
+      (
+        this.db.prepare('SELECT slug FROM tasks WHERE project_id = ?').all(project.id) as Array<{
+          slug: string;
+        }>
+      ).map((row) => row.slug),
+    );
+
+    const baseSlug = slugify(title);
+    let slug = baseSlug === 'main' ? 'main-task' : baseSlug;
+    let counter = 2;
+    while (existing.has(slug)) {
+      slug = `${baseSlug}-${counter}`;
+      counter += 1;
+    }
+
+    let branch = `nest/${slug}`;
+    let branchCounter = 2;
+    while (await branchExists(project.path, branch)) {
+      branch = `nest/${slug}-${branchCounter}`;
+      branchCounter += 1;
+    }
+
+    return {
+      slug,
+      branch,
+      worktreePath: path.join(worktreesRoot, projectDirName(project), slug),
+    };
+  }
+
+  /**
+   * Explicit base, else the stored project default, else the current branch for
+   * projects registered before the default was stored.
+   */
+  private async effectiveBase(
+    project: Project,
+    requested?: string,
+  ): Promise<{ ref: string | null; source: 'explicit' | 'project' | 'current' }> {
+    const explicit = requested?.trim();
+    if (explicit) return { ref: explicit, source: 'explicit' };
+    const stored = await this.projects.ensureDefaultBase(project.id);
+    if (stored) return { ref: stored, source: 'project' };
+    return { ref: await currentBranch(project.path), source: 'current' };
+  }
+
+  /** The base ref must exist locally or as a remote-tracking branch. */
+  private async resolveBase(project: Project, requested?: string): Promise<string> {
+    const base = await this.effectiveBase(project, requested);
+    if (!base.ref) {
+      throw new NestError('detached_head', 'Repository is in detached HEAD state');
+    }
+    if (!(await baseRefExists(project.path, base.ref))) {
+      throw new NestError(
+        'base_branch_missing',
+        `Branch ${base.ref} does not exist locally or on a remote`,
+      );
+    }
+    return base.ref;
+  }
+
+  private hasSessions(taskId: string): boolean {
+    const row = this.db.prepare('SELECT 1 AS found FROM sessions WHERE task_id = ?').get(taskId) as
+      { found: number } | undefined;
+    return Boolean(row);
+  }
+
+  /** Keeps the operation map small: finished operations expire after a while. */
+  private pruneOperations(): void {
+    const cutoff = Date.now() - OPERATION_TTL_MS;
+    const settled: Array<[string, Operation]> = [];
+    for (const [key, operation] of this.operations) {
+      if (operation.state === 'running') continue;
+      if (operation.startedAt < cutoff) this.operations.delete(key);
+      else settled.push([key, operation]);
+    }
+    settled
+      .sort((a, b) => a[1].startedAt - b[1].startedAt)
+      .slice(0, Math.max(0, settled.length - MAX_SETTLED_OPERATIONS))
+      .forEach(([key]) => this.operations.delete(key));
   }
 
   async remove(taskId: string, options: { force?: boolean } = {}): Promise<void> {
@@ -249,8 +499,7 @@ export class TaskService {
       const changes = await this.worktreeChanges(task.workspacePath);
       if (changes.length > 0) {
         const preview = changes.slice(0, 20).join('\n');
-        const more =
-          changes.length > 20 ? `\n…and ${changes.length - 20} more changed files` : '';
+        const more = changes.length > 20 ? `\n…and ${changes.length - 20} more changed files` : '';
         throw new NestError(
           'workspace_dirty',
           `Worktree has ${changes.length} uncommitted change${changes.length === 1 ? '' : 's'}`,
@@ -414,25 +663,14 @@ export class TaskService {
     if (!remotes) return;
     await gitOrNull(repoPath, ['fetch', '--prune'], { timeout: FETCH_TIMEOUT_MS });
   }
+}
 
-  private async resolveBaseBranch(repoPath: string, requested?: string): Promise<string> {
-    if (requested) {
-      // Accept both a local branch (main) and a remote-tracking one (origin/main):
-      // without a remote, or when the base only exists upstream, the latter is
-      // the only usable ref.
-      if (await refExists(repoPath, `refs/heads/${requested}`)) return requested;
-      if (await refExists(repoPath, `refs/remotes/${requested}`)) return requested;
-      throw new NestError(
-        'base_branch_missing',
-        `Branch ${requested} does not exist locally or on a remote`,
-      );
-    }
-    const current = await gitOrNull(repoPath, ['symbolic-ref', '--short', 'HEAD']);
-    if (!current) {
-      throw new NestError('detached_head', 'Repository is in detached HEAD state');
-    }
-    return current;
-  }
+function isAbort(error: unknown): boolean {
+  return error instanceof NestError && error.code === 'task_aborted';
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function refExists(repoPath: string, ref: string): Promise<boolean> {

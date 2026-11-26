@@ -203,4 +203,17 @@ export const migrations: Migration[] = [
         ADD COLUMN anchor_staged INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    id: 12,
+    name: 'project_default_base_ref',
+    sql: `
+      -- Base ref new tasks of this project branch from. Resolved once when the
+      -- project is registered: origin/HEAD when it exists, otherwise the branch
+      -- that was checked out. Rows added before this migration stay NULL and are
+      -- resolved on first use, so an existing project behaves as it did.
+
+      ALTER TABLE projects
+        ADD COLUMN default_base_ref TEXT;
+    `,
+  },
 ];

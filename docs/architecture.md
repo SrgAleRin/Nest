@@ -474,6 +474,23 @@ finished после Quit/рестарта.
 
 На Windows тосты требуют AppUserModelID; main выставляет `dev.nest.desktop` (совпадает с `appId` в `electron-builder.yml`).
 
+### 6.8.1 Создание задачи как операция
+
+`tasks.create` принимает `operationId` от renderer, `task:progress` повторяет его вместе с `step`
+(`fetch`, `worktree`, `setup`, `start`…), а `task:operation` закрывает операцию состоянием
+`done | failed | aborted` (с `taskId` или сообщением). Дерево показывает ожидающую строку по
+`operationId`, поэтому прогресс виден и с закрытой модалкой.
+
+`tasks.preview` — read-only: он считает slug, ветку, путь и эффективную базу, ничего не создавая и
+не делая сетевых вызовов. `tasks.abort` снимает флаг операции; `create` проверяет его между шагами
+(`throwIfAborted`) и откатывает только свои артефакты (worktree, ветку, строку задачи) — чужие
+worktree не трогаются, сессия не стартует. `Cancel` в модалке вызывает `abort`, `Close` просто
+закрывает окно.
+
+База задачи: явный `baseRef` → сохранённый `projects.default_base_ref` (миграция 12, заполняется
+лениво для старых строк через `ensureDefaultBase`) → текущая ветка. Default при добавлении проекта
+— `origin/HEAD`, иначе текущая ветка; `fetch` не выполняется.
+
 ### 6.9 Command palette
 
 `Ctrl+Shift+P` открывает палитру команд (намеренно не `Ctrl+K` — в шелле это kill-line). Renderer строит плоский список `CommandItem` на каждый рендер: задачи, сессии, запуск доступных harness, stop/resume текущей сессии, переключение панелей Git/History/Compare/Diff/Sessions, `New task`, `Add project`, `Settings`, `Reveal workspace`, `Refresh git`, `Fetch`, `Pull`. `filterCommands` сортирует совпадения по prefix > substring > subsequence и учитывает `detail`/`keywords`.

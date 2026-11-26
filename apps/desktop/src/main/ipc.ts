@@ -75,11 +75,16 @@ export function registerIpc(context: IpcContext): void {
 
     'tasks.list': ({ projectId }) => core.tasks.list(projectId),
 
+    'tasks.preview': ({ projectId, title, baseRef }) =>
+      core.tasks.preview({ projectId, title, baseRef }),
+
     'tasks.create': async (input) => {
       const task = await core.tasks.create(input);
       tasksChanged();
       return task;
     },
+
+    'tasks.abort': async ({ operationId }) => core.tasks.abort(operationId),
 
     'tasks.remove': async ({ taskId, force }) => {
       await core.tasks.remove(taskId, { force });

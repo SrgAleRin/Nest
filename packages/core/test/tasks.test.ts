@@ -129,7 +129,7 @@ describe('task setup', () => {
     const task = await core.tasks.create({
       projectId,
       title: 'From origin main',
-      baseBranch: 'origin/main',
+      baseRef: 'origin/main',
       setupScript: null,
     });
 
@@ -145,7 +145,7 @@ describe('task setup', () => {
   it('rejects an unknown base branch', async () => {
     if (!core) throw new Error('core was not created');
     await expect(
-      core.tasks.create({ projectId, title: 'Bad base', baseBranch: 'missing-branch' }),
+      core.tasks.create({ projectId, title: 'Bad base', baseRef: 'missing-branch' }),
     ).rejects.toThrow(/does not exist/);
   });
 

@@ -184,7 +184,9 @@ test('opens a plain terminal and closes tabs for good', async () => {
   await page.locator('.right-tab').first().click();
   await page.keyboard.press('Control+n');
   await expect(page.locator('.modal')).toBeVisible();
-  await page.locator('.modal').getByRole('button', { name: 'Close' }).click();
+  // The header X and the footer button are both labelled Close; the footer one
+  // dismisses without cancelling anything.
+  await page.locator('.modal').getByRole('button', { name: 'Close' }).last().click();
   await expect(page.locator('.modal')).toHaveCount(0);
 
   // Ctrl+W closes the active tab while the focus is outside the terminal; with

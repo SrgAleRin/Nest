@@ -10,6 +10,7 @@ import {
 } from '@nest/shared';
 import type { Db } from '../db/database.js';
 import { NestError } from '../errors.js';
+import { resolveDefaultBase } from '../git/base.js';
 import { git } from '../git/exec.js';
 import { toProject, toTask, type ProjectRow, type TaskRow } from './rows.js';
 import { normalizeSetupScript } from './setup.js';
@@ -36,8 +37,7 @@ export class ProjectService {
 
   get(projectId: string): Project {
     const row = this.db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId) as
-      | ProjectRow
-      | undefined;
+      ProjectRow | undefined;
     if (!row) throw new NestError('project_not_found', `Project ${projectId} was not found`);
     return toProject(row);
   }
@@ -80,6 +80,9 @@ export class ProjectService {
     }
 
     const branch = (await git(projectPath, ['rev-parse', '--abbrev-ref', 'HEAD'])).stdout.trim();
+    // The base is resolved once, here, and stored: a checkout of another branch
+    // later must not silently move where new tasks branch from.
+    const defaultBaseRef = await resolveDefaultBase(projectPath);
     const projectId = newId();
     const checkoutId = newId();
     const createdAt = nowIso();
@@ -88,8 +91,10 @@ export class ProjectService {
     this.db.exec('BEGIN');
     try {
       this.db
-        .prepare('INSERT INTO projects (id, name, path, created_at) VALUES (?, ?, ?, ?)')
-        .run(projectId, name, projectPath, createdAt);
+        .prepare(
+          'INSERT INTO projects (id, name, path, default_base_ref, created_at) VALUES (?, ?, ?, ?, ?)',
+        )
+        .run(projectId, name, projectPath, defaultBaseRef, createdAt);
       this.db
         .prepare(
           `INSERT INTO tasks (id, project_id, kind, slug, title, branch, workspace_path, status, created_at, updated_at)
@@ -129,19 +134,31 @@ export class ProjectService {
     this.db.prepare('DELETE FROM projects WHERE id = ?').run(projectId);
   }
 
-  update(
-    projectId: string,
-    patch: { setupScript?: string | null },
-  ): Project {
+  /**
+   * Default base ref of the project, resolved once and then reused. Rows that
+   * predate migration 12 have no value yet, so the first read resolves and
+   * stores one; a repository that cannot answer (no commit, no HEAD) keeps NULL
+   * and `tasks.create` falls back to the current branch as before.
+   */
+  async ensureDefaultBase(projectId: string): Promise<string | null> {
+    const project = this.get(projectId);
+    if (project.defaultBaseRef) return project.defaultBaseRef;
+    const resolved = await resolveDefaultBase(project.path);
+    if (!resolved) return null;
+    this.db
+      .prepare('UPDATE projects SET default_base_ref = ? WHERE id = ?')
+      .run(resolved, projectId);
+    return resolved;
+  }
+
+  update(projectId: string, patch: { setupScript?: string | null }): Project {
     this.get(projectId);
     if (patch.setupScript !== undefined) {
       const script = normalizeSetupScript(patch.setupScript);
       if (script && script.length > 2000) {
         throw new NestError('invalid_setup_script', 'Setup script is too long (max 2000 chars)');
       }
-      this.db
-        .prepare('UPDATE projects SET setup_script = ? WHERE id = ?')
-        .run(script, projectId);
+      this.db.prepare('UPDATE projects SET setup_script = ? WHERE id = ?').run(script, projectId);
     }
     return this.get(projectId);
   }

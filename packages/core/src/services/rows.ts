@@ -18,6 +18,7 @@ export interface ProjectRow {
   name: string;
   path: string;
   setup_script: string | null;
+  default_base_ref: string | null;
   created_at: string;
 }
 
@@ -79,6 +80,7 @@ export function toProject(row: ProjectRow): Project {
     name: row.name,
     path: row.path,
     setupScript: row.setup_script,
+    defaultBaseRef: row.default_base_ref ?? null,
     createdAt: row.created_at,
   };
 }
