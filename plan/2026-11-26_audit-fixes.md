@@ -60,6 +60,25 @@ A6 слит (`9ae60ce`), миграция A6 перенумерована в 8 (
 | 8   | A13+A14 — состояние ветки и вкладок           | `renderer/App.tsx`, `main/ipc.ts` (checkout-обновление метаданных)                   |
 | 9   | Границы Electron (улучшение №3)               | `main/index.ts`, `main/ipc.ts`, `core/services/comments.ts`, `core/services/setup.ts` |
 
+## Итог: всё слито в `audit/2026-11-fixes`
+
+A1–A16 и границы Electron закрыты; сквозной E2E добавлен. Проверка после всех мерджей:
+`typecheck`, `lint`, `build` — зелёные; `test` — 5 shared + 183 core (2 skipped) + 104 desktop;
+`playwright --grep-invert 'packaged|plain HTTP feed'` — 12 passed, включая новый
+`e2e/workflow.spec.ts` (New Task через UI → FakeHarness → diff-режимы → заметка и отправка →
+commit → первый push в локальный bare origin → рестарт → удаление).
+
+Решения координатора при слиянии:
+
+1. Нумерация миграций: A3/A6/A4/A7 писали на одной базе — итог 7 (`resume_mode_heuristic`),
+   8 (`task_base_ref`), 9 (`stream_position`), 10 (`stop_requested`), 11 (anchor-*).
+2. Конфликт `comments.ts`: взят side-aware reader из A7 (`git/sides.ts`), в него возвращена
+   проверка границ из Electron-хардненинга (realpath symlink/junction, отказ — ошибка, а не
+   «нет якоря»).
+3. `eslint.config.js` игнорирует вложенные git-worktree (`.git`-файл), иначе `pnpm lint` падал на
+   `flatworm/` и на самих воркспейсах Orca.
+4. `docs/product.md`: поиск везде `Ctrl+Shift+P`.
+
 ## Остаётся за координатором
 
 1. Слияние веток в `audit/2026-11-fixes`, разрешение конфликтов в `ipc.ts`/`rpc.ts`/`App.tsx`.
