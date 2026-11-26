@@ -3,6 +3,8 @@ import path from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { createCore, type Core } from '@nest/core';
 import type { AppInfo, NestEvent } from '@nest/shared';
+import { currentAppUrl } from './appUrl';
+import { decideExternalLink, decideNavigation, isAppUrl } from './boundaries';
 import { registerIpc } from './ipc';
 import { setAppBadge, showNotification } from './notifications';
 import { resolveProfileName } from './profile';
@@ -85,17 +87,40 @@ function createWindow(): void {
     mainWindow = null;
   });
 
+  const appUrl = currentAppUrl();
+
+  // Nest is a single window. A new window request never opens one; the URL is
+  // handed to the same link policy the renderer's `app.openExternal` uses.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    openExternalLink(url);
     return { action: 'deny' };
   });
 
-  const devUrl = process.env.ELECTRON_RENDERER_URL;
-  if (!app.isPackaged && devUrl) {
-    void mainWindow.loadURL(devUrl);
-  } else {
-    void mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
-  }
+  // Navigation away from the app document is refused instead of silently
+  // followed; a user-initiated external link still reaches the browser.
+  mainWindow.webContents.on('will-navigate', (details) => {
+    const decision = decideNavigation(details.url, appUrl);
+    if (decision === 'allow') return;
+    details.preventDefault();
+    if (decision === 'external') openExternalLink(details.url);
+  });
+
+  // A subframe has no business loading anything: the app is one document.
+  mainWindow.webContents.on('will-frame-navigate', (details) => {
+    if (!isAppUrl(details.url, appUrl)) details.preventDefault();
+  });
+
+  mainWindow.webContents.on('will-redirect', (details) => {
+    if (!isAppUrl(details.url, appUrl)) details.preventDefault();
+  });
+
+  void mainWindow.loadURL(appUrl.href);
+}
+
+function openExternalLink(raw: string): void {
+  const decision = decideExternalLink(raw);
+  if (!decision.allowed) return;
+  void shell.openExternal(decision.url);
 }
 
 function showWindow(): void {

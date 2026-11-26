@@ -911,11 +911,12 @@ nest/
 - `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`;
 - renderer не имеет доступа к `fs`, `child_process`, `ipcRenderer`;
 - все IPC-входы валидируются zod;
-- пути нормализуются и проверяются на префикс project/worktree;
+- `nest:rpc` принимает вызов только от top-frame окна Nest, чей URL совпадает с URL приложения (`main/boundaries.ts`); остальное — `untrusted_sender`. `setWindowOpenHandler` не открывает окон, `will-navigate`/`will-frame-navigate`/`will-redirect` на чужой документ блокируются;
+- пути, по которым core читает файлы (якоря комментариев, копирование `.env`), разрешаются через `realpath` и проверяются физически, а не по префиксу строки: symlink/junction наружу даёт `path_outside_workspace` (`packages/core/src/paths.ts`);
 - команды запускаются только из реестра harness; custom-профиль добавляет пользователь;
 - текст комментариев рендерится как plain text, без HTML/Markdown-инъекций;
 - CSP: `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'`;
-- внешние ссылки — только через `shell.openExternal` после подтверждения;
+- внешние ссылки — только через `shell.openExternal` и только после единого allowlist (`http:`, `https:`, `mailto:`) в `main/boundaries.ts`; этот же allowlist использует обработчик открытия окон;
 - автообновление — HTTPS;
 - секреты не храним; env наследуем от пользователя, токены harness — их дело;
 - логи не содержат env и токены.

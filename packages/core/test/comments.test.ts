@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -84,5 +84,34 @@ describe('comment anchors', () => {
     writeNotes(['inserted', 'alpha', 'beta', 'gamma', 'delta']);
     const [restored] = await core!.comments.list(taskId);
     expect(restored).toMatchObject({ line: 3, endLine: 4, stale: false });
+  });
+
+  it('refuses an anchor file that a link resolves outside the workspace', async (context) => {
+    const outside = path.join(tempRoot, 'outside');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(path.join(outside, 'secret.txt'), 'outside the workspace\n', 'utf8');
+    try {
+      // A directory link is a symlink on POSIX and a junction on Windows, where
+      // a file symlink needs administrator rights or Developer Mode.
+      symlinkSync(
+        outside,
+        path.join(repoPath, 'escape'),
+        process.platform === 'win32' ? 'junction' : 'dir',
+      );
+    } catch {
+      // The platform cannot create the link; paths.test.ts states the policy.
+      context.skip();
+      return;
+    }
+
+    await expect(
+      core!.comments.create({
+        taskId,
+        filePath: 'escape/secret.txt',
+        line: 1,
+        side: 'new',
+        body: 'read the secret',
+      }),
+    ).rejects.toMatchObject({ code: 'path_outside_workspace' });
   });
 });

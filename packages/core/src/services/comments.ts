@@ -1,4 +1,3 @@
-import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import {
   newId,
@@ -10,6 +9,7 @@ import {
 import type { Db } from '../db/database.js';
 import { NestError } from '../errors.js';
 import { git } from '../git/exec.js';
+import { isSafeRelativePath, resolveInsideWorkspace } from '../paths.js';
 import { anchorBlockText, findAnchorLine } from './anchor.js';
 import { toComment, type CommentRow } from './rows.js';
 import type { SessionService } from './sessions.js';
@@ -181,12 +181,20 @@ export class CommentsService {
     if (!isSafeRelativePath(filePath)) return null;
     try {
       if (side === 'new') {
-        const content = await readFile(path.join(workspacePath, filePath), 'utf8');
+        // The anchor is read from the file the comment points at, so the path
+        // is resolved through symlinks and junctions first: a link leaving the
+        // workspace is refused instead of read.
+        const content = await readFile(
+          await resolveInsideWorkspace(workspacePath, filePath),
+          'utf8',
+        );
         return splitLines(content);
       }
       const { stdout } = await git(workspacePath, ['show', `HEAD:${filePath}`]);
       return splitLines(stdout);
-    } catch {
+    } catch (error) {
+      // A path that escapes the workspace is an error, not a missing file.
+      if (error instanceof NestError) throw error;
       // A deleted file (new side) or a file absent from HEAD (old side).
       return null;
     }
@@ -197,11 +205,6 @@ function splitLines(content: string): string[] {
   const normalized = content.replace(/\r\n/g, '\n');
   const body = normalized.endsWith('\n') ? normalized.slice(0, -1) : normalized;
   return body.split('\n');
-}
-
-function isSafeRelativePath(filePath: string): boolean {
-  if (!filePath || path.isAbsolute(filePath)) return false;
-  return !filePath.split(/[\\/]/).includes('..');
 }
 
 export function formatRange(comment: Pick<ReviewComment, 'line' | 'endLine'>): string {

@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { copyFile, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { assertInsidePhysics } from '../paths.js';
 
 /** Files copied from the project root into every new worktree. */
 export const ENV_FILES = ['.env', '.env.local'] as const;
@@ -39,7 +40,12 @@ export async function copyEnvFiles(projectPath: string, workspacePath: string): 
     const source = path.join(projectPath, file);
     const target = path.join(workspacePath, file);
     if (!(await exists(source)) || (await exists(target))) continue;
-    await copyFile(source, target);
+    // `.env` is often a link (a shared secret file, a per-machine override).
+    // Both ends are checked by their physical path, so a link that points
+    // outside the project or the worktree is refused instead of followed.
+    const physicalSource = await assertInsidePhysics(projectPath, source, file);
+    await assertInsidePhysics(workspacePath, target, file);
+    await copyFile(physicalSource, target);
     copied.push(file);
   }
   return copied;
