@@ -1,3 +1,4 @@
+export * from './comments.js';
 export * from './schemas.js';
 export * from './files.js';
 export * from './git.js';

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DiffModeSchema } from './git.js';
 
 export const ProjectSchema = z.object({
   id: z.string().min(1),
@@ -199,6 +200,14 @@ export const ReviewCommentSchema = z.object({
   status: CommentStatusSchema,
   /** The anchored text was removed or replaced; stored line numbers are a hint. */
   stale: z.boolean(),
+  /** Text of the anchored block at creation; null when the content was unreadable. */
+  excerpt: z.string().nullable(),
+  /**
+   * Diff comparison the note was written against. Anchoring reads the sides of
+   * *that* comparison, not a fixed `HEAD` → workspace pair. Null on rows
+   * created before the comparison was recorded.
+   */
+  anchorMode: DiffModeSchema.nullable(),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
 });

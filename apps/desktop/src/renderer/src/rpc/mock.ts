@@ -12,6 +12,7 @@ import type {
   NestClient,
   NestEvent,
   Project,
+  CommentView,
   ReviewComment,
   RpcMethod,
   RpcParams,
@@ -94,7 +95,7 @@ export function createMockClient(): NestClient {
       updatedAt: now,
     },
   ];
-  let comments: ReviewComment[] = [
+  let comments: CommentView[] = [
     {
       id: 'comment-1',
       taskId: 'task-checkout',
@@ -105,8 +106,28 @@ export function createMockClient(): NestClient {
       body: 'This effect subscribes twice in StrictMode. Unsubscribe on cleanup.',
       status: 'open',
       stale: false,
+      excerpt: 'useEffect(() => { subscribe();',
+      anchorMode: 'unstaged',
       createdAt: now,
       updatedAt: now,
+      placement: { kind: 'inline' },
+    },
+    {
+      // Kept reachable after its hunk was committed: real, just off-patch.
+      id: 'comment-2',
+      taskId: 'task-checkout',
+      filePath: 'src/terminal/bus.ts',
+      line: 4,
+      endLine: 4,
+      side: 'new',
+      body: 'This buffer is flushed on unmount only; do we need a timer?',
+      status: 'open',
+      stale: false,
+      excerpt: 'const pending = new Map<string, string>();',
+      anchorMode: 'both',
+      createdAt: now,
+      updatedAt: now,
+      placement: { kind: 'outside', reason: 'committed' },
     },
   ];
 
@@ -803,10 +824,13 @@ export function createMockClient(): NestClient {
           body: String(params.body),
           status: 'open',
           stale: false,
+          excerpt: null,
+          anchorMode: (params.anchor as { mode?: DiffMode } | undefined)?.mode ?? null,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
-        comments = [...comments, comment];
+        // A note is created from a row of the current view, so it starts inline.
+        comments = [...comments, { ...comment, placement: { kind: 'inline' } }];
         return comment;
       }
       case 'comments.update': {
@@ -823,12 +847,19 @@ export function createMockClient(): NestClient {
         return undefined;
       }
       case 'comments.send': {
+        const comment = comments.find((candidate) => candidate.id === params.commentId);
+        const text = `Review comment — ${comment?.filePath ?? ''}:${comment?.line ?? 0} (${comment?.side ?? 'new'})
+
+${comment?.body ?? ''}
+`;
         const session = sessions.find(
           (candidate) =>
-            candidate.id === params.sessionId &&
+            (params.sessionId === undefined || candidate.id === params.sessionId) &&
             (candidate.status === 'running' || candidate.status === 'idle'),
         );
-        return session ? { sent: true } : { sent: false, reason: 'no_active_session' };
+        return session
+          ? { sent: true, text }
+          : { sent: false, reason: 'no_active_session' as const, text };
       }
       default:
         throw new Error(`Mock does not implement ${method}`);
