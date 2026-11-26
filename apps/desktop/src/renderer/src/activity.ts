@@ -1,6 +1,6 @@
 import type { Session } from '@nest/shared';
 
-export type ActivityKind = 'working' | 'waiting' | 'finished';
+export type ActivityKind = 'working' | 'idle' | 'finished';
 
 export interface ActivityItem {
   kind: ActivityKind;
@@ -9,7 +9,7 @@ export interface ActivityItem {
 
 export interface ActivityGroups {
   working: ActivityItem[];
-  waiting: ActivityItem[];
+  idle: ActivityItem[];
   finished: ActivityItem[];
 }
 
@@ -17,10 +17,11 @@ export interface ActivityGroups {
  * Sessions that deserve attention in the sidebar.
  *
  * - `working`: the PTY is producing output right now.
- * - `waiting`: an agent went quiet while still alive, which usually means it is
- *   asking a question. The open tab and plain shells are skipped, since the
- *   user is already looking at the former and the latter is not asking
- *   anything.
+ * - `idle`: an agent went quiet while still alive. We cannot tell a pending
+ *   question from a finished turn without harness hooks, so the group is
+ *   labelled "Idle" rather than claiming the user is waited on. The open tab
+ *   and plain shells are skipped, since the user is already looking at the
+ *   former and the latter never asks anything.
  * - `finished`: the process ended while the user was elsewhere.
  */
 export function collectActivity(input: {
@@ -29,7 +30,7 @@ export function collectActivity(input: {
   selectedSessionId: string | null;
 }): ActivityGroups {
   const working: ActivityItem[] = [];
-  const waiting: ActivityItem[] = [];
+  const idle: ActivityItem[] = [];
   const finished: ActivityItem[] = [];
 
   for (const session of input.sessions) {
@@ -43,7 +44,7 @@ export function collectActivity(input: {
       session.id !== input.selectedSessionId &&
       session.harnessId !== 'shell'
     ) {
-      waiting.push({ kind: 'waiting', session });
+      idle.push({ kind: 'idle', session });
       continue;
     }
 
@@ -60,7 +61,7 @@ export function collectActivity(input: {
 
   return {
     working: working.sort(newestFirst),
-    waiting: waiting.sort(newestFirst),
+    idle: idle.sort(newestFirst),
     finished: finished.sort(newestFirst),
   };
 }

@@ -18,7 +18,7 @@ function session(overrides: Partial<Session> & Pick<Session, 'id' | 'status'>): 
 }
 
 describe('collectActivity', () => {
-  it('separates working, waiting and unread finished sessions', () => {
+  it('separates working, idle and unread finished sessions', () => {
     const sessions = [
       session({ id: 'run', status: 'running', updatedAt: '2026-01-01T00:00:04.000Z' }),
       session({ id: 'wait', status: 'idle', updatedAt: '2026-01-01T00:00:03.000Z' }),
@@ -37,7 +37,7 @@ describe('collectActivity', () => {
     });
 
     expect(result.working.map((item) => item.session.id)).toEqual(['run']);
-    expect(result.waiting.map((item) => item.session.id)).toEqual(['wait']);
+    expect(result.idle.map((item) => item.session.id)).toEqual(['wait']);
     expect(result.finished.map((item) => item.session.id)).toEqual(['done']);
   });
 
@@ -53,7 +53,7 @@ describe('collectActivity', () => {
       selectedSessionId: 'open',
     });
 
-    expect(result.waiting).toEqual([]);
+    expect(result.idle).toEqual([]);
   });
 
   it('sorts each group newest first', () => {

@@ -110,7 +110,8 @@ Nest должен оставаться маленьким: если функци
 
 - задача;
 - harness-профиль (команда, аргументы, env);
-- статус: `starting`, `running`, `idle`, `needs_input`, `exited`, `failed`;
+- статус: `starting`, `running`, `idle`, `exited`, `failed`. `needs_input` не выделяем: без hooks
+  отличить вопрос агента от законченного хода нельзя, поэтому молчащий агент — `idle`;
 - PID, время старта, длительность, exit code;
 - scrollback (raw log + snapshot);
 - harness session id, если удалось получить (для resume).
@@ -186,14 +187,17 @@ Nest должен оставаться маленьким: если функци
 
 1. Правая панель → `Git`.
 2. Видно branch, ahead/behind, staged/unstaged.
-3. Ввод commit message, `Commit` или `Commit & push`.
-4. После push обновляется ahead/behind; ссылка на remote доступна в Git-панели.
-5. PR-провайдеры (GitHub/GitLab) и checks — позже, не в MVP.
+3. Ввод commit message, `Commit`; `Push` — отдельная кнопка рядом.
+4. Если push упал, коммит остаётся: UI прямо говорит «закоммичено, push не прошёл» с причиной и
+   повтором, а не откатывает коммит.
+5. После push обновляется ahead/behind; ссылка на remote доступна в Git-панели.
+6. PR-провайдеры (GitHub/GitLab) и checks — позже, не в MVP.
 
 ### 5.6 Мониторинг сессий
 
-1. Секция `Running` в сайдбаре — все активные сессии across projects.
-2. Правая панель → `Sessions` — сессии текущей задачи + другие запущенные.
+1. Секция активности в сайдбаре — группы `Working`, `Idle`, `Finished` по всем сессиям. `Idle`
+   означает «агент молчит», а не «ждёт вас»: без hooks мы не знаем про вопрос.
+2. Правая панель → `Sessions` — сессии текущей задачи; остальные задачи открываются из дерева.
 3. Клик по сессии фокусирует её терминал.
 4. Для exited-сессии доступны `Resume exact` (по сохранённому id), `Resume latest` (fallback на последнюю беседу) и `View log`.
 
@@ -316,21 +320,21 @@ center:   Add your first repository
 
 | ID | Требование | Приоритет |
 |---|---|---|
-| FR-01 | Добавление/удаление проекта, проверка git-репозитория, определение base ref | P0 |
+| FR-01 | Добавление/удаление проекта, проверка git-репозитория, определение и сохранение default base ref (`origin/HEAD`, иначе текущая ветка) | P0 |
 | FR-02 | Создание задачи: worktree + ветка, асинхронно, с прогрессом и rollback при ошибке | P0 |
 | FR-02a | Main checkout: singleton на проект, автосоздание, сессии, diff/commit/push, запрет удаления | P0 |
-| FR-03 | Дерево проектов/main checkout/задач/сессий, секция Running, фильтр, клавиатурная навигация | P0 |
+| FR-03 | Дерево проектов/main checkout/задач/сессий, секция активности (`Working`/`Idle`/`Finished`), фильтр, клавиатурная навигация | P0 |
 | FR-04 | Запуск произвольного harness CLI в PTY, несколько сессий на задачу | P0 |
 | FR-05 | Терминал: xterm, resize, copy/paste, search, links, scrollback | P0 |
-| FR-06 | Статусы сессий: starting/running/idle/exited/failed; needs_input через hooks | P0 |
+| FR-06 | Статусы сессий: starting/running/idle/exited/failed. needs_input не вычисляем: молчащий агент — `idle` | P0 |
 | FR-07 | Git status: branch, ahead/behind, staged/unstaged/untracked | P0 |
 | FR-08 | Diff: список файлов, unified diff, подсветка, stage/unstage | P0 |
-| FR-09 | Commit и push | P0 |
+| FR-09 | Commit и push раздельными действиями; упавший push не откатывает коммит | P0 |
 | FR-10 | Панель Sessions: список, focus, stop, restart/resume, view log | P0 |
 | FR-11 | SQLite-персистентность задач и сессий; восстановление scrollback. PTY завершается вместе с приложением, живые сессии автоматически возобновляются через resume | P0 |
 | FR-12 | Настройки: harness-профили (Claude Code, Codex, DSH, OpenCode, pi, Copilot, custom), worktree root, тема, setup hooks | P0 |
 | FR-13 | PR-провайдер (GitHub/GitLab) и checks — позже | P2 |
-| FR-14 | Системные уведомления: needs input, exit, failure | P1 |
+| FR-14 | Системные уведомления: exit и failure (needs input не детектим) | P1 |
 | FR-15 | Command palette | P1 |
 | FR-16 | Комментарии к строкам diff: создание, inline, resolve, отправка в активную сессию | P0 |
 | FR-17 | Resume harness-сессии после exit/restart | P1 |

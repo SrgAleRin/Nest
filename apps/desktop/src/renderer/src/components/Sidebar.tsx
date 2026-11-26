@@ -24,7 +24,7 @@ interface SidebarProps {
 
 const ACTIVITY_GROUPS: Array<{ kind: ActivityKind; label: string }> = [
   { kind: 'working', label: 'Working' },
-  { kind: 'waiting', label: 'Waiting for you' },
+  { kind: 'idle', label: 'Idle' },
   { kind: 'finished', label: 'Finished' },
 ];
 
