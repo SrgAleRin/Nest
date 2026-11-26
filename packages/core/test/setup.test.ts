@@ -127,9 +127,32 @@ describe('copyEnvFiles', () => {
       projectPath: project,
       workspacePath: workspace,
       setupScript: null,
+      copyEnvFiles: true,
     });
     expect(error).toContain('could not copy env files');
     expect(error).toContain('outside the workspace');
+    expect(existsSync(path.join(workspace, '.env.local'))).toBe(false);
+  });
+
+  it('copies nothing when the setting is off, even for a link that escapes', async (context) => {
+    const { project, workspace } = makePair();
+    writeFileSync(path.join(project, '.env'), 'TOKEN=dev\n', 'utf8');
+    const outside = path.join(tempRoot, 'outside-dir-off');
+    mkdirSync(outside, { recursive: true });
+    if (!linkDirectory(outside, path.join(project, '.env.local'))) {
+      context.skip();
+      return;
+    }
+
+    const error = await prepareWorkspace({
+      projectPath: project,
+      workspacePath: workspace,
+      setupScript: null,
+      copyEnvFiles: false,
+    });
+
+    expect(error).toBeNull();
+    expect(existsSync(path.join(workspace, '.env'))).toBe(false);
     expect(existsSync(path.join(workspace, '.env.local'))).toBe(false);
   });
 });

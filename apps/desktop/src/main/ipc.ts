@@ -174,8 +174,15 @@ export function registerIpc(context: IpcContext): void {
       const settings = core.settings.update(patch);
       // The custom command may have changed, so cached PATH lookups are stale.
       core.harnesses.invalidate();
-      // Saving a new feed applies immediately; the status arrives as an event.
-      if (patch.updateFeedUrl !== undefined) void context.updates.check();
+      if (patch.updateFeedUrl !== undefined || patch.updatesEnabled !== undefined) {
+        // Applying supersedes a run bound to the previous feed or switch and
+        // drops its installer; a newly saved feed checks immediately.
+        const status = context.updates.applySettings();
+        const enabling = patch.updatesEnabled === true;
+        if (status.enabled && (patch.updateFeedUrl !== undefined || enabling)) {
+          void context.updates.check();
+        }
+      }
       return settings;
     },
 

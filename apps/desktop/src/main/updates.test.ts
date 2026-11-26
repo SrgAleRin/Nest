@@ -112,7 +112,7 @@ function createToken(): { cancelled: boolean; token: { cancel: () => void } } {
   };
 }
 
-function createHarness(initialFeed: string) {
+function createHarness(initialFeed: string, updatesEnabled = true) {
   const envBefore = { url: process.env.NEST_UPDATE_URL, disabled: process.env.NEST_DISABLE_UPDATES };
   delete process.env.NEST_UPDATE_URL;
   delete process.env.NEST_DISABLE_UPDATES;
@@ -121,6 +121,7 @@ function createHarness(initialFeed: string) {
     disabledHarnesses: [],
     customCommand: '',
     updateFeedUrl: initialFeed,
+    updatesEnabled,
   });
   const events: NestEvent[] = [];
   const updater = new FakeUpdater();
@@ -148,6 +149,9 @@ function createHarness(initialFeed: string) {
     },
     setFeed: (url: string) => {
       settings.updateFeedUrl = url;
+    },
+    setEnabled: (value: boolean) => {
+      settings.updatesEnabled = value;
     },
     statuses: (): UpdateStatus[] =>
       events.filter((event) => event.type === 'updates:status').map((event) => event.status),
@@ -373,6 +377,83 @@ describe('UpdateService', () => {
       expect((failure as NestError).code).toBe('update_not_ready');
       expect((failure as NestError).message).toContain('no longer on disk');
       expect(h.updater.installs).toHaveLength(0);
+    } finally {
+      h.restoreEnv();
+    }
+  });
+
+  it('turns checks off completely when the switch is off', async () => {
+    const h = createHarness(FEED_A);
+    try {
+      h.service.check();
+      expect(h.updater.listenerCount('update-available')).toBe(1);
+
+      h.setEnabled(false);
+      // Saving the switch calls applySettings in the IPC layer.
+      const status = h.service.applySettings();
+      expect(status).toMatchObject({
+        state: 'disabled',
+        enabled: false,
+        percent: null,
+        feedUrl: FEED_A,
+      });
+      expect(status.message).toContain('turned off');
+
+      // The run started for the old switch is superseded: its listeners are
+      // gone and late events cannot change the status.
+      expect(h.updater.listenerCount('update-available')).toBe(0);
+      h.updater.emit('update-available', { version: '9.9.9' });
+      expect(h.service.getStatus()).toMatchObject({ state: 'disabled', availableVersion: null });
+
+      // A check request starts nothing while the switch is off.
+      const before = h.updater.checks.length;
+      expect(h.service.check()).toMatchObject({ state: 'disabled', enabled: false });
+      expect(h.updater.checks).toHaveLength(before);
+
+      h.updater.lastCheck().deferred.resolve({ downloadPromise: null, cancellationToken: null });
+      await flush();
+
+      // Turning it back on resumes checks against the same feed.
+      h.setEnabled(true);
+      expect(h.service.applySettings()).toMatchObject({ state: 'idle', enabled: true });
+      expect(h.service.check()).toMatchObject({ state: 'checking', feedUrl: FEED_A });
+      await flush();
+      expect(h.updater.checks).toHaveLength(before + 1);
+      expect(h.updater.lastCheck().feedUrl).toBe(FEED_A);
+    } finally {
+      h.restoreEnv();
+    }
+  });
+
+  it('starts no check when the switch was already off', () => {
+    const h = createHarness(FEED_A, false);
+    try {
+      expect(h.service.getStatus()).toMatchObject({ state: 'disabled', enabled: false });
+      expect(h.service.check()).toMatchObject({ state: 'disabled', enabled: false });
+      expect(h.updater.checks).toHaveLength(0);
+      expect(h.updater.feedUrls).toHaveLength(0);
+    } finally {
+      h.restoreEnv();
+    }
+  });
+
+  it('drops the downloaded artifact when the switch is turned off', async () => {
+    const h = createHarness(FEED_A);
+    try {
+      h.service.check();
+      h.files.add(FILE_A);
+      h.updater.emit('update-downloaded', { version: '0.2.0', downloadedFile: FILE_A });
+      h.updater.lastCheck().deferred.resolve({ downloadPromise: null, cancellationToken: null });
+      await flush();
+      expect(h.service.getStatus().state).toBe('downloaded');
+
+      h.setEnabled(false);
+      expect(h.service.applySettings()).toMatchObject({ state: 'disabled', enabled: false });
+
+      await expect(h.service.install()).rejects.toMatchObject({ code: 'update_not_ready' });
+      expect(h.updater.installs).toHaveLength(0);
+      // The renderer never sees the old version offered while checks are off.
+      expect(h.statuses().at(-1)).toMatchObject({ state: 'disabled', availableVersion: null });
     } finally {
       h.restoreEnv();
     }

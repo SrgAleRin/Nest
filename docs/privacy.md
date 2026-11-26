@@ -23,7 +23,7 @@ Nest does not create an account and does not upload this database anywhere.
 
 Nest itself makes the following network requests:
 
-- **Update checks.** If an update feed is configured in Settings → Updates, Nest requests `latest.yml` from that feed at startup and every six hours. The request contains no personal data beyond ordinary HTTP metadata (IP address, user agent, timestamp), which is processed by the feed host. The feed recommended for this repository is hosted on GitHub Releases.
+- **Update checks.** Nest checks for updates by default in packaged builds: 20 seconds after launch and every six hours. With an empty **Settings → Updates → Update feed** the request goes to the built-in GitHub Releases feed; a saved URL (or `NEST_UPDATE_URL`) replaces it. Each request fetches `latest.yml` from that feed and contains no personal data beyond ordinary HTTP metadata (IP address, user agent, timestamp), which is processed by the feed host. The switch in Settings → Updates turns checks off completely: no request is made, a run in flight is cancelled and a downloaded installer is dropped.
 - **Git operations.** Fetch, push and other git commands contact the remotes configured in your repository. These operations are initiated by you.
 
 Nest does not include telemetry, analytics, crash reporting, advertising or cloud sync.

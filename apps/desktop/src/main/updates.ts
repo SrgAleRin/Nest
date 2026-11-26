@@ -9,6 +9,7 @@ import { parseUpdateFeedUrl, resolveUpdateFeedUrl } from './updateFeed';
 const STARTUP_DELAY_MS = 20_000;
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const NO_FEED_MESSAGE = 'No update feed configured. Add one in Settings to check for updates.';
+const SWITCHED_OFF_MESSAGE = 'Update checks are turned off in Settings.';
 const CHECKING_MESSAGE = 'Checking for updates…';
 
 /**
@@ -78,7 +79,9 @@ interface UpdateRun {
 /**
  * electron-updater wrapper. A built-in GitHub Releases feed is used by default;
  * a URL saved in Settings or the NEST_UPDATE_URL environment variable overrides
- * it for local experiments and custom hosting.
+ * it for local experiments and custom hosting. The updates switch in Settings
+ * turns checks off completely: it supersedes a run in flight and drops the
+ * installer, exactly like a feed change.
  *
  * Check/download state, its events and the downloaded installer are bound to
  * the feed URL that produced them. A feed change supersedes the run in flight,
@@ -98,6 +101,8 @@ export class UpdateService {
   private status: UpdateStatus;
   /** The feed the current status, run and artifact belong to. */
   private feedUrl: string;
+  /** The saved switch; false means no check ever starts. */
+  private updatesEnabled: boolean;
   private artifact: DownloadedArtifact | null = null;
   /** The run that owns the updater, or a superseded run still unwinding. */
   private run: UpdateRun | null = null;
@@ -131,6 +136,7 @@ export class UpdateService {
     };
     // Resolved after the parameter properties so a failed settings read is contained.
     this.feedUrl = this.resolveFeedUrl();
+    this.updatesEnabled = this.resolveUpdatesEnabled();
 
     this.updater.autoDownload = true;
     // Installing stays on the guarded path: an implicit install on quit could
@@ -140,7 +146,7 @@ export class UpdateService {
   }
 
   start(): void {
-    if (this.started || this.disabledReason()) return;
+    if (this.started || this.disabledReason() || !this.updatesEnabled) return;
     this.started = true;
     this.startupTimer = setTimeout(() => this.check(), STARTUP_DELAY_MS);
     this.intervalTimer = setInterval(() => this.check(), CHECK_INTERVAL_MS);
@@ -155,8 +161,20 @@ export class UpdateService {
   }
 
   getStatus(): UpdateStatus {
-    this.syncFeed();
+    this.syncConfig();
     return this.snapshot();
+  }
+
+  /**
+   * Applies a saved settings change: a new feed URL or the switch supersedes
+   * the run bound to the old configuration, drops its installer and starts or
+   * stops the background timers.
+   */
+  applySettings(): UpdateStatus {
+    this.syncConfig();
+    if (this.updatesEnabled && !this.disabledReason()) this.start();
+    else this.stop();
+    return this.getStatus();
   }
 
   /**
@@ -165,7 +183,7 @@ export class UpdateService {
    * network.
    */
   check(): UpdateStatus {
-    this.syncFeed();
+    this.syncConfig();
     const current = this.snapshot();
     if (!current.enabled) return current;
     if (!this.feedUrl) {
@@ -218,7 +236,7 @@ export class UpdateService {
    * re-resolved here before the decision.
    */
   async install(): Promise<void> {
-    this.syncFeed();
+    this.syncConfig();
     if (this.run && !this.run.finished) {
       throw new NestError(
         'update_not_ready',
@@ -330,13 +348,16 @@ export class UpdateService {
   }
 
   /**
-   * Re-resolves the feed and discards everything bound to the previous one.
-   * Safe to call often: it only acts when the resolved URL actually changed.
+   * Re-resolves the feed and switch, and discards everything bound to the
+   * previous configuration. Safe to call often: it only acts when the resolved
+   * values actually changed.
    */
-  private syncFeed(): void {
+  private syncConfig(): void {
     const feedUrl = this.resolveFeedUrl();
-    if (feedUrl === this.feedUrl) return;
+    const updatesEnabled = this.resolveUpdatesEnabled();
+    if (feedUrl === this.feedUrl && updatesEnabled === this.updatesEnabled) return;
     this.feedUrl = feedUrl;
+    this.updatesEnabled = updatesEnabled;
     this.supersedeRun();
     this.artifact = null;
     this.queued = false;
@@ -448,6 +469,15 @@ export class UpdateService {
     return resolveUpdateFeedUrl(process.env.NEST_UPDATE_URL, fromSettings);
   }
 
+  private resolveUpdatesEnabled(): boolean {
+    try {
+      return this.getSettings().updatesEnabled;
+    } catch {
+      // A failed settings read keeps the default: checks on.
+      return true;
+    }
+  }
+
   private disabledReason(): string | null {
     if (process.env.NEST_DISABLE_UPDATES === '1') {
       return 'Update checks are disabled for this run.';
@@ -461,11 +491,15 @@ export class UpdateService {
     const base: UpdateStatus = {
       ...this.status,
       currentVersion: this.getVersion(),
-      enabled: reason === null,
+      enabled: reason === null && this.updatesEnabled,
       feedUrl: this.feedUrl || null,
     };
 
     if (reason) return { ...base, state: 'disabled', message: reason, percent: null };
+    // The switch turns checks off completely, whatever feed is configured.
+    if (!this.updatesEnabled) {
+      return { ...base, state: 'disabled', message: SWITCHED_OFF_MESSAGE, percent: null };
+    }
     if (!this.feedUrl) {
       return { ...base, state: 'disabled', message: NO_FEED_MESSAGE, percent: null };
     }

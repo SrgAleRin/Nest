@@ -29,7 +29,10 @@ export const AppInfoSchema = z.object({
   profile: z.string().nullable(),
   userData: z.string(),
   dbPath: z.string(),
+  /** Root new worktrees actually use now (settings value or the default). */
   worktreesRoot: z.string(),
+  /** What an empty worktree root setting means. */
+  defaultWorktreesRoot: z.string(),
 });
 export type AppInfo = z.infer<typeof AppInfoSchema>;
 

@@ -765,7 +765,10 @@ Custom-команда задаётся в настройках (⚙ в стат�
     cursorBlink: boolean;
     theme: 'nest' | 'solarized' | 'paper';
   };
+  worktreeRoot: string;
+  copyEnvFiles: boolean;
   updateFeedUrl: string;
+  updatesEnabled: boolean;
   newSessionDefault: HarnessId | 'ask';
 }
 ```
@@ -813,7 +816,7 @@ nest hook --event stop --session $NEST_SESSION_ID
 | Что | Где |
 |---|---|
 | БД | `app.getPath('userData')/nest.db` |
-| Worktrees | `~/Nest/worktrees/<project>-<id8>/<task-slug>` (настраивается; суффикс — первые 8 hex id проекта, старые пути не мигрируются) |
+| Worktrees | `worktreeRoot` из настроек, по умолчанию `~/Nest/worktrees` (`NEST_WORKTREES_ROOT` перекрывает путь по умолчанию); `/<project>-<id8>/<task-slug>`, суффикс — первые 8 hex id проекта. Новый корень применяется к новым задачам, старые пути не мигрируются, непригодный каталог даёт `worktree_root_unusable` |
 | Main checkout | путь самого проекта (без копии) |
 | Логи сессий | `userData/sessions/<session-id>.log` |
 | Snapshots | `userData/sessions/<session-id>.snapshot` |
@@ -1062,12 +1065,12 @@ Windows-first:
 
 ### 14.1 Auto-update
 
-Обновления работают только в упакованной сборке (`app.isPackaged`), в dev и e2e — отключены (`NEST_DISABLE_UPDATES=1` для принудительного отключения). Источник — статический каталог с `latest.yml` и установщиком (generic provider), URL задаётся в Settings → Updates и хранится в `app_settings.updateFeedUrl`; `NEST_UPDATE_URL` перекрывает настройку для экспериментов. Публичный feed обязан быть HTTPS — обновление исполняет скачанный установщик; HTTP допускается только для loopback при локальной проверке.
+Обновления работают только в упакованной сборке (`app.isPackaged`), в dev и e2e — отключены (`NEST_DISABLE_UPDATES=1` для принудительного отключения). Источник — статический каталог с `latest.yml` и установщиком (generic provider), URL задаётся в Settings → Updates и хранится в `app_settings.updateFeedUrl` (пустое значение = встроенный GitHub Releases feed); `NEST_UPDATE_URL` перекрывает настройку для экспериментов. Выключатель `app_settings.updatesEnabled` (по умолчанию `true`) полностью прекращает проверки: статус `disabled`, текущий run устаревает, артефакт сбрасывается. Публичный feed обязан быть HTTPS — обновление исполняет скачанный установщик; HTTP допускается только для loopback при локальной проверке.
 
 - main: `UpdateService` в `apps/desktop/src/main/updates.ts`; первый check через 20 с после старта, дальше раз в 6 часов; `autoDownload = true`, `autoInstallOnAppQuit = false` — установщик запускает только `updates.install`, чтобы на выходе не сработал артефакт от прежнего feed;
 - контракт: `updates.status` / `updates.check` / `updates.install` и событие `updates:status`; renderer показывает статус в Settings и бейдж «Update ready» в статусбаре;
 - статус, проверка, загрузка и скачанный артефакт привязаны к feed URL, который их породил. Смена URL прерывает загрузку (CancellationToken) или помечает текущий run устаревшим, снимает его подписки на события, очищает артефакт и публикует `idle`; новый check стартует, когда updater освободился (события и результат устаревшего run игнорируются). `updates.install` требует артефакт именно текущего feed, файл на диске и отсутствие активного run, иначе `update_not_ready`;
-- при сохранении нового feed URL `settings.update` сразу запускает проверку, не дожидаясь таймера;
+- при сохранении нового feed URL или включении выключателя `settings.update` вызывает `UpdateService.applySettings()` и сразу запускает проверку, не дожидаясь таймера;
 - `pnpm dist` после `electron-builder` вызывает `scripts/make-latest-yml.mjs`, который считает sha512/size установщика и пишет `latest.yml`; `.blockmap` создаёт electron-builder для дифференциальных обновлений;
 - `quitAndInstall` перезапускает Nest и тем самым завершает PTY-сессии — это ожидаемо при установке обновления.
 

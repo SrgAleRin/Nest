@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   DEFAULT_TERMINAL_PREFERENCES,
   DEFAULT_UPDATE_FEED_URL,
+  type AppInfo,
   type AppSettings,
   type HarnessId,
   type HarnessProfile,
@@ -31,6 +32,10 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
     ...DEFAULT_TERMINAL_PREFERENCES,
   });
   const [updateFeedUrl, setUpdateFeedUrl] = useState('');
+  const [updatesEnabled, setUpdatesEnabled] = useState(true);
+  const [worktreeRoot, setWorktreeRoot] = useState('');
+  const [copyEnvFiles, setCopyEnvFiles] = useState(false);
+  const [info, setInfo] = useState<AppInfo | null>(null);
   const [newSessionDefault, setNewSessionDefault] = useState<NewSessionDefault>('ask');
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [busy, setBusy] = useState(false);
@@ -47,12 +52,14 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [settings, list, status] = await Promise.all([
+      const [settings, list, status, appInfo] = await Promise.all([
         client.invoke('settings.get', {}),
         client.invoke('harness.list', { includeDisabled: true }),
         // Updates are optional: an older preload or a failed call must not
         // block harness settings.
         client.invoke('updates.status', {}).catch(() => null),
+        // The resolved default root is what an empty field means.
+        client.invoke('app.info', {}).catch(() => null),
       ]);
       if (!aliveRef.current) return;
       // The custom profile is configured through the text field below, not
@@ -63,9 +70,13 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
       setHarnessArgs(settings.harnessArgs);
       setShellCommand(settings.shellCommand);
       setTerminal(settings.terminal);
+      setWorktreeRoot(settings.worktreeRoot);
+      setCopyEnvFiles(settings.copyEnvFiles);
       setUpdateFeedUrl(settings.updateFeedUrl);
+      setUpdatesEnabled(settings.updatesEnabled);
       setNewSessionDefault(settings.newSessionDefault);
       if (status) setUpdateStatus(status);
+      if (appInfo) setInfo(appInfo);
     } catch (loadError) {
       if (aliveRef.current) setError(errorMessage(loadError));
     }
@@ -126,7 +137,10 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
         harnessArgs: args,
         shellCommand: shellCommand.trim(),
         terminal,
+        worktreeRoot: worktreeRoot.trim(),
+        copyEnvFiles,
         updateFeedUrl: updateFeedUrl.trim(),
+        updatesEnabled,
         newSessionDefault,
       });
       onSaved(settings);
@@ -157,7 +171,8 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
     updateStatus?.state === 'available' ||
     updateStatus?.state === 'downloading' ||
     updateStatus?.state === 'downloaded';
-  const canCheck = Boolean(updateStatus?.enabled && updateStatus.feedUrl) && !busy && !updateBusy;
+  const canCheck =
+    Boolean(updatesEnabled && updateStatus?.enabled && updateStatus.feedUrl) && !busy && !updateBusy;
 
   return (
     <div className="modal-overlay" onMouseDown={onClose}>
@@ -172,8 +187,9 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
           <div>
             <h2>Settings</h2>
             <p>
-              Terminal appearance, harness launch arguments and updates. Disabling a profile only
-              hides it from the start pickers — sessions that already exist keep resuming.
+              Terminal appearance, workspace paths, harness launch arguments and updates. Disabling
+              a profile only hides it from the start pickers — sessions that already exist keep
+              resuming.
             </p>
           </div>
           <button type="button" className="icon-btn" onClick={onClose} aria-label="Close settings">
@@ -301,6 +317,40 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
                   arguments belong in the Terminal row below.
                 </small>
               </label>
+            </div>
+
+            <div className="settings-section">
+              <span className="section-label">Workspace</span>
+              <label className="field">
+                <span>
+                  Worktree root <em>optional</em>
+                </span>
+                <input
+                  value={worktreeRoot}
+                  onChange={(event) => setWorktreeRoot(event.target.value)}
+                  placeholder={info?.defaultWorktreesRoot ?? 'Default worktree folder'}
+                  maxLength={2000}
+                  spellCheck={false}
+                />
+                <small className="field-hint">
+                  New worktrees are created here. Empty uses <code>{info?.defaultWorktreesRoot ?? 'the default worktree folder'}</code>.
+                  Existing worktrees keep their paths; nothing is moved. An unusable folder is
+                  reported when a task is created.
+                </small>
+              </label>
+              <label className="settings-check">
+                <input
+                  type="checkbox"
+                  checked={copyEnvFiles}
+                  onChange={(event) => setCopyEnvFiles(event.target.checked)}
+                />
+                Copy <code>.env</code> files into new worktrees
+              </label>
+              <small className="field-hint">
+                Off by default: copied keys can end up in a workspace that does not ignore them.
+                Copies are always refused when either file resolves outside the project or the
+                worktree.
+              </small>
             </div>
 
             <div className="settings-section">
@@ -451,6 +501,14 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
                   </div>
                 ) : null}
               </div>
+              <label className="settings-check">
+                <input
+                  type="checkbox"
+                  checked={updatesEnabled}
+                  onChange={(event) => setUpdatesEnabled(event.target.checked)}
+                />
+                Check for updates automatically
+              </label>
               <label className="field">
                 <span>
                   Update feed <em>optional</em>
@@ -465,7 +523,8 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
                 <small className="field-hint">
                   A static directory serving electron-updater&apos;s <code>latest.yml</code>.
                   Packaged builds use the built-in GitHub Releases feed when this is empty and check
-                  on launch and every six hours. <code>NEST_UPDATE_URL</code> overrides both.
+                  on launch and every six hours. Turning the switch off stops every check and drops
+                  a downloaded installer; <code>NEST_UPDATE_URL</code> overrides the address.
                 </small>
               </label>
             </div>

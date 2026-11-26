@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { existsSync } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, stat } from 'node:fs/promises';
 import {
   MAIN_CHECKOUT_SLUG,
   newId,
@@ -14,6 +14,7 @@ import { NestError } from '../errors.js';
 import { git, gitOrNull } from '../git/exec.js';
 import { ProjectService, normalizePath } from './projects.js';
 import { prepareWorkspace } from './setup.js';
+import { resolveWorktreesRoot } from './settings.js';
 import { toTask, type TaskRow } from './rows.js';
 
 export interface CreateTaskInput {
@@ -25,6 +26,18 @@ export interface CreateTaskInput {
 }
 
 const FETCH_TIMEOUT_MS = 60_000;
+
+/** The settings that shape where and how a new worktree is created. */
+export interface TaskWorkspaceSettings {
+  /** Saved worktree root; empty keeps the default root of this instance. */
+  worktreeRoot: string;
+  copyEnvFiles: boolean;
+}
+
+const DEFAULT_WORKSPACE_SETTINGS: TaskWorkspaceSettings = {
+  worktreeRoot: '',
+  copyEnvFiles: false,
+};
 
 export class TaskService {
   private beforeRemove: (task: Task) => void | Promise<void> = () => {};
@@ -38,8 +51,12 @@ export class TaskService {
   constructor(
     private readonly db: Db,
     private readonly projects: ProjectService,
-    private readonly worktreesRoot: string,
+    /** Root used while no worktree root is saved in settings. */
+    private readonly defaultWorktreesRoot: string,
     private readonly emit: (event: NestEvent) => void = () => {},
+    /** Read per creation, so a saved root applies to the next task. */
+    private readonly workspaceSettings: () => TaskWorkspaceSettings = () =>
+      DEFAULT_WORKSPACE_SETTINGS,
   ) {}
 
   onBeforeRemove(handler: (task: Task) => void | Promise<void>): void {
@@ -120,7 +137,14 @@ export class TaskService {
     const checkout = this.projects.checkout(project.id);
     if (!checkout) throw new NestError('checkout_missing', 'Project has no main checkout');
 
-    await mkdir(this.worktreesRoot, { recursive: true });
+    const workspaceSettings = this.workspaceSettings();
+    const worktreesRoot = resolveWorktreesRoot(
+      this.defaultWorktreesRoot,
+      workspaceSettings.worktreeRoot,
+    );
+    // An unusable root is reported here instead of falling back to another
+    // directory the user did not choose.
+    await ensureWorktreesRoot(worktreesRoot);
 
     // Refresh remote refs so a task created from origin/main does not start on
     // a stale base. Best effort: offline or remote-less repos still work.
@@ -149,7 +173,7 @@ export class TaskService {
       branchCounter += 1;
     }
 
-    const worktreePath = path.join(this.worktreesRoot, projectDirName(project), slug);
+    const worktreePath = path.join(worktreesRoot, projectDirName(project), slug);
     const worktreeExisted = existsSync(worktreePath);
     const branchExisted = await branchExists(project.path, branch);
 
@@ -204,6 +228,7 @@ export class TaskService {
       projectPath: project.path,
       workspacePath: worktreePath,
       setupScript: project.setupScript,
+      copyEnvFiles: workspaceSettings.copyEnvFiles,
     });
     if (setupError) {
       this.db
@@ -422,6 +447,26 @@ function gitDetails(error: unknown): string {
 
 async function branchExists(repoPath: string, branch: string): Promise<boolean> {
   return refExists(repoPath, `refs/heads/${branch}`);
+}
+
+/**
+ * Creates the worktree root and proves it is a usable directory. A path that
+ * cannot be created (a file in the way, a missing drive, no permission) is a
+ * structured error for the creation, never a silent switch to another folder.
+ */
+async function ensureWorktreesRoot(root: string): Promise<void> {
+  try {
+    await mkdir(root, { recursive: true });
+    const info = await stat(root);
+    if (!info.isDirectory()) throw new Error('the path is not a directory');
+  } catch (error) {
+    throw new NestError(
+      'worktree_root_unusable',
+      `The worktree root ${root} cannot be used`,
+      `${error instanceof Error ? error.message : String(error)}\n\n` +
+        'Choose another folder in Settings, or clear the field to use the default root.',
+    );
+  }
 }
 
 function sanitizeDir(value: string): string {

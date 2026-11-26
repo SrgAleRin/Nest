@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type { AppSettings, AppSettingsPatch } from '@nest/shared';
 import { AppSettingsSchema, DEFAULT_TERMINAL_PREFERENCES } from '@nest/shared';
 import type { Db } from '../db/database.js';
@@ -10,9 +11,24 @@ export const DEFAULT_SETTINGS: AppSettings = {
   harnessArgs: {},
   shellCommand: '',
   terminal: { ...DEFAULT_TERMINAL_PREFERENCES },
+  worktreeRoot: '',
+  copyEnvFiles: false,
   updateFeedUrl: '',
+  updatesEnabled: true,
   newSessionDefault: 'ask',
 };
+
+/**
+ * Where new worktrees go: the saved path when one is set, otherwise the root
+ * the app was started with. A saved path is made absolute once so the stored
+ * task paths and `git worktree` always agree; existing worktrees are never
+ * moved. An unusable path is not silently replaced here: creating a task
+ * reports it.
+ */
+export function resolveWorktreesRoot(defaultRoot: string, settingValue: string): string {
+  const trimmed = settingValue.trim();
+  return trimmed ? path.resolve(trimmed) : defaultRoot;
+}
 
 /**
  * Small key/value application settings store. One row holds the whole object as
@@ -76,7 +92,10 @@ function normalize(settings: AppSettings): AppSettings {
       ...settings.terminal,
       fontFamily: settings.terminal.fontFamily.trim(),
     },
+    worktreeRoot: settings.worktreeRoot.trim(),
+    copyEnvFiles: settings.copyEnvFiles,
     updateFeedUrl: settings.updateFeedUrl.trim(),
+    updatesEnabled: settings.updatesEnabled,
     newSessionDefault: settings.newSessionDefault,
   };
 }

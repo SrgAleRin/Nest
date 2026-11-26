@@ -55,7 +55,10 @@ export function createCore(options: CoreOptions): Core {
     getSettings: () => settings.get(),
   });
   const projects = new ProjectService(db);
-  const tasks = new TaskService(db, projects, options.worktreesRoot, emit);
+  const tasks = new TaskService(db, projects, options.worktreesRoot, emit, () => {
+    const current = settings.get();
+    return { worktreeRoot: current.worktreeRoot, copyEnvFiles: current.copyEnvFiles };
+  });
   const git = new GitService(db, tasks, emit);
   const files = new FilesService(tasks);
   const discovery = new HarnessDiscovery();
@@ -96,5 +99,5 @@ export { NestError } from './errors.js';
 export type { Db } from './db/database.js';
 export { migrate, openDatabase } from './db/database.js';
 export { migrations } from './db/migrations.js';
-export { DEFAULT_SETTINGS, SettingsService } from './services/settings.js';
+export { DEFAULT_SETTINGS, SettingsService, resolveWorktreesRoot } from './services/settings.js';
 export { parseUnifiedDiff, buildUntrackedDiff } from './git/diff.js';

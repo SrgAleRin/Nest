@@ -140,7 +140,8 @@ export function NewTaskDialog({ project, busy, step, onClose, onSubmit }: NewTas
               />
               <small className="field-hint">
                 Runs in the new worktree after it is created and is remembered for this project.
-                <code>.env</code> and <code>.env.local</code> are copied automatically.
+                <code>.env</code> and <code>.env.local</code> are copied only when “Copy .env
+                files” is enabled in Settings.
               </small>
             </label>
           </>

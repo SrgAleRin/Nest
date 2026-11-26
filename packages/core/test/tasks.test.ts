@@ -83,6 +83,9 @@ describe('task setup', () => {
     if (!core) throw new Error('core was not created');
     const script = 'node scripts/setup-ok.mjs';
 
+    // Copying env files is an explicit choice, off by default.
+    core.settings.update({ copyEnvFiles: true });
+
     const task = await core.tasks.create({
       projectId,
       title: 'Setup works',
