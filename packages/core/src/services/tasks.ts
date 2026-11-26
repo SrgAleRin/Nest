@@ -65,6 +65,24 @@ export class TaskService {
     return toTask(row);
   }
 
+  /**
+   * Git is the source of truth for the branch a workspace is on; the row only
+   * mirrors it for the places that read task metadata (sidebar, palette,
+   * notifications, restart). `base_ref` keeps the original branch, so a switch
+   * never rewrites it. Detached HEAD has no branch name to record.
+   */
+  syncBranch(taskId: string, branch: string): Task | null {
+    if (!branch || branch === 'HEAD') return null;
+    const task = this.get(taskId);
+    if (task.branch === branch) return null;
+    this.db
+      .prepare('UPDATE tasks SET branch = ?, updated_at = ? WHERE id = ?')
+      .run(branch, nowIso(), taskId);
+    const updated = this.get(taskId);
+    this.emit({ type: 'task:updated', task: updated });
+    return updated;
+  }
+
   /** The singleton main checkout of a project; projects.add creates it. */
   ensureCheckout(projectId: string): Task {
     const checkout = this.projects.checkout(projectId);

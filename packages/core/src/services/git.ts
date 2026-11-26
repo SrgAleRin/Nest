@@ -57,9 +57,21 @@ export class GitService {
     private readonly emit: (event: NestEvent) => void,
   ) {}
 
+  /**
+   * Reading the status also reconciles the persisted branch: a switch made in
+   * the UI or by an external git command is visible to the header and the
+   * status bar as soon as they read the same status the Git panel reads.
+   */
   async status(taskId: string): Promise<GitStatus> {
     const task = this.tasks.get(taskId);
-    return readStatus(task.workspacePath);
+    return this.readAndSync(task);
+  }
+
+  /** `git status` plus the branch mirror; the single source of truth is Git. */
+  private async readAndSync(task: Task): Promise<GitStatus> {
+    const status = await readStatus(task.workspacePath);
+    this.tasks.syncBranch(task.id, status.branch);
+    return status;
   }
 
   /**
@@ -461,7 +473,7 @@ export class GitService {
     }
 
     this.emit({ type: 'git:changed', taskId });
-    return readStatus(cwd);
+    return this.readAndSync(task);
   }
 
   /**

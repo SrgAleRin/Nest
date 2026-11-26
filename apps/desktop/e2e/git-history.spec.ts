@@ -127,6 +127,11 @@ test('browses changes, commits and branch comparison', async () => {
   await page.locator('.branch-item', { hasText: 'feature' }).click();
   await expect(page.locator('.branch-button')).toContainText('feature');
 
+  // Header and status bar read the same git status the panel does, so one
+  // checkout keeps all three in step instead of leaving the label stale.
+  await expect(page.locator('.titlebar .badge')).toHaveText('feature');
+  await expect(page.locator('.statusbar .status-item').first()).toContainText('feature');
+
   // Truncated before closing so a failure leaves the worktree in place for
   // inspection; the temp directory is removed in afterAll.
   await app.close();
