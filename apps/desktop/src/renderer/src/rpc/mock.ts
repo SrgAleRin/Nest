@@ -446,6 +446,16 @@ export function createMockClient(): NestClient {
     for (const handler of handlers) handler(event);
   };
 
+  // Mock output stream positions, so the renderer's snapshot/live join behaves
+  // like the real main process.
+  const streamPositions = new Map<string, number>();
+  const emitData = (sessionId: string, data: string): void => {
+    const start = streamPositions.get(sessionId) ?? 0;
+    const end = start + data.length;
+    streamPositions.set(sessionId, end);
+    emit({ type: 'session:data', sessionId, data, start, end });
+  };
+
   let clipboardText = '';
 
   const info: AppInfo = {
@@ -625,7 +635,7 @@ export function createMockClient(): NestClient {
           updatedAt: new Date().toISOString(),
         };
         sessions = [...sessions, session];
-        setTimeout(() => emit({ type: 'session:data', sessionId: session.id, data: GREETING }), 80);
+        setTimeout(() => emitData(session.id, GREETING), 80);
         return session;
       }
       case 'sessions.write': {
@@ -636,7 +646,7 @@ export function createMockClient(): NestClient {
             ? 'you said: hello\r\n\u001b[32m>\u001b[0m '
             : '';
         if (reply) {
-          setTimeout(() => emit({ type: 'session:data', sessionId, data: reply }), 60);
+          setTimeout(() => emitData(sessionId, reply), 60);
         }
         return undefined;
       }
@@ -663,18 +673,23 @@ export function createMockClient(): NestClient {
         const updated = { ...session };
         emit({ type: 'session:status', session: updated });
         setTimeout(() => {
-          emit({
-            type: 'session:data',
-            sessionId: session.id,
-            data: `\r\n── resume ${harness?.label ?? session.harnessId} ──\r\n${GREETING}`,
-          });
+          emitData(
+            session.id,
+            `\r\n── resume ${harness?.label ?? session.harnessId} ──\r\n${GREETING}`,
+          );
         }, 80);
         return updated;
       }
       case 'sessions.resize':
         return undefined;
-      case 'sessions.scrollback':
-        return { data: params.sessionId === 'session-fake' ? GREETING : '' };
+      case 'sessions.scrollback': {
+        const sessionId = String(params.sessionId);
+        const position = streamPositions.get(sessionId) ?? 0;
+        return {
+          data: sessionId === 'session-fake' ? GREETING : '',
+          position: sessionId === 'session-fake' ? position : 0,
+        };
+      }
       case 'git.status':
         return status;
       case 'git.diff': {

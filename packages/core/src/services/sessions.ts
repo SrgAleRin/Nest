@@ -1,5 +1,4 @@
 import * as pty from 'node-pty';
-import type { IPty } from 'node-pty';
 import {
   newId,
   nowIso,
@@ -29,6 +28,64 @@ const DISCOVERY_DELAYS = [1000, 2500, 5000, 10_000];
 const DISCOVERY_NUDGE_MS = 1500;
 const EXACT_RESUME_GRACE_MS = 20_000;
 
+/**
+ * Output batching. TUI agents emit many tiny escape sequences, so one IPC
+ * round-trip per chunk would dominate the main process. Chunks are coalesced
+ * into a single `session:data` event either after this window or as soon as
+ * the pending queue reaches the byte threshold, which bounds the queue.
+ */
+const DATA_BATCH_INTERVAL_MS = 8;
+const DATA_BATCH_MAX_BYTES = 64 * 1024;
+
+/**
+ * Crash protection. While a session runs, the tail of its output is written to
+ * SQLite on a dirty-flag timer, so a crash loses at most one interval of
+ * output instead of everything since the last exit. The write stays off the
+ * per-chunk path and its size is capped, so ten sessions do not rewrite
+ * megabytes every few seconds. Exit and graceful shutdown still store the full
+ * in-memory buffer.
+ */
+export const DEFAULT_SNAPSHOT_INTERVAL_MS = 5_000;
+export const DEFAULT_SNAPSHOT_BYTES = 256 * 1024;
+
+/** Stored output of one session plus the stream position it covers. */
+export interface SessionSnapshot {
+  data: string;
+  /** Position covered by `data`: nothing before it has to be replayed. */
+  position: number;
+}
+
+/** The slice of `node-pty` this service needs, injectable for tests. */
+export interface PtyProcess {
+  onData(listener: (data: string) => void): unknown;
+  onExit(listener: (event: { exitCode: number }) => void): unknown;
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  kill(): void;
+}
+
+export interface SpawnPtyInput {
+  cols?: number;
+  rows?: number;
+  env: Record<string, string>;
+}
+
+export type SpawnPty = (
+  command: string,
+  args: string[],
+  cwd: string,
+  input: SpawnPtyInput,
+) => PtyProcess;
+
+export interface SessionServiceOptions {
+  /** Replaces PTY creation; tests drive a deterministic in-process PTY. */
+  spawnPty?: SpawnPty;
+  /** Crash snapshot interval; 0 disables the timer (`flushSnapshots` still works). */
+  snapshotIntervalMs?: number;
+  /** Upper bound of the periodically persisted snapshot, in UTF-16 units. */
+  snapshotBytes?: number;
+}
+
 interface DiscoveryState {
   harnessId: HarnessId;
   cwd: string;
@@ -42,9 +99,23 @@ interface DiscoveryState {
 }
 
 interface Runtime {
-  pty: IPty;
+  pty: PtyProcess;
   taskId: string;
   buffer: string;
+  /**
+   * End of the output stream: UTF-16 units appended over the whole life of the
+   * session, including parts already dropped from `buffer` or from the
+   * snapshot. Monotonic, and the only clock that orders chunks against the
+   * scrollback snapshot.
+   */
+  position: number;
+  /** Chunks appended but not yet emitted as one batched event. */
+  pending: string[];
+  pendingBytes: number;
+  flushTimer: NodeJS.Timeout | null;
+  /** Crash snapshot timer and its dirty flag. */
+  snapshotTimer: NodeJS.Timeout | null;
+  dirty: boolean;
   status: SessionStatus;
   stopping: boolean;
   idleTimer: NodeJS.Timeout | null;
@@ -76,6 +147,9 @@ export interface StartSessionInput {
 
 export class SessionService {
   private readonly runtimes = new Map<string, Runtime>();
+  private readonly spawnPty: SpawnPty;
+  private readonly snapshotIntervalMs: number;
+  private readonly snapshotBytes: number;
 
   constructor(
     private readonly db: Db,
@@ -83,7 +157,12 @@ export class SessionService {
     private readonly harnesses: HarnessRegistry,
     private readonly discovery: HarnessDiscovery,
     private readonly emit: (event: NestEvent) => void,
-  ) {}
+    options: SessionServiceOptions = {},
+  ) {
+    this.spawnPty = options.spawnPty ?? spawnHarness;
+    this.snapshotIntervalMs = options.snapshotIntervalMs ?? DEFAULT_SNAPSHOT_INTERVAL_MS;
+    this.snapshotBytes = options.snapshotBytes ?? DEFAULT_SNAPSHOT_BYTES;
+  }
 
   list(taskId?: string): Session[] {
     const rows = taskId
@@ -125,8 +204,8 @@ export class SessionService {
 
     this.db
       .prepare(
-        `INSERT INTO sessions (id, task_id, harness_id, title, status, cwd, exit_code, scrollback, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'starting', ?, NULL, '', ?, ?)`,
+        `INSERT INTO sessions (id, task_id, harness_id, title, status, cwd, exit_code, scrollback, stream_position, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'starting', ?, NULL, '', 0, ?, ?)`,
       )
       .run(id, task.id, harness.id, title, task.workspacePath, timestamp, timestamp);
 
@@ -137,6 +216,7 @@ export class SessionService {
       harness,
       extraArgs: [],
       initialBuffer: '',
+      initialPosition: 0,
       cols: input.cols,
       rows: input.rows,
       discovery: { since: new Date(timestamp), includeUpdated: false },
@@ -218,15 +298,28 @@ export class SessionService {
 
     const task = this.tasks.get(session.taskId);
     const marker = `\r\n\x1b[90m── resume ${harness.label} ──\x1b[0m\r\n`;
-    const initialBuffer = `${this.scrollback(sessionId)}${marker}`;
+    // The marker is appended to the stored snapshot, so it also advances the
+    // stream position: the row and the event below describe the same range.
+    const snapshot = this.snapshot(sessionId);
+    const initialBuffer = `${snapshot.data}${marker}`;
+    const initialPosition = snapshot.position + marker.length;
 
     this.db
       .prepare(
-        'UPDATE sessions SET status = ?, scrollback = ?, resume_on_start = 0, updated_at = ? WHERE id = ?',
+        `UPDATE sessions
+            SET status = ?, scrollback = ?, stream_position = ?, stop_requested = 0,
+                resume_on_start = 0, updated_at = ?
+          WHERE id = ?`,
       )
-      .run('starting', initialBuffer, nowIso(), sessionId);
+      .run('starting', initialBuffer, initialPosition, nowIso(), sessionId);
     this.emit({ type: 'session:status', session: this.get(sessionId) });
-    this.emit({ type: 'session:data', sessionId, data: marker });
+    this.emit({
+      type: 'session:data',
+      sessionId,
+      data: marker,
+      start: initialPosition - marker.length,
+      end: initialPosition,
+    });
 
     this.spawnRuntime({
       sessionId,
@@ -235,6 +328,7 @@ export class SessionService {
       harness,
       extraArgs,
       initialBuffer,
+      initialPosition,
       discovery,
       exactResume,
       harnessSessionId: exactResume ? storedId : null,
@@ -251,6 +345,8 @@ export class SessionService {
     harness: HarnessProfile;
     extraArgs: string[];
     initialBuffer: string;
+    /** Position already covered by `initialBuffer`. */
+    initialPosition: number;
     cols?: number;
     rows?: number;
     discovery?: { since: Date; includeUpdated: boolean };
@@ -270,9 +366,9 @@ export class SessionService {
     delete env.ELECTRON_RUN_AS_NODE;
 
     const { sessionId } = input;
-    let child: IPty;
+    let child: PtyProcess;
     try {
-      child = spawnHarness(
+      child = this.spawnPty(
         input.harness.command,
         [...input.harness.args, ...input.extraArgs],
         input.cwd,
@@ -292,6 +388,12 @@ export class SessionService {
       pty: child,
       taskId: input.taskId,
       buffer: input.initialBuffer,
+      position: input.initialPosition,
+      pending: [],
+      pendingBytes: 0,
+      flushTimer: null,
+      snapshotTimer: null,
+      dirty: false,
       status: 'running',
       stopping: false,
       idleTimer: null,
@@ -303,6 +405,7 @@ export class SessionService {
       startedAt: Date.now(),
     };
     this.runtimes.set(sessionId, runtime);
+    this.startSnapshotTimer(sessionId, runtime);
 
     child.onData((data) => {
       // A closed or already-deleted session must not reach the renderer: the
@@ -310,9 +413,8 @@ export class SessionService {
       // the confirmed stop that precedes row deletion.
       const active = this.runtimes.get(sessionId);
       if (!active) return;
-      active.buffer = (active.buffer + data).slice(-MAX_SCROLLBACK);
+      this.appendOutput(sessionId, active, data);
       active.processOutput = (active.processOutput + data).slice(0, MAX_PROCESS_OUTPUT);
-      this.emit({ type: 'session:data', sessionId, data });
       if (active.status === 'starting' || active.status === 'idle') {
         this.setStatus(sessionId, 'running');
         active.status = 'running';
@@ -355,7 +457,11 @@ export class SessionService {
       }
 
       const status: SessionStatus = active.stopping || exitCode === 0 ? 'exited' : 'failed';
-      this.persistScrollback(sessionId, active.buffer);
+      // The whole in-memory buffer is written on exit, so a graceful end keeps
+      // the full scrollback regardless of the periodic snapshot cap.
+      this.clearOutputTimers(active);
+      this.flushOutput(sessionId, active);
+      this.persistScrollback(sessionId, active.buffer, active.position);
       this.runtimes.delete(sessionId);
       this.setStatus(sessionId, status, exitCode);
     });
@@ -395,7 +501,13 @@ export class SessionService {
   }
 
   stop(sessionId: string): void {
-    this.db.prepare('UPDATE sessions SET resume_on_start = 0 WHERE id = ?').run(sessionId);
+    // The explicit marker is written before the kill: recovery must not infer
+    // resumability from a status a concurrent shutdown may still rewrite.
+    this.db
+      .prepare(
+        'UPDATE sessions SET resume_on_start = 0, stop_requested = 1, updated_at = ? WHERE id = ?',
+      )
+      .run(nowIso(), sessionId);
     const runtime = this.runtimes.get(sessionId);
     if (!runtime) return;
     runtime.stopping = true;
@@ -417,6 +529,7 @@ export class SessionService {
     const runtime = this.runtimes.get(sessionId);
     if (runtime) {
       if (runtime.idleTimer) clearTimeout(runtime.idleTimer);
+      this.clearOutputTimers(runtime);
       this.stopDiscovery(runtime);
       runtime.stopping = true;
       // onExit must not persist or broadcast a session that no longer exists.
@@ -458,18 +571,39 @@ export class SessionService {
     return ids;
   }
 
-  scrollback(sessionId: string): string {
+  /** Output snapshot plus the stream position it covers. */
+  snapshot(sessionId: string): SessionSnapshot {
     const runtime = this.runtimes.get(sessionId);
-    if (runtime) return runtime.buffer;
-    const row = this.db.prepare('SELECT scrollback FROM sessions WHERE id = ?').get(sessionId) as
-      { scrollback: string } | undefined;
-    return row?.scrollback ?? '';
+    if (runtime) return { data: runtime.buffer, position: runtime.position };
+    const row = this.db
+      .prepare('SELECT scrollback, stream_position FROM sessions WHERE id = ?')
+      .get(sessionId) as { scrollback: string; stream_position: number } | undefined;
+    return { data: row?.scrollback ?? '', position: Number(row?.stream_position ?? 0) };
+  }
+
+  scrollback(sessionId: string): string {
+    return this.snapshot(sessionId).data;
+  }
+
+  /**
+   * Persists the crash snapshot of every live session that produced output
+   * since the last write. The periodic timer calls the same path; a caller can
+   * also force it (tests, or before a long blocking operation).
+   */
+  flushSnapshots(): void {
+    for (const [id, runtime] of this.runtimes) {
+      if (!runtime.dirty) continue;
+      this.persistSnapshot(id, runtime);
+    }
   }
 
   recoverStale(): void {
+    // The explicit stop marker wins over the unfinished status: a user who
+    // pressed Stop must not get the session back as resumable, even when Quit
+    // raced the asynchronous exit and left the row mid-flight.
     this.db
       .prepare(
-        `UPDATE sessions SET resume_on_start = 1
+        `UPDATE sessions SET resume_on_start = CASE WHEN stop_requested = 1 THEN 0 ELSE 1 END
          WHERE status IN ('starting', 'running', 'idle')`,
       )
       .run();
@@ -497,9 +631,22 @@ export class SessionService {
   shutdownAll(): void {
     for (const [id, runtime] of this.runtimes) {
       if (runtime.idleTimer) clearTimeout(runtime.idleTimer);
+      this.clearOutputTimers(runtime);
       this.stopDiscovery(runtime);
-      this.persistScrollback(id, runtime.buffer);
-      this.db.prepare('UPDATE sessions SET resume_on_start = 1 WHERE id = ?').run(id);
+      this.persistScrollback(id, runtime.buffer, runtime.position);
+      if (runtime.stopping) {
+        // The user stopped this session before Quit. It stays finished: no
+        // resume flag, and the status is settled here because onExit may not
+        // run once the runtime entry is gone.
+        this.db
+          .prepare(
+            `UPDATE sessions SET status = 'exited', resume_on_start = 0, updated_at = ?
+              WHERE id = ?`,
+          )
+          .run(nowIso(), id);
+      } else {
+        this.db.prepare('UPDATE sessions SET resume_on_start = 1 WHERE id = ?').run(id);
+      }
       runtime.stopping = true;
       try {
         runtime.pty.kill();
@@ -731,10 +878,88 @@ export class SessionService {
     return runtime;
   }
 
-  private persistScrollback(sessionId: string, buffer: string): void {
+  private persistScrollback(sessionId: string, buffer: string, position: number): void {
     this.db
-      .prepare('UPDATE sessions SET scrollback = ?, updated_at = ? WHERE id = ?')
-      .run(buffer.slice(-MAX_SCROLLBACK), nowIso(), sessionId);
+      .prepare(
+        `UPDATE sessions SET scrollback = ?, stream_position = ?, updated_at = ? WHERE id = ?`,
+      )
+      .run(buffer.slice(-MAX_SCROLLBACK), position, nowIso(), sessionId);
+  }
+
+  /**
+   * Crash snapshot: a bounded tail plus the position it covers, so recovery
+   * restores exactly the bytes it can prove and never claims output that was
+   * only in memory.
+   */
+  private persistSnapshot(sessionId: string, runtime: Runtime): void {
+    const limit = this.snapshotBytes;
+    const tail = runtime.buffer.length > limit ? runtime.buffer.slice(-limit) : runtime.buffer;
+    this.persistScrollback(sessionId, tail, runtime.position);
+    runtime.dirty = false;
+  }
+
+  private startSnapshotTimer(sessionId: string, runtime: Runtime): void {
+    if (this.snapshotIntervalMs <= 0) return;
+    const timer = setInterval(() => {
+      const current = this.runtimes.get(sessionId);
+      if (!current || !current.dirty) return;
+      this.persistSnapshot(sessionId, current);
+    }, this.snapshotIntervalMs);
+    // Never keep the process alive just for a snapshot.
+    timer.unref();
+    runtime.snapshotTimer = timer;
+  }
+
+  /**
+   * Appends a PTY chunk to the session stream. The position advances and the
+   * buffer grows here, before the chunk reaches the renderer, so a snapshot
+   * taken while an event is still queued already covers that event.
+   */
+  private appendOutput(sessionId: string, runtime: Runtime, data: string): void {
+    if (data.length === 0) return;
+    runtime.buffer = (runtime.buffer + data).slice(-MAX_SCROLLBACK);
+    runtime.position += data.length;
+    runtime.dirty = true;
+    runtime.pending.push(data);
+    runtime.pendingBytes += data.length;
+    if (runtime.pendingBytes >= DATA_BATCH_MAX_BYTES) {
+      this.flushOutput(sessionId, runtime);
+      return;
+    }
+    if (runtime.flushTimer) return;
+    const timer = setTimeout(() => {
+      runtime.flushTimer = null;
+      const current = this.runtimes.get(sessionId);
+      if (current === runtime) this.flushOutput(sessionId, runtime);
+    }, DATA_BATCH_INTERVAL_MS);
+    timer.unref();
+    runtime.flushTimer = timer;
+  }
+
+  /** Emits the pending chunks as one `session:data` event with its range. */
+  private flushOutput(sessionId: string, runtime: Runtime): void {
+    if (runtime.flushTimer) {
+      clearTimeout(runtime.flushTimer);
+      runtime.flushTimer = null;
+    }
+    if (runtime.pending.length === 0) return;
+    const data = runtime.pending.join('');
+    const end = runtime.position;
+    const start = end - runtime.pendingBytes;
+    runtime.pending = [];
+    runtime.pendingBytes = 0;
+    this.emit({ type: 'session:data', sessionId, data, start, end });
+  }
+
+  private clearOutputTimers(runtime: Runtime): void {
+    if (runtime.flushTimer) {
+      clearTimeout(runtime.flushTimer);
+      runtime.flushTimer = null;
+    }
+    if (runtime.snapshotTimer) {
+      clearInterval(runtime.snapshotTimer);
+      runtime.snapshotTimer = null;
+    }
   }
 
   private setStatus(sessionId: string, status: SessionStatus, exitCode?: number): void {
@@ -768,7 +993,7 @@ function spawnHarness(
   args: string[],
   cwd: string,
   input: { cols?: number; rows?: number; env: Record<string, string> },
-): IPty {
+): PtyProcess {
   const cols = input.cols ?? 100;
   const rows = input.rows ?? 30;
 

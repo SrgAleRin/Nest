@@ -4,13 +4,14 @@ import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
 import type { ITheme } from '@xterm/xterm';
-import type {
-  HarnessProfile,
-  NestClient,
-  Session,
-  Task,
-  TerminalPreferences,
-  TerminalTheme,
+import {
+  TerminalReplay,
+  type HarnessProfile,
+  type NestClient,
+  type Session,
+  type Task,
+  type TerminalPreferences,
+  type TerminalTheme,
 } from '@nest/shared';
 import { Button, EmptyState } from '@nest/ui';
 import { ChevronIcon, CloseIcon, PlayIcon, PlusIcon, TerminalIcon } from './Icons';
@@ -618,7 +619,11 @@ function TerminalView({
       return true;
     });
 
-    const offData = onSessionData(session.id, (data) => term.write(data));
+    // Subscribe before asking for history: chunks that arrive while the
+    // snapshot is in flight are buffered and only the part the snapshot does
+    // not cover is written afterwards, in arrival order.
+    const replay = new TerminalReplay((data) => term.write(data));
+    const offData = onSessionData(session.id, (chunk) => replay.push(chunk));
     const input = term.onData((data) => {
       if (statusRef.current === 'exited' || statusRef.current === 'failed') {
         if (!warnedRef.current) {
@@ -638,10 +643,12 @@ function TerminalView({
 
     void client
       .invoke('sessions.scrollback', { sessionId: session.id })
-      .then(({ data }) => {
-        if (data) term.write(data);
-      })
-      .catch((error) => onErrorRef.current(errorMessage(error)));
+      .then((snapshot) => replay.attach(snapshot))
+      .catch((error) => {
+        // Keep the terminal live with whatever arrived while history failed.
+        replay.attach({ data: '', position: 0 });
+        onErrorRef.current(errorMessage(error));
+      });
 
     const sendResize = (cols: number, rows: number) => {
       if (cols <= 0 || rows <= 0) return;
@@ -680,6 +687,9 @@ function TerminalView({
       observer.disconnect();
       searchResults.dispose();
       offData();
+      // A late chunk or a snapshot that resolves after unmount must not touch
+      // the disposed xterm.
+      replay.dispose();
       input.dispose();
       term.dispose();
       termRef.current = null;

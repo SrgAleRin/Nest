@@ -213,7 +213,13 @@ export const rpcMethods = {
   },
   'sessions.scrollback': {
     params: z.object({ sessionId: id }),
-    result: z.object({ data: z.string() }),
+    /**
+     * `data` is the stored output snapshot and `position` is the stream
+     * position it covers: every `session:data` chunk that ends at or before
+     * `position` is already inside `data`. The renderer writes the snapshot
+     * first and then only the buffered chunks that end after `position`.
+     */
+    result: z.object({ data: z.string(), position: z.number().int().min(0) }),
   },
 
   'harness.list': {
@@ -262,7 +268,20 @@ export type RpcResponse<T> = { ok: true; data: T } | { ok: false; error: RpcErro
 export type TaskProgressStep = 'fetch' | 'worktree' | 'setup';
 
 export type NestEvent =
-  | { type: 'session:data'; sessionId: string; data: string }
+  | {
+      type: 'session:data';
+      sessionId: string;
+      data: string;
+      /**
+       * Stream position of the first unit in `data`; `end` is the position just
+       * after the last one. Positions count UTF-16 units from the first unit
+       * Nest ever received for the session, so they keep increasing across
+       * scrollback truncation and across resume. `end - start` always equals
+       * `data.length`.
+       */
+      start: number;
+      end: number;
+    }
   | { type: 'session:status'; session: Session }
   | { type: 'task:updated'; task: Task }
   | { type: 'task:progress'; projectId: string; step: TaskProgressStep }
