@@ -3,6 +3,7 @@ import type {
   AppInfo,
   AppSettings,
   HarnessProfile,
+  NestClient,
   Project,
   Session,
   SessionStatus,
@@ -23,6 +24,8 @@ import { TerminalPane } from './components/TerminalPane';
 import type { CommandItem } from './commands';
 import { createClient } from './rpc/client';
 import { branchLabel, branchSnapshot, type BranchSnapshot } from './state/branch';
+import { createGitSnapshotStore, type GitSnapshotStore } from './state/gitSnapshot';
+import { GitSnapshotProvider, useGitSnapshotFor } from './state/GitSnapshotProvider';
 import {
   applySnapshot,
   emptySessions,
@@ -62,7 +65,21 @@ function pickTaskId(tasks: Task[], current: string | null): string | null {
 
 export function App() {
   const client = useMemo(createClient, []);
+  // One owner for the git status of every task: the header badge, the status
+  // bar and the right panel read the same snapshot instead of asking git again.
+  const gitStore = useMemo(
+    () => createGitSnapshotStore({ invoke: (method, params) => client.invoke(method, params) }),
+    [client],
+  );
 
+  return (
+    <GitSnapshotProvider store={gitStore}>
+      <AppShell client={client} gitStore={gitStore} />
+    </GitSnapshotProvider>
+  );
+}
+
+function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnapshotStore }) {
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -76,7 +93,6 @@ export function App() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [newTaskProjectId, setNewTaskProjectId] = useState<string | null>(null);
   const [gitVersions, setGitVersions] = useState<Record<string, number>>({});
-  const [gitBranch, setGitBranch] = useState<BranchSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
   // Creations in flight, keyed by the operation id the renderer generated. The
   // tree renders them as pending rows, so progress survives a closed dialog.
@@ -127,7 +143,13 @@ export function App() {
 
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
   const gitVersion = selectedTaskId ? (gitVersions[selectedTaskId] ?? 0) : 0;
-  // Header badge and status bar read the same git status the Git panel reads.
+  // Header badge and status bar read the store's snapshot; the persisted task
+  // branch stays as the fallback while the first read is in flight or when the
+  // workspace is gone.
+  const gitSnapshot = useGitSnapshotFor(gitStore, selectedTaskId);
+  const gitStatus = gitSnapshot?.status.data ?? null;
+  const gitBranch: BranchSnapshot | null =
+    selectedTaskId && gitStatus ? branchSnapshot(selectedTaskId, gitStatus) : null;
   const currentBranch = branchLabel(selectedTask, gitBranch);
   const selectedProject =
     projects.find((project) => project.id === selectedTask?.projectId) ?? null;
@@ -283,7 +305,10 @@ export function App() {
           return;
         case 'git:changed':
           // Changes are reported per task: watching every workspace must not
-          // refetch the panels of the task the user is looking at.
+          // refetch the panels of the task the user is looking at. The store
+          // marks the task stale and coalesces the reload; the version keeps the
+          // panel's own refresh working unchanged.
+          gitStore.invalidate(event.taskId);
           setGitVersions((prev) => ({
             ...prev,
             [event.taskId]: (prev[event.taskId] ?? 0) + 1,
@@ -302,29 +327,7 @@ export function App() {
           return;
       }
     });
-  }, [client, notify]);
-
-  // Git is the source of truth for the branch, so the header and the status bar
-  // re-read the status the Git panel reads whenever the workspace changes. A
-  // checkout made by an external git command arrives as `git:changed`.
-  useEffect(() => {
-    if (!selectedTaskId) {
-      setGitBranch(null);
-      return;
-    }
-    let cancelled = false;
-    void client
-      .invoke('git.status', { taskId: selectedTaskId })
-      .then((status) => {
-        if (!cancelled) setGitBranch(branchSnapshot(selectedTaskId, status));
-      })
-      .catch(() => {
-        // A missing workspace keeps the persisted branch instead of blanking it.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [client, gitVersion, selectedTaskId]);
+  }, [client, gitStore, notify]);
 
   // Keep the transition map in sync with sessions loaded from the database, so
   // a session that was already running when the window opened still reports its
@@ -900,7 +903,10 @@ export function App() {
       ...prev,
       [selectedTaskId]: (prev[selectedTaskId] ?? 0) + 1,
     }));
-  }, [selectedTaskId]);
+    // A local operation re-reads the same snapshot the header and the panel
+    // show; invalidate coalesces it with a watcher event for the same tick.
+    gitStore.invalidate(selectedTaskId);
+  }, [gitStore, selectedTaskId]);
 
   const paletteCommands: CommandItem[] = [];
   for (const task of tasks) {
