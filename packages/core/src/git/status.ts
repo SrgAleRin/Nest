@@ -6,9 +6,17 @@ export interface StatusFile {
   copied: boolean;
   indexStatus: string;
   worktreeStatus: string;
+  /** Unmerged entry; neither staged nor unstaged. */
+  conflict: boolean;
+  /** Index side has changes. Independent of `unstaged`. */
   staged: boolean;
+  /** Worktree side has changes, or the file is untracked. */
+  unstaged: boolean;
   untracked: boolean;
 }
+
+/** Porcelain v1 status pairs that mean the path is unmerged. */
+const CONFLICT_PAIRS = new Set(['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU']);
 
 export interface ParsedStatus {
   branch: string;
@@ -62,7 +70,12 @@ export function parseStatus(raw: string): ParsedStatus {
     const worktreeStatus = token[1] ?? ' ';
     const filePath = token.slice(3);
     const untracked = indexStatus === '?' && worktreeStatus === '?';
-    const staged = !untracked && indexStatus !== ' ' && indexStatus !== '?';
+    const conflict = CONFLICT_PAIRS.has(`${indexStatus}${worktreeStatus}`);
+    // Both sides are reported, not one classifier: a partially staged file has
+    // staged and unstaged work at the same time. A conflict has neither until
+    // the user resolves it.
+    const staged = !conflict && !untracked && indexStatus !== ' ' && indexStatus !== '?';
+    const unstaged = !conflict && (untracked || worktreeStatus !== ' ');
     const renamed = indexStatus === 'R' || worktreeStatus === 'R';
     const copied = indexStatus === 'C' || worktreeStatus === 'C';
     let oldPath: string | null = null;
@@ -77,7 +90,9 @@ export function parseStatus(raw: string): ParsedStatus {
       copied,
       indexStatus,
       worktreeStatus,
+      conflict,
       staged,
+      unstaged,
       untracked,
     });
   }

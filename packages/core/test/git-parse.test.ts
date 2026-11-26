@@ -250,6 +250,33 @@ describe('parseStatus', () => {
   it('reads the branch of an unborn repository', () => {
     const parsed = parseStatus(['## No commits yet on main', 'A  first.txt', ''].join('\u0000'));
     expect(parsed).toMatchObject({ branch: 'main', upstream: null });
-    expect(parsed.files[0]).toMatchObject({ path: 'first.txt', indexStatus: 'A', staged: true });
+    expect(parsed.files[0]).toMatchObject({
+      path: 'first.txt',
+      indexStatus: 'A',
+      staged: true,
+      unstaged: false,
+      conflict: false,
+    });
+  });
+
+  it('treats every unmerged pair as a conflict that is neither staged nor unstaged', () => {
+    const pairs = ['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU'];
+    const raw = ['## main', ...pairs.map((pair) => `${pair} ${pair.toLowerCase()}.txt`), ''].join(
+      '\u0000',
+    );
+
+    const parsed = parseStatus(raw);
+
+    expect(parsed.files.map((file) => file.path)).toEqual(
+      pairs.map((pair) => `${pair.toLowerCase()}.txt`),
+    );
+    for (const file of parsed.files) {
+      expect(file).toMatchObject({
+        conflict: true,
+        staged: false,
+        unstaged: false,
+        untracked: false,
+      });
+    }
   });
 });

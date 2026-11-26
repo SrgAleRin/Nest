@@ -12,7 +12,19 @@ export const GitFileSchema = z.object({
   copied: z.boolean(),
   indexStatus: z.string(),
   worktreeStatus: z.string(),
+  /**
+   * Unmerged entry (`DD`, `AU`, `UD`, `UA`, `DU`, `AA`, `UU`). A conflict is
+   * its own state: it is neither staged nor unstaged, so a panel cannot offer
+   * a stage action that would resolve it by accident.
+   */
+  conflict: z.boolean(),
+  /**
+   * The index side has changes. Not exclusive with `unstaged`: a partially
+   * staged file reports both sides in one entry.
+   */
   staged: z.boolean(),
+  /** The worktree side has changes, or the file is untracked. */
+  unstaged: z.boolean(),
   untracked: z.boolean(),
   /** Lines added/deleted against HEAD; null for binary or unreadable files. */
   additions: z.number().int().nonnegative().nullable(),

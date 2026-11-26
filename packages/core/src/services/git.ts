@@ -178,9 +178,7 @@ export class GitService {
     // only the new path leaves the original staged as deleted.
     const status = await readStatus(task.workspacePath);
     const targets = expandChangedPaths(status.files, paths);
-    await git(task.workspacePath, ['restore', '--staged', '--', ...targets]).catch(async () => {
-      await git(task.workspacePath, ['reset', 'HEAD', '--', ...targets]);
-    });
+    await unstageTargets(task.workspacePath, targets);
     this.emit({ type: 'git:changed', taskId });
     return readStatus(task.workspacePath);
   }
@@ -192,14 +190,28 @@ export class GitService {
     amend = false,
   ): Promise<{ hash: string; summary: string }> {
     const task = this.tasks.get(taskId);
+    // Amending replaces the current commit, so it needs one; the first commit
+    // on an unborn branch does not (git creates the root commit without HEAD).
+    if (amend && !(await hasHead(task.workspacePath))) {
+      throw new NestError(
+        'amend_without_head',
+        'There is no commit to amend: this branch has no commits yet',
+      );
+    }
+    // `stageAll` is the only path that touches the index; a normal commit
+    // records exactly what is staged and leaves the worktree alone.
     if (stageAll) {
       await git(task.workspacePath, ['add', '-A']);
     }
-    const status = await readStatus(task.workspacePath);
     // Amending only the message is a valid operation, so the staged check is
-    // skipped for it; a normal commit still needs something to record.
-    if (!amend && !status.files.some((file) => file.staged)) {
-      throw new NestError('nothing_staged', 'Nothing is staged for commit');
+    // skipped for it; a normal commit still needs something to record. A
+    // conflict is let through so git explains the unmerged files instead of
+    // Nest reporting an empty index.
+    if (!amend && !(await indexHasChanges(task.workspacePath))) {
+      const status = await readStatus(task.workspacePath);
+      if (!status.files.some((file) => file.conflict)) {
+        throw new NestError('nothing_staged', 'Nothing is staged for commit');
+      }
     }
     await git(
       task.workspacePath,
@@ -657,6 +669,45 @@ async function revisionExists(cwd: string, revision: string): Promise<boolean> {
 
 async function hasHead(cwd: string): Promise<boolean> {
   return revisionExists(cwd, 'HEAD');
+}
+
+/** True when the index holds changes against HEAD, or the first commit. */
+async function indexHasChanges(cwd: string): Promise<boolean> {
+  const { stdout } = await git(cwd, ['diff', '--cached', '--name-only', '-z']);
+  return stdout.replace(/\0/g, '').trim().length > 0;
+}
+
+/**
+ * Un-staging has no single command that works everywhere. `git restore
+ * --staged` needs a resolvable HEAD, and on an unborn branch older git also
+ * refuses `git reset HEAD --`. There is no baseline to restore from in that
+ * case: the entry only exists in the index, so `git rm --cached` drops it and
+ * keeps the file in the worktree, where status reports it as untracked.
+ * Renames arrive as both halves (see `expandChangedPaths`), so the batch drops
+ * the staged addition and the staged deletion together.
+ */
+async function unstageTargets(cwd: string, targets: string[]): Promise<void> {
+  const cachedOnly = ['rm', '--cached', '-r', '--quiet', '--', ...targets];
+  const restore = ['restore', '--staged', '--', ...targets];
+  const reset = ['reset', 'HEAD', '--', ...targets];
+  // With a commit there is a baseline to restore from; without one the entry
+  // only lives in the index, so removing it from the index is the whole job.
+  const commands: string[][] = (await hasHead(cwd))
+    ? [restore, reset, cachedOnly]
+    : [cachedOnly, reset, restore];
+  let last: NestError | null = null;
+  for (const args of commands) {
+    try {
+      await git(cwd, args);
+      return;
+    } catch (error) {
+      last =
+        error instanceof NestError
+          ? error
+          : new NestError('git_failed', `git ${args.join(' ')} failed`);
+    }
+  }
+  throw last ?? new NestError('git_failed', 'Unstaging failed');
 }
 
 async function assertRevision(cwd: string, revision: string, label = 'ref'): Promise<void> {
