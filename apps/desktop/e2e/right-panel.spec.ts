@@ -229,6 +229,12 @@ test('opens one row as a patch, returns to the list and widens with Open diff', 
   const fixture = await openFixture({ prepare: seedPartialStaging });
   const { page } = fixture;
   try {
+    // A terminal of its own: `Open diff` keeps its column instead of replacing
+    // it, and a session-less window has no terminal column to keep.
+    await startHarness(page, 'fake');
+    await expect(page.locator('.terminal-view.active .xterm-rows')).toContainText('FakeHarness', {
+      timeout: 30_000,
+    });
     expect(await panelWidth(page)).toBeLessThan(600);
 
     // One click on the unstaged row is enough: no second search in another tab.
@@ -480,18 +486,27 @@ test('keeps the commit when a push is rejected and retries only the push', async
   });
   const { page, repo } = fixture;
   const origin = path.join(fixture.root, 'origin.git');
+  const other = path.join(fixture.root, 'other');
   try {
     await expect(syncAction(page)).toHaveText('Publish branch', { timeout: 30_000 });
     await syncAction(page).click();
     await skipIfGitTransportIsBlocked(page);
     await expect(page.locator('.git-upstream')).toHaveText('origin/main', { timeout: 60_000 });
 
-    // The remote refuses the next push with its own hook.
-    writeFileSync(
-      path.join(origin, 'hooks', 'pre-receive'),
-      '#!/bin/sh\necho "rejected by policy" 1>&2\nexit 1\n',
-      { encoding: 'utf8', mode: 0o755 },
-    );
+    // A second clone puts a commit on the remote branch first, so the next push
+    // from the panel is a plain non-fast-forward rejection. A `pre-receive` hook
+    // would need an executable bit, which a file mode does not create on
+    // Windows: git ignores the hook and the push simply succeeds there.
+    const shared = git(['rev-parse', 'HEAD'], repo);
+    git(['clone', origin, other], fixture.root);
+    git(['config', 'user.name', 'Other'], other);
+    git(['config', 'user.email', 'other@example.com'], other);
+    writeFileSync(path.join(other, 'remote.txt'), 'remote\n', 'utf8');
+    git(['add', '.'], other);
+    commit(other, 'remote commit');
+    git(['push', 'origin', 'main'], other);
+    expect(git(['rev-parse', 'refs/heads/main'], origin)).not.toBe(shared);
+
     writeFileSync(path.join(repo, 'rejected.txt'), 'rejected\n', 'utf8');
     git(['add', '.'], repo);
     await expect(
@@ -503,11 +518,12 @@ test('keeps the commit when a push is rejected and retries only the push', async
     const headBefore = git(['rev-parse', 'HEAD'], repo);
 
     await syncAction(page).click();
-    const failure = remoteFailure(page, /Push failed/);
+    const failure = remoteFailure(page, /Push rejected/);
     await expect(failure).toBeVisible({ timeout: 60_000 });
-    // The message says the work is safe locally instead of implying a loss.
+    // The message says the work is safe locally instead of implying a loss, and
+    // the folded reason is git's own rejection, not a retold one.
     await expect(failure).toContainText('saved locally');
-    await expect(failure).toContainText('rejected by policy');
+    await expect(failure.locator('pre')).toContainText(/rejected|non-fast-forward/i);
 
     // Nothing was rewritten and nothing has to be committed twice.
     expect(git(['rev-parse', 'HEAD'], repo)).toBe(headBefore);
@@ -519,7 +535,7 @@ test('keeps the commit when a push is rejected and retries only the push', async
     // lease-guarded force as its own explicit action: a button of the failure
     // note, or an item of the panel menu.
     await syncAction(page).click();
-    await expect(remoteFailure(page, /Push failed/)).toBeVisible({ timeout: 60_000 });
+    await expect(remoteFailure(page, /Push rejected/)).toBeVisible({ timeout: 60_000 });
     const noteAction = page.getByRole('button', { name: 'Force push with lease' });
     const force =
       (await noteAction.count()) > 0
@@ -538,7 +554,9 @@ test('keeps the commit when a push is rejected and retries only the push', async
     // Escape cancelled: the remote branch is still where the rejection left it.
     expect(gitOrNull(['rev-parse', 'refs/heads/main'], origin)).not.toBe(headBefore);
 
-    rmSync(path.join(origin, 'hooks', 'pre-receive'), { force: true });
+    // Fixing the state: the other clone's commit is withdrawn, so the same
+    // local commit is a fast-forward again and one plain push lands it.
+    git(['update-ref', 'refs/heads/main', shared], origin);
     await syncAction(page).click();
     await expect
       .poll(() => git(['rev-parse', 'main'], origin), { timeout: 60_000 })

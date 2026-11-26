@@ -144,6 +144,8 @@ export function createGitSnapshotStore(deps: GitSnapshotDeps): GitSnapshotStore 
   const visible = new Set<string>();
   /** Invalidations that arrived while the task was hidden, coalesced. */
   const pendingReload = new Set<string>();
+  /** The same burst, for the branch list: it has its own slice and its own read. */
+  const pendingBranches = new Set<string>();
   let reloadTimer: ReturnType<typeof setTimeout> | null = null;
 
   function emit(): void {
@@ -279,17 +281,43 @@ export function createGitSnapshotStore(deps: GitSnapshotDeps): GitSnapshotStore 
     return result;
   }
 
+  /**
+   * Reads again the slices an invalidation found in use: the status always, and
+   * the branch list only when it was already loaded — an external
+   * `git checkout -b` moves the branch the head names, and the status alone
+   * never carries the branch list. A task whose branches were never loaded must
+   * not start loading them because a watcher event happened.
+   */
+  function reloadSlices(taskId: string, slices: { status: boolean; branches: boolean }): void {
+    if (slices.status) void requestStatus(taskId);
+    if (slices.branches && entryOf(taskId)?.branches.data != null) {
+      void requestBranches(taskId);
+    }
+  }
+
+  /**
+   * A burst of `git:changed` is coalesced into one read per slice. The two
+   * intents stay separate, because another reader can take the status read in
+   * between — the panel's manual refresh asks for the status directly — and the
+   * branch list must still be refreshed by the invalidation that asked for it.
+   */
   function flushReloads(): void {
     reloadTimer = null;
-    const tasks = [...pendingReload];
+    const statuses = [...pendingReload];
+    const branchLists = [...pendingBranches];
     pendingReload.clear();
-    for (const taskId of tasks) {
-      if (visible.has(taskId)) {
-        void requestStatus(taskId);
-      } else {
+    pendingBranches.clear();
+    for (const taskId of new Set([...statuses, ...branchLists])) {
+      if (!visible.has(taskId)) {
         // Hidden panels do not refetch; the read that shows the task reloads it.
         pendingReload.add(taskId);
+        pendingBranches.add(taskId);
+        continue;
       }
+      reloadSlices(taskId, {
+        status: statuses.includes(taskId),
+        branches: branchLists.includes(taskId),
+      });
     }
   }
 
@@ -303,6 +331,7 @@ export function createGitSnapshotStore(deps: GitSnapshotDeps): GitSnapshotStore 
       }));
     }
     pendingReload.add(taskId);
+    pendingBranches.add(taskId);
     if (reloadTimer !== null) return;
     reloadTimer = setTimeout(flushReloads, 0);
   }
@@ -333,6 +362,7 @@ export function createGitSnapshotStore(deps: GitSnapshotDeps): GitSnapshotStore 
     },
     forgetTask(taskId) {
       pendingReload.delete(taskId);
+      pendingBranches.delete(taskId);
       visible.delete(taskId);
       if (!entryOf(taskId)) return;
       const next: Record<string, GitSnapshot> = { ...state };
@@ -350,7 +380,11 @@ export function createGitSnapshotStore(deps: GitSnapshotDeps): GitSnapshotStore 
       // happens now instead of while the panel was off screen. Revision 0
       // means no status was ever requested for it.
       const missed = pendingReload.delete(taskId);
-      if (missed || currentRevision(taskId) === 0) void requestStatus(taskId);
+      const missedBranches = pendingBranches.delete(taskId);
+      reloadSlices(taskId, {
+        status: missed || currentRevision(taskId) === 0,
+        branches: missedBranches,
+      });
     },
     requestStatus,
     requestBranches,
@@ -393,6 +427,7 @@ export function createGitSnapshotStore(deps: GitSnapshotDeps): GitSnapshotStore 
       if (reloadTimer !== null) clearTimeout(reloadTimer);
       reloadTimer = null;
       pendingReload.clear();
+      pendingBranches.clear();
       visible.clear();
       listeners.clear();
     },

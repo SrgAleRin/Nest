@@ -15,7 +15,7 @@ import { SessionsPanel } from './SessionsPanel';
 import { SourceControlPanel } from './SourceControlPanel';
 import { ChevronIcon, FolderIcon, SourceControlIcon, TerminalIcon } from './Icons';
 import type { GitSelection } from '../state/gitSnapshot';
-import { useGitSnapshotStore, useGitTaskMemory } from '../state/GitSnapshotProvider';
+import { useGitTaskMemory } from '../state/GitSnapshotProvider';
 import {
   RIGHT_PANEL_MIN_WIDTH,
   rightPanelMaxWidth,
@@ -91,7 +91,6 @@ export function RightPanel(props: RightPanelProps) {
   const tab = props.tab;
   const setTab = props.onTabChange;
   const taskId = props.task?.id ?? null;
-  const store = useGitSnapshotStore();
   const memory = useGitTaskMemory(taskId);
   const [restoreFocus, setRestoreFocus] = useState<GitSelection | null>(null);
   const railButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -120,11 +119,15 @@ export function RightPanel(props: RightPanelProps) {
     setTab('diff');
   }, [onWiden, setTab]);
 
+  /**
+   * Back from a patch: the list comes back with the row that was open still
+   * selected and focused, so `Open diff` keeps its target without a second
+   * click. Dropping the selection stays an explicit action of the list itself.
+   */
   const backToList = useCallback(() => {
     setRestoreFocus(memory.selection);
-    if (taskId) store.updateMemory(taskId, { selection: null });
     setTab('source-control');
-  }, [memory.selection, setTab, store, taskId]);
+  }, [memory.selection, setTab]);
 
   // Closing the panel puts the focus back on the rail button that opens it
   // again; the terminal is untouched, because only the layout changed.

@@ -82,6 +82,10 @@ function statusCalls(calls: Call[]): Call[] {
   return calls.filter((call) => call.method === 'git.status');
 }
 
+function branchCalls(calls: Call[]): Call[] {
+  return calls.filter((call) => call.method === 'git.branches');
+}
+
 describe('git snapshot store', () => {
   let store: GitSnapshotStore | null = null;
 
@@ -173,6 +177,130 @@ describe('git snapshot store', () => {
     snapshots.invalidate('t1');
     await vi.advanceTimersByTimeAsync(0);
     expect(statusCalls(calls)).toHaveLength(2);
+  });
+
+  it('reloads an already loaded branch slice when the task is invalidated', async () => {
+    vi.useFakeTimers();
+    let current = 'main';
+    const { invoke, calls } = createInvoke((method) =>
+      method === 'git.branches' ? branches(current) : status(current),
+    );
+    const snapshots = makeStore(invoke);
+
+    snapshots.setVisible('t1', true);
+    await vi.advanceTimersByTimeAsync(0);
+    await snapshots.requestBranches('t1');
+    expect(snapshots.getTask('t1')?.branches.data?.current).toBe('main');
+    expect(branchCalls(calls)).toHaveLength(1);
+
+    // `git checkout -b` outside Nest moves both slices: the status names the new
+    // branch, and so must the list of branches the head reads.
+    current = 'external-branch';
+    snapshots.invalidate('t1');
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(snapshots.getTask('t1')?.status.data?.branch).toBe('external-branch');
+    expect(snapshots.getTask('t1')?.branches.data?.current).toBe('external-branch');
+    expect(statusCalls(calls)).toHaveLength(2);
+    expect(branchCalls(calls)).toHaveLength(2);
+  });
+
+  it('reloads the branch slice once per coalesced burst', async () => {
+    vi.useFakeTimers();
+    const { invoke, calls } = createInvoke((method) =>
+      method === 'git.branches' ? branches('main') : status('main'),
+    );
+    const snapshots = makeStore(invoke);
+
+    snapshots.setVisible('t1', true);
+    await vi.advanceTimersByTimeAsync(0);
+    await snapshots.requestBranches('t1');
+    expect(statusCalls(calls)).toHaveLength(1);
+    expect(branchCalls(calls)).toHaveLength(1);
+
+    snapshots.invalidate('t1');
+    snapshots.invalidate('t1');
+    snapshots.invalidate('t1');
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(statusCalls(calls)).toHaveLength(2);
+    expect(branchCalls(calls)).toHaveLength(2);
+  });
+
+  it('still reloads branches when a manual status read took the invalidation', async () => {
+    vi.useFakeTimers();
+    let current = 'main';
+    const { invoke, calls } = createInvoke((method) =>
+      method === 'git.branches' ? branches(current) : status(current),
+    );
+    const snapshots = makeStore(invoke);
+
+    snapshots.setVisible('t1', true);
+    await vi.advanceTimersByTimeAsync(0);
+    await snapshots.requestBranches('t1');
+    expect(statusCalls(calls)).toHaveLength(1);
+    expect(branchCalls(calls)).toHaveLength(1);
+
+    current = 'external-branch';
+    snapshots.invalidate('t1');
+    // The panel's own refresh asks for the status before the coalesced reload
+    // runs; that direct read must not swallow the branch reload.
+    await snapshots.requestStatus('t1');
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(statusCalls(calls)).toHaveLength(2);
+    expect(branchCalls(calls)).toHaveLength(2);
+    expect(snapshots.getTask('t1')?.branches.data?.current).toBe('external-branch');
+  });
+
+  it('does not start loading branches an invalidation finds unloaded', async () => {
+    vi.useFakeTimers();
+    const { invoke, calls } = createInvoke((method) =>
+      method === 'git.branches' ? branches('main') : status('main'),
+    );
+    const snapshots = makeStore(invoke);
+
+    // Only the status was ever read: nothing asked for the branch list, so a
+    // watcher event must not start loading it on its own.
+    snapshots.setVisible('t1', true);
+    await vi.advanceTimersByTimeAsync(0);
+    snapshots.invalidate('t1');
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(statusCalls(calls)).toHaveLength(2);
+    expect(branchCalls(calls)).toHaveLength(0);
+    expect(snapshots.getTask('t1')?.branches.data).toBeNull();
+  });
+
+  it('defers the branch reload of a hidden task and catches it up when read again', async () => {
+    vi.useFakeTimers();
+    let current = 'main';
+    const { invoke, calls } = createInvoke((method) =>
+      method === 'git.branches' ? branches(current) : status(current),
+    );
+    const snapshots = makeStore(invoke);
+
+    snapshots.setVisible('t1', true);
+    await vi.advanceTimersByTimeAsync(0);
+    await snapshots.requestBranches('t1');
+    expect(statusCalls(calls)).toHaveLength(1);
+    expect(branchCalls(calls)).toHaveLength(1);
+
+    // The panel is off screen: no slice is refetched, the branches included.
+    snapshots.setVisible('t1', false);
+    current = 'external-branch';
+    snapshots.invalidate('t1');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(statusCalls(calls)).toHaveLength(1);
+    expect(branchCalls(calls)).toHaveLength(1);
+    expect(snapshots.getTask('t1')?.branches.data?.current).toBe('main');
+
+    // Reading the task again catches up on both slices.
+    snapshots.setVisible('t1', true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(statusCalls(calls)).toHaveLength(2);
+    expect(branchCalls(calls)).toHaveLength(2);
+    expect(snapshots.getTask('t1')?.branches.data?.current).toBe('external-branch');
   });
 
   it('keeps status, branches and log failures independent', async () => {
