@@ -75,6 +75,10 @@ test.beforeAll(() => {
 
   mkdirSync(repoPath, { recursive: true });
   git(['init', '-b', 'main'], repoPath);
+  // The spec commits through the app, so the fixture carries its own identity:
+  // a CI runner has no global `user.name`/`user.email` and git would refuse.
+  git(['config', 'user.name', 'Nest'], repoPath);
+  git(['config', 'user.email', 'nest@example.com'], repoPath);
   writeFileSync(path.join(repoPath, 'README.md'), '# demo\n', 'utf8');
   writeFileSync(path.join(repoPath, 'notes.md'), 'one\ntwo\n', 'utf8');
   git(['add', '.'], repoPath);
