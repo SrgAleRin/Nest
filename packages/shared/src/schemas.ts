@@ -154,7 +154,14 @@ export type UpdateStatus = z.infer<typeof UpdateStatusSchema>;
 export const SessionStatusSchema = z.enum(['starting', 'running', 'idle', 'exited', 'failed']);
 export type SessionStatus = z.infer<typeof SessionStatusSchema>;
 
-export const ResumeModeSchema = z.enum(['exact', 'latest']);
+/**
+ * `exact` — the conversation provably belongs to this session (the launched
+ * process named it, or it was the only one that appeared after the launch).
+ * `heuristic` — a best-effort guess: usable on request, never applied
+ * automatically. `latest` — no id was found, the CLI continues its newest
+ * conversation.
+ */
+export const ResumeModeSchema = z.enum(['exact', 'heuristic', 'latest']);
 export type ResumeMode = z.infer<typeof ResumeModeSchema>;
 
 export const SessionSchema = z.object({

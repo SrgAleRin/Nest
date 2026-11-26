@@ -7,7 +7,8 @@ export interface Migration {
 export const migrations: Migration[] = [
   {
     id: 1,
-    name: 'baseline',    sql: `
+    name: 'baseline',
+    sql: `
       CREATE TABLE projects (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -117,6 +118,35 @@ export const migrations: Migration[] = [
       UPDATE sessions
       SET title = rtrim(rtrim(title, '0123456789'), ' ')
       WHERE title GLOB '* [0-9]*';
+    `,
+  },
+  {
+    id: 7,
+    name: 'session_resume_mode_heuristic',
+    sql: `
+      -- Every "exact" id stored before this migration came from directory
+      -- discovery, which cannot prove ownership. Downgrade instead of deleting
+      -- so a manual resume still works.
+
+      -- One conversation per project: keep the oldest row, clear the rest.
+      UPDATE sessions
+      SET harness_session_id = NULL, resume_mode = 'latest'
+      WHERE harness_session_id IS NOT NULL
+        AND EXISTS (
+          SELECT 1
+          FROM sessions older
+          JOIN tasks older_task ON older_task.id = older.task_id
+          JOIN tasks own_task ON own_task.id = sessions.task_id
+          WHERE older.harness_session_id = sessions.harness_session_id
+            AND older.id <> sessions.id
+            AND older_task.project_id = own_task.project_id
+            AND (older.created_at < sessions.created_at
+              OR (older.created_at = sessions.created_at AND older.id < sessions.id))
+        );
+
+      UPDATE sessions
+      SET resume_mode = 'heuristic'
+      WHERE resume_mode = 'exact';
     `,
   },
 ];

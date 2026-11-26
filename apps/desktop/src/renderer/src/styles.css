@@ -891,6 +891,11 @@ code,
   color: var(--green);
 }
 
+.resume-mode.heuristic {
+  border-color: #4a4557;
+  color: #c8bfe0;
+}
+
 .resume-mode.latest {
   border-color: #5a4b27;
   color: var(--amber);

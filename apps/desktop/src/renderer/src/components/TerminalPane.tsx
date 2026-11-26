@@ -13,15 +13,9 @@ import type {
   TerminalTheme,
 } from '@nest/shared';
 import { Button, EmptyState } from '@nest/ui';
-import {
-  ChevronIcon,
-  CloseIcon,
-  PlayIcon,
-  PlusIcon,
-  TerminalIcon,
-} from './Icons';
+import { ChevronIcon, CloseIcon, PlayIcon, PlusIcon, TerminalIcon } from './Icons';
 import { onSessionData } from '../state/terminalBus';
-import { errorMessage } from '../utils';
+import { errorMessage, resumeActionLabel, resumeShortLabel, resumeTone } from '../utils';
 
 const SEARCH_DECORATIONS = {
   matchBackground: '#2a3a55',
@@ -370,7 +364,8 @@ function NewTabControl({
           )}
           <div className="new-tab-foot">
             <span>
-              Default: {defaultId === 'ask' ? 'ask every time' : (defaultHarness?.label ?? defaultId)}
+              Default:{' '}
+              {defaultId === 'ask' ? 'ask every time' : (defaultHarness?.label ?? defaultId)}
             </span>
             <button
               type="button"
@@ -432,8 +427,8 @@ function StartScreen({
               </>
             ) : (
               <>
-                No harness commands found on PATH. Install Claude Code, Codex, Qwen Code or OpenCode,
-                or add a custom command in Settings.
+                No harness commands found on PATH. Install Claude Code, Codex, Qwen Code or
+                OpenCode, or add a custom command in Settings.
               </>
             )}
           </div>
@@ -453,12 +448,6 @@ function StartScreen({
       </div>
     </div>
   );
-}
-
-function resumeLabel(session: Session): string {
-  return session.resumeMode === 'exact' && session.harnessSessionId
-    ? 'Resume exact'
-    : 'Resume latest';
 }
 
 function TerminalView({
@@ -785,19 +774,23 @@ function TerminalView({
           </span>
           {canResume ? (
             <span
-              className={`resume-mode ${session.harnessSessionId ? 'exact' : 'latest'}`}
+              className={`resume-mode ${resumeTone(session)}`}
               title={
                 session.harnessSessionId
-                  ? `continues ${session.harnessSessionId}`
+                  ? `continues ${session.harnessSessionId}${
+                      resumeTone(session) === 'heuristic'
+                        ? ' (unverified: not resumed automatically)'
+                        : ''
+                    }`
                   : 'continues the latest conversation in this workspace'
               }
             >
-              {session.harnessSessionId ? 'exact' : 'latest'}
+              {resumeShortLabel(session)}
             </span>
           ) : null}
           {canResume ? (
             <button className="mini-btn primary" onClick={() => onResume(session)}>
-              {resumeLabel(session)}
+              {resumeActionLabel(session)}
             </button>
           ) : null}
           <button className="mini-btn" onClick={() => onNewSession(session)}>

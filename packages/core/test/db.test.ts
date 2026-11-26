@@ -53,6 +53,90 @@ describe('baseline migration', () => {
     db.close();
   });
 
+  it('downgrades stored exact ids and keeps one conversation per project', () => {
+    const db = openDatabase(':memory:');
+    db.exec(`
+      CREATE TABLE schema_migrations (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        applied_at TEXT NOT NULL
+      );
+    `);
+    for (const migration of migrations.filter((candidate) => candidate.id <= 6)) {
+      db.exec(migration.sql);
+      db.prepare('INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)').run(
+        migration.id,
+        migration.name,
+        '2026-01-01T00:00:00.000Z',
+      );
+    }
+    db.prepare('INSERT INTO projects (id, name, path, created_at) VALUES (?, ?, ?, ?)').run(
+      'p1',
+      'repo',
+      'C:/repo',
+      '2026-01-01T00:00:00.000Z',
+    );
+    db.prepare('INSERT INTO projects (id, name, path, created_at) VALUES (?, ?, ?, ?)').run(
+      'p2',
+      'other',
+      'C:/other',
+      '2026-01-01T00:00:00.000Z',
+    );
+    const insertTask = db.prepare(
+      `INSERT INTO tasks (id, project_id, kind, slug, title, branch, workspace_path, status, created_at, updated_at)
+       VALUES (?, ?, 'worktree', ?, ?, ?, ?, 'active', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+    );
+    insertTask.run('t1', 'p1', 'one', 'one', 'nest/one', 'C:/worktrees/one');
+    insertTask.run('t2', 'p1', 'two', 'two', 'nest/two', 'C:/worktrees/two');
+    insertTask.run('t3', 'p2', 'three', 'three', 'nest/three', 'C:/worktrees/three');
+    const insertSession = db.prepare(
+      `INSERT INTO sessions (id, task_id, harness_id, title, status, cwd, scrollback, harness_session_id, resume_mode, created_at, updated_at)
+       VALUES (?, ?, 'opencode', 'OpenCode', 'exited', ?, '', ?, ?, ?, ?)`,
+    );
+    // Two tabs of one project share a conversation, and another project has its own.
+    insertSession.run(
+      's1',
+      't1',
+      'C:/worktrees/one',
+      'conv-1',
+      'exact',
+      '2026-01-01T00:00:00.000Z',
+      '2026-01-01T00:00:00.000Z',
+    );
+    insertSession.run(
+      's2',
+      't2',
+      'C:/worktrees/two',
+      'conv-1',
+      'exact',
+      '2026-01-02T00:00:00.000Z',
+      '2026-01-02T00:00:00.000Z',
+    );
+    insertSession.run(
+      's3',
+      't3',
+      'C:/worktrees/three',
+      'conv-2',
+      'exact',
+      '2026-01-01T00:00:00.000Z',
+      '2026-01-01T00:00:00.000Z',
+    );
+
+    migrate(db);
+
+    const rows = db
+      .prepare(
+        'SELECT id, harness_session_id AS cid, resume_mode AS mode FROM sessions ORDER BY id',
+      )
+      .all() as Array<{ id: string; cid: string | null; mode: string }>;
+    expect(rows).toEqual([
+      { id: 's1', cid: 'conv-1', mode: 'heuristic' },
+      { id: 's2', cid: null, mode: 'latest' },
+      { id: 's3', cid: 'conv-2', mode: 'heuristic' },
+    ]);
+    db.close();
+  });
+
   it('enforces a single checkout and cascades deletes', () => {
     const db = openDatabase(':memory:');
     migrate(db);
@@ -67,9 +151,7 @@ describe('baseline migration', () => {
        VALUES (?, 'p1', ?, ?, ?, ?, ?, 'active', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
     );
     insertTask.run('t1', 'checkout', '@main', 'main', 'main', 'C:/repo');
-    expect(() =>
-      insertTask.run('t2', 'checkout', '@main-2', 'main', 'main', 'C:/repo'),
-    ).toThrow();
+    expect(() => insertTask.run('t2', 'checkout', '@main-2', 'main', 'main', 'C:/repo')).toThrow();
 
     insertTask.run('t3', 'worktree', 'feature', 'feature', 'nest/feature', 'C:/worktrees/feature');
     db.prepare(

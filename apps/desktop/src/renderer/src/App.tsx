@@ -24,7 +24,7 @@ import type { CommandItem } from './commands';
 import { createClient } from './rpc/client';
 import { emitSessionData } from './state/terminalBus';
 import { sessionEndEffect, unreadTotal } from './notifications';
-import { errorMessage, shortPath, upsert } from './utils';
+import { errorMessage, resumeTone, shortPath, upsert } from './utils';
 
 interface Toast {
   id: number;
@@ -625,7 +625,7 @@ export function App() {
       paletteCommands.push({
         id: 'session:resume',
         title: `Resume ${selectedSession.title}`,
-        detail: selectedSession.harnessSessionId ? 'exact conversation' : 'latest conversation',
+        detail: `${resumeTone(selectedSession)} conversation`,
         keywords: 'continue session',
         kind: 'action',
         run: () => void resumeSession(selectedSession),

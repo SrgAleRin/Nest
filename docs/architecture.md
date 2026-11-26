@@ -415,8 +415,9 @@ pty.onData(chunk)
 - при закрытии окна Nest скрывается в трей, PTY-процессы и xterm продолжают жить; повторный клик по иконке или запуск Nest показывает то же окно и те же терминалы;
 - полный выход (**Quit Nest** в меню трея) завершает все PTY-процессы;
 - сессии, которые были живы в этот момент, помечаются `resume_on_start = 1`;
-- при следующем запуске они автоматически возобновляются в тех же вкладках: по сохранённому `harness_session_id` (exact), иначе через `--continue` / `resume --last` (latest);
-- id беседы определяется discovery-адаптером после старта: OpenCode — `session list --format json`, Codex/pi/Claude/Qwen — свежие JSONL по `cwd`, Copilot — `workspace.yaml`; поиск повторяется после ввода;
+- при следующем запуске они автоматически возобновляются в тех же вкладках: по сохранённому `harness_session_id`, если он `exact`, иначе через `--continue` / `resume --last` (latest); `heuristic` id автоматически не применяется никогда;
+- id беседы определяется discovery-адаптером после старта: OpenCode — `session list --format json`, Codex/pi/Claude/Qwen — свежие JSONL по `cwd`, Copilot — `workspace.yaml`; поиск повторяется после ввода. `exact` получает только id, который напечатал сам запущенный процесс, либо единственная беседа, появившаяся после старта, когда на том же `cwd` нет второй вкладки; при неоднозначности id не записывается (остаётся latest). Один id не может принадлежать двум сессиям проекта: перед записью идёт claim-проверка в БД;
+- автоматическое latest-возобновление не запускается, если на том же `cwd` есть другая вкладка того же harness: `--continue` мог бы открыть её беседу;
 - в БД сессии, завершившиеся сами или остановленные пользователем, помечаются `exited`/`failed`;
 - snapshot/scrollback сохраняется, новый вывод дописывается после маркера `── resume <harness> ──`;
 - для остальных завершённых сессий доступна кнопка `Resume exact` / `Resume latest`; неудачный exact-resume сбрасывает id и оставляет сессию для latest-повтора;
@@ -809,7 +810,7 @@ CREATE TABLE sessions (
   exit_code          INTEGER,
   scrollback_path    TEXT,
   harness_session_id TEXT,
-  resume_mode        TEXT NOT NULL DEFAULT 'latest',
+  resume_mode        TEXT NOT NULL DEFAULT 'latest', -- exact / heuristic / latest
   last_activity_at   INTEGER
 );
 
@@ -852,7 +853,7 @@ CREATE TABLE settings (
 - комментарии к diff восстанавливаются из SQLite и заново привязываются к file/line;
 - сессии со статусом `running`/`idle` помечаем `exited` — в MVP PTY не переживает закрытие приложения;
 - scrollback восстанавливаем из snapshot/log;
-- `harness_session_id` и `resume_mode` позволяют продолжить именно эту беседу; без id остаётся latest-fallback.
+- `harness_session_id` и `resume_mode` (`exact` / `heuristic` / `latest`) позволяют продолжить именно эту беседу; без id остаётся latest-fallback. Миграция 7 понижает ранее сохранённые `exact` до `heuristic` (они получены каталогом, а не подтверждены процессом) и оставляет один id на проект.
 
 ## 10. Структура репозитория
 
