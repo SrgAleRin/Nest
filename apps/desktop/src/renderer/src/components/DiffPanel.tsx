@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { DEFAULT_DIFF_MODE } from '@nest/shared';
 import type {
   CommentSide,
+  DiffDescriptor,
   DiffFile,
   DiffHunk,
   DiffLine,
+  DiffMode,
   GitDiff,
   NestClient,
   ReviewComment,
@@ -15,6 +18,16 @@ import { Button, EmptyState, ErrorState } from '@nest/ui';
 import { CheckIcon, SendIcon, TrashIcon } from './Icons';
 import { DiffPanelSkeleton } from './PanelSkeletons';
 import { panelPhase } from '../panelState';
+import {
+  countSides,
+  describeDiff,
+  DIFF_MODE_OPTIONS,
+  emptyDiffMessage,
+  fileSideBadge,
+  fileStageAction,
+  isStaleDiff,
+  type SideCounts,
+} from '../diffMode';
 import { diffStatusLetter, diffStatusTone, errorMessage } from '../utils';
 import { highlightHunk, tokenStyle, type HunkHighlight } from '../highlight';
 
@@ -31,6 +44,7 @@ interface DiffPanelProps {
   sessions: Session[];
   selectedSessionId: string | null;
   refreshKey: number;
+  onChanged: () => void;
   onNotify: (level: 'info' | 'warn' | 'error', message: string) => void;
 }
 
@@ -68,17 +82,22 @@ export function DiffPanel({
   sessions,
   selectedSessionId,
   refreshKey,
+  onChanged,
   onNotify,
 }: DiffPanelProps) {
   const [diff, setDiff] = useState<GitDiff | null>(null);
   const [comments, setComments] = useState<ReviewComment[]>([]);
   const [highlights, setHighlights] = useState<Map<DiffHunk, HunkHighlight>>(new Map());
+  const [mode, setMode] = useState<DiffMode>(DEFAULT_DIFF_MODE);
+  const [counts, setCounts] = useState<SideCounts>({ staged: 0, unstaged: 0 });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [composer, setComposer] = useState<ComposerState | null>(null);
   const [draft, setDraft] = useState('');
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  /** Only the newest request may write state; mode switches race with reloads. */
+  const requestSeq = useRef(0);
 
   const activeSession = useMemo(() => {
     const running = sessions.filter(
@@ -87,32 +106,41 @@ export function DiffPanel({
     return running.find((session) => session.id === selectedSessionId) ?? running[0] ?? null;
   }, [sessions, selectedSessionId]);
 
-  const load = useCallback(async () => {
-    if (!task) {
-      setDiff(null);
-      setComments([]);
+  const load = useCallback(
+    async (requested: DiffMode) => {
+      if (!task) {
+        setDiff(null);
+        setComments([]);
+        setError(null);
+        return;
+      }
+      const seq = (requestSeq.current += 1);
+      setLoading(true);
       setError(null);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      const [nextDiff, nextComments] = await Promise.all([
-        client.invoke('git.diff', { taskId: task.id }),
-        client.invoke('comments.list', { taskId: task.id }),
-      ]);
-      setDiff(nextDiff);
-      setComments(nextComments);
-    } catch (loadError) {
-      setError(errorMessage(loadError));
-    } finally {
-      setLoading(false);
-    }
-  }, [client, task]);
+      try {
+        const [nextDiff, nextComments, nextStatus] = await Promise.all([
+          client.invoke('git.diff', { taskId: task.id, mode: requested }),
+          client.invoke('comments.list', { taskId: task.id }),
+          client.invoke('git.status', { taskId: task.id }),
+        ]);
+        // A response for another mode must not replace the selected view.
+        if (seq !== requestSeq.current || isStaleDiff(nextDiff.descriptor, requested)) return;
+        setDiff(nextDiff);
+        setComments(nextComments);
+        setCounts(countSides(nextStatus.files));
+      } catch (loadError) {
+        if (seq !== requestSeq.current) return;
+        setError(errorMessage(loadError));
+      } finally {
+        if (seq === requestSeq.current) setLoading(false);
+      }
+    },
+    [client, task],
+  );
 
   useEffect(() => {
-    void load();
-  }, [load, refreshKey]);
+    void load(mode);
+  }, [load, mode, refreshKey]);
 
   // Switching tasks starts at the top of the new diff.
   useEffect(() => {
@@ -283,10 +311,36 @@ export function DiffPanel({
     }
   }
 
+  /** Stage or unstage one file without leaving the diff; the file stays on disk. */
+  async function changeStage(file: DiffFile, action: 'stage' | 'unstage'): Promise<void> {
+    if (!task) return;
+    setBusy(true);
+    try {
+      await client.invoke(action === 'stage' ? 'git.stage' : 'git.unstage', {
+        taskId: task.id,
+        paths: [file.path],
+      });
+      // Other panels show the same index, so the whole window refreshes.
+      onChanged();
+      await load(mode);
+    } catch (stageError) {
+      onNotify('error', errorMessage(stageError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function renderRow(row: DiffRow) {
     switch (row.kind) {
       case 'file':
-        return <DiffFileHeader file={row.file} />;
+        return (
+          <DiffFileHeader
+            file={row.file}
+            mode={mode}
+            busy={busy}
+            onStage={(action) => void changeStage(row.file, action)}
+          />
+        );
       case 'empty':
         return <div className="diff-empty">{emptyDiffLabel(row.file)}</div>;
       case 'stale-file':
@@ -409,11 +463,15 @@ export function DiffPanel({
     return (
       <div className="diff-panel">
         <DiffHead
+          descriptor={diff?.descriptor ?? null}
           count={diff?.files.length ?? null}
+          mode={mode}
+          counts={counts}
           loading={loading}
-          onRefresh={() => void load()}
+          onMode={setMode}
+          onRefresh={() => void load(mode)}
         />
-        <ErrorState title="Diff unavailable" onRetry={() => void load()}>
+        <ErrorState title="Diff unavailable" onRetry={() => void load(mode)}>
           {error}
         </ErrorState>
       </div>
@@ -426,11 +484,23 @@ export function DiffPanel({
 
   return (
     <div className="diff-panel">
-      <DiffHead count={diff.files.length} loading={loading} onRefresh={() => void load()} />
+      <DiffHead
+        descriptor={diff.descriptor}
+        count={diff.files.length}
+        mode={mode}
+        counts={counts}
+        loading={loading}
+        onMode={setMode}
+        onRefresh={() => void load(mode)}
+      />
 
       <div className="diff-body">
         <div className="diff-scroll" ref={scrollRef}>
-          {diff.files.length === 0 ? <div className="panel-empty">No changes to review</div> : null}
+          {diff.files.length === 0 ? (
+            <div className="panel-empty">
+              {emptyDiffMessage(mode, counts, diff.descriptor.baseRef)}
+            </div>
+          ) : null}
 
           <div className="diff-rows" style={{ height: virtualizer.getTotalSize() }}>
             {virtualItems.map((item) => {
@@ -451,31 +521,62 @@ export function DiffPanel({
           </div>
         </div>
 
-        {stickyFile ? <DiffFileHeader file={stickyFile} sticky /> : null}
+        {stickyFile ? <DiffFileHeader file={stickyFile} mode={mode} sticky /> : null}
       </div>
     </div>
   );
 }
 
 function DiffHead({
+  descriptor,
   count,
+  mode,
+  counts,
   loading,
+  onMode,
   onRefresh,
 }: {
+  descriptor: DiffDescriptor | null;
   count: number | null;
+  mode: DiffMode;
+  counts: SideCounts;
   loading: boolean;
+  onMode: (mode: DiffMode) => void;
   onRefresh: () => void;
 }) {
+  const hint = DIFF_MODE_OPTIONS.find((option) => option.mode === mode)?.hint ?? '';
   return (
-    <div className="diff-head">
-      <span className="section-label">
-        Diff
-        {count !== null ? ` · ${count} file${count === 1 ? '' : 's'}` : ''}
-      </span>
-      <button className="mini-btn" onClick={onRefresh} disabled={loading}>
-        {loading ? 'Loading…' : 'Refresh'}
-      </button>
-    </div>
+    <>
+      <div className="diff-head">
+        <span className="section-label">
+          Diff
+          {count !== null ? ` · ${count} file${count === 1 ? '' : 's'}` : ''}
+        </span>
+        <button className="mini-btn" onClick={onRefresh} disabled={loading}>
+          {loading ? 'Loading…' : 'Refresh'}
+        </button>
+      </div>
+
+      {/* The switch is part of the panel: the compared side is explicit, never inferred. */}
+      <div className="diff-modes" role="tablist" aria-label="Diff comparison">
+        {DIFF_MODE_OPTIONS.map((option) => (
+          <button
+            key={option.mode}
+            role="tab"
+            aria-selected={mode === option.mode}
+            className={`mini-btn diff-mode ${mode === option.mode ? 'selected' : ''}`}
+            title={option.hint}
+            onClick={() => onMode(option.mode)}
+          >
+            {option.label}
+            {option.mode === 'staged' && counts.staged > 0 ? ` ${counts.staged}` : ''}
+            {option.mode === 'unstaged' && counts.unstaged > 0 ? ` ${counts.unstaged}` : ''}
+          </button>
+        ))}
+      </div>
+      <div className="diff-mode-hint">{describeDiff(descriptor)}</div>
+      <div className="diff-mode-hint muted">{hint}</div>
+    </>
   );
 }
 
@@ -485,18 +586,52 @@ function emptyDiffLabel(file: DiffFile): string {
   return 'No textual hunks';
 }
 
-function DiffFileHeader({ file, sticky = false }: { file: DiffFile; sticky?: boolean }) {
+function DiffFileHeader({
+  file,
+  mode,
+  busy = false,
+  sticky = false,
+  onStage,
+}: {
+  file: DiffFile;
+  mode: DiffMode;
+  busy?: boolean;
+  sticky?: boolean;
+  onStage?: (action: 'stage' | 'unstage') => void;
+}) {
+  // `both` mixes sides, so the row says which one it is; in the single-side
+  // modes the mode switch above already does.
+  const badge = fileSideBadge(file, mode);
+  const action = onStage ? fileStageAction(file, mode) : null;
   return (
     <header className={`diff-file-head ${sticky ? 'diff-file-head-sticky' : ''}`}>
       <span className={`git-letter ${diffStatusTone(file.status)}`}>
         {diffStatusLetter(file.status)}
       </span>
-      <span className="diff-path" title={file.path}>
+      <span
+        className="diff-path"
+        title={file.oldPath ? `${file.oldPath} → ${file.path}` : file.path}
+      >
         {file.path}
       </span>
+      {badge ? <span className={`diff-side ${badge}`}>{badge}</span> : null}
       <span className="diff-stat">
         <em>+{file.additions}</em> <del>-{file.deletions}</del>
       </span>
+      {action && onStage ? (
+        <button
+          className="mini-btn"
+          disabled={busy}
+          title={
+            action === 'stage'
+              ? 'Stage this file; the working tree copy stays as it is'
+              : 'Unstage this file; the working tree copy stays as it is'
+          }
+          onClick={() => onStage(action)}
+        >
+          {action === 'stage' ? 'Stage' : 'Unstage'}
+        </button>
+      ) : null}
     </header>
   );
 }

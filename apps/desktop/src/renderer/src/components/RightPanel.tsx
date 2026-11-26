@@ -128,6 +128,7 @@ export function RightPanel(props: RightPanelProps) {
             sessions={props.sessions}
             selectedSessionId={props.selectedSessionId}
             refreshKey={props.refreshKey}
+            onChanged={props.onGitChanged}
             onNotify={props.onNotify}
           />
         ) : null}

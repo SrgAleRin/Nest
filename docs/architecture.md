@@ -32,7 +32,7 @@ Tauri-заметка: если позже понадобится установ�
 | БД | SQLite через `node:sqlite` (Node 24 в Electron 45), WAL |
 | Git | системный `git` через `node:child_process` |
 | Watcher | `@parcel/watcher` на workspace и git-каталоге проекта; debounce 350 мс, событие `git:changed` на задачу |
-| Diff | `git diff` + собственный парсер; виртуализированный viewer и подсветка Shiki (JS engine, грамматики по требованию) |
+| Diff | `git diff` + собственный парсер; режимы `both`/`unstaged`/`staged`/`base`, каждый ответ несёт дескриптор сравнения; виртуализированный viewer и подсветка Shiki (JS engine, грамматики по требованию) |
 | Review comments | SQLite + inline threads в diff; отправка в активную PTY-сессию |
 | PR | не в MVP; GitHub/GitLab и checks — позже |
 | Валидация | `zod` на границе IPC |
@@ -233,7 +233,7 @@ export const rpcContract = {
   'sessions.list':   { input: z.object({ taskId: z.string().optional() }), output: z.array(SessionSchema) },
 
   'git.status': { input: z.object({ taskId: z.string() }), output: GitStatusSchema },
-  'git.diff':   { input: z.object({ taskId: z.string(), path: z.string(), staged: z.boolean().optional() }), output: GitDiffSchema },
+  'git.diff':   { input: z.object({ taskId: z.string(), path: z.string().optional(), mode: DiffModeSchema.optional() }), output: GitDiffSchema /* files + descriptor */ },
   'git.stage':  { input: z.object({ taskId: z.string(), paths: z.array(z.string()) }), output: GitStatusSchema },
   'git.unstage':{ input: z.object({ taskId: z.string(), paths: z.array(z.string()) }), output: GitStatusSchema },
   'git.commit': { input: z.object({ taskId: z.string(), message: z.string().min(1), stageAll: z.boolean().optional(), amend: z.boolean().optional() }), output: z.object({ hash: z.string(), summary: z.string() }) },
@@ -525,8 +525,10 @@ Rollback:
 | base ref | `git symbolic-ref refs/remotes/origin/HEAD` → fallback `origin/main` |
 | status | `git status --porcelain=v1 --branch -z --untracked-files=all` |
 | numstat | `git diff --numstat -z -M HEAD`; без коммитов — сумма `git diff --numstat -z` и `--cached` |
-| diff | `git diff --no-ext-diff --no-color --unified=3 -- <path>` |
-| staged diff | `git diff --cached --no-ext-diff --no-color -- <path>` |
+| diff (unstaged) | `git diff --no-color -M --unified=3 --src-prefix=a/ --dst-prefix=b/ -- <path>` |
+| staged diff | `git diff --cached --no-color -M --unified=3 --src-prefix=a/ --dst-prefix=b/ -- <path>` |
+| diff `both` | оба вызова выше, объединение по файлу: частично staged файл виден дважды со своей стороной (`staged`, `unstaged`) |
+| diff `base` | `git diff <base_ref>` где `base_ref` — записанный при создании задачи ref (`tasks.base_ref`), иначе compare-base; рабочая сторона включает индекс |
 | untracked | читать файл, показывать как added; бинарные — placeholder, строки считает сам Nest (лимит 1 МБ и первые 200 файлов) |
 | stage | `git add -A -- <path>` |
 | unstage | `git restore --staged -- <path>` |

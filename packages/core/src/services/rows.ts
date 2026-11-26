@@ -27,6 +27,7 @@ export interface TaskRow {
   slug: string;
   title: string;
   branch: string;
+  base_ref: string | null;
   workspace_path: string;
   status: TaskStatus;
   setup_error: string | null;
@@ -82,6 +83,7 @@ export function toTask(row: TaskRow): Task {
     slug: row.slug,
     title: row.title,
     branch: row.branch,
+    baseRef: row.base_ref,
     workspacePath: row.workspace_path,
     status: row.status,
     setupError: row.setup_error,

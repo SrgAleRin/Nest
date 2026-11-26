@@ -1992,6 +1992,43 @@ code,
   display: flex;
 }
 
+.diff-modes {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px 4px;
+}
+
+.diff-mode-hint {
+  padding: 0 10px 4px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.diff-mode-hint.muted {
+  color: var(--dim);
+}
+
+/* Side badge for the mixed `both` view: a file's stage state is never implied. */
+.diff-side {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.diff-side.staged {
+  background: rgba(158, 206, 106, 0.14);
+  color: var(--green);
+}
+
+.diff-side.unstaged {
+  background: rgba(122, 162, 247, 0.14);
+  color: var(--blue);
+}
+
 .diff-scroll {
   flex: 1;
   min-height: 0;

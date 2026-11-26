@@ -120,8 +120,8 @@ export class TaskService {
     try {
       this.db
         .prepare(
-          `INSERT INTO tasks (id, project_id, kind, slug, title, branch, workspace_path, status, created_at, updated_at)
-           VALUES (?, ?, 'worktree', ?, ?, ?, ?, 'active', ?, ?)`,
+          `INSERT INTO tasks (id, project_id, kind, slug, title, branch, base_ref, workspace_path, status, created_at, updated_at)
+           VALUES (?, ?, 'worktree', ?, ?, ?, ?, ?, 'active', ?, ?)`,
         )
         .run(
           id,
@@ -129,6 +129,7 @@ export class TaskService {
           slug,
           input.title.trim(),
           branch,
+          base,
           worktreePath,
           timestamp,
           timestamp,
