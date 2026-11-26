@@ -188,7 +188,13 @@ test('task workflow: UI creation, staged review, note, commit, first push, resta
   await changedLine.hover();
   await changedLine.locator('.diff-comment-btn').click();
   await page.locator('.comment-composer textarea').fill('please fix this line');
-  await page.getByRole('button', { name: 'Add comment' }).click();
+  // The composer unmounts itself once the note is stored. Playwright would read
+  // that detach as a failed click and retry against a button that no longer
+  // exists, so the click is dispatched without the actionability retry loop and
+  // the assertion below proves it landed.
+  const addComment = page.getByRole('button', { name: 'Add comment' });
+  await expect(addComment).toBeEnabled();
+  await addComment.dispatchEvent('click');
   await expect(page.locator('.comment-thread')).toContainText('please fix this line');
 
   const sendButton = page.locator('.comment-thread button[title^="Send to"]').first();

@@ -105,7 +105,13 @@ test('virtualizes a large diff, keeps comments working and highlights syntax', a
   await expect(page.locator('.comment-composer-head')).toContainText('a-small.ts:2-3');
 
   await page.locator('.comment-composer textarea').fill('range note');
-  await page.getByRole('button', { name: 'Add comment' }).click();
+  // The composer unmounts itself once the note is stored. Playwright would read
+  // that detach as a failed click and retry against a button that no longer
+  // exists, so the click is dispatched without the actionability retry loop and
+  // the assertion below proves it landed.
+  const addComment = page.getByRole('button', { name: 'Add comment' });
+  await expect(addComment).toBeEnabled();
+  await addComment.dispatchEvent('click');
   await expect(page.locator('.comment-anchor')).toHaveText('a-small.ts:2-3');
   await expect(page.locator('.comment-thread')).toContainText('range note');
 
