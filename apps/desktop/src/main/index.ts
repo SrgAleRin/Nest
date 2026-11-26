@@ -8,11 +8,9 @@ import { decideExternalLink, decideNavigation, isAppUrl } from './boundaries';
 import { registerIpc } from './ipc';
 import { setAppBadge, showNotification } from './notifications';
 import { resolveProfileName } from './profile';
+import { trayIconDataUrl } from './trayIcon';
 import { UpdateService } from './updates';
 import { WorkspaceWatcher } from './watcher';
-
-const TRAY_ICON_BASE64 =
-  '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';
 
 const profile = resolveProfileName(process.env.NEST_PROFILE);
 app.setName('Nest');
@@ -139,7 +137,15 @@ function showWindow(): void {
 function createTray(): void {
   if (process.env.NEST_DISABLE_TRAY === '1') return;
   try {
-    tray = new Tray(nativeImage.createFromDataURL(`data:image/png;base64,${TRAY_ICON_BASE64}`));
+    const icon = nativeImage.createFromDataURL(trayIconDataUrl());
+    // Electron accepts an empty image and draws nothing, so a broken icon is
+    // not a startup error: the tray slot stays blank and Nest looks as if it
+    // had no tray icon at all. Keep the tray (close-to-tray depends on it) and
+    // leave a trace for the next bug report.
+    if (icon.isEmpty()) {
+      console.warn('Nest: the tray icon did not decode; the tray slot will be blank.');
+    }
+    tray = new Tray(icon);
     tray.setToolTip('Nest');
     tray.setContextMenu(
       Menu.buildFromTemplate([
