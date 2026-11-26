@@ -51,6 +51,10 @@ export const DiffFileSchema = z.object({
   additions: z.number().int().nonnegative(),
   deletions: z.number().int().nonnegative(),
   raw: z.string(),
+  /** True when Git reported a binary diff; such files have no textual hunks. */
+  binary: z.boolean().optional(),
+  /** True when only the file mode changed (chmod), so there are no textual hunks. */
+  modeChanged: z.boolean().optional(),
 });
 export type DiffFile = z.infer<typeof DiffFileSchema>;
 
