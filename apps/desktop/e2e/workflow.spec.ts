@@ -184,6 +184,11 @@ test('task workflow: UI creation, staged review, note, commit, first push, resta
 
   // --- save a note and send it to the harness ------------------------------
   await page.getByRole('tab', { name: /^Unstaged/ }).click();
+  // The panel keeps the previous comparison until the new one lands. Without
+  // this wait the first changed line still belongs to the staged file and the
+  // note is anchored to a line this view does not show.
+  await expect(page.locator('.diff-path', { hasText: 'notes.md' })).toBeVisible();
+  await expect(page.locator('.diff-path', { hasText: 'added.md' })).toHaveCount(0);
   const changedLine = page.locator('.diff-line.diff-add, .diff-line.diff-del').first();
   await changedLine.hover();
   await changedLine.locator('.diff-comment-btn').click();
