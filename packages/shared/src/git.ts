@@ -58,7 +58,41 @@ export const DiffFileSchema = z.object({
 });
 export type DiffFile = z.infer<typeof DiffFileSchema>;
 
+/** What the Diff panel compares. */
+export const DiffModeSchema = z.enum(['both', 'unstaged', 'staged', 'base']);
+export type DiffMode = z.infer<typeof DiffModeSchema>;
+
+/** Staged and unstaged work both stay visible by default. */
+export const DEFAULT_DIFF_MODE: DiffMode = 'both';
+
+/**
+ * Side that new-side line numbers and comment anchors point at: the working
+ * tree, the index, or both (`both` mode reports it per file via `staged`).
+ */
+export const DiffAnchorSideSchema = z.enum(['worktree', 'index', 'mixed']);
+export type DiffAnchorSide = z.infer<typeof DiffAnchorSideSchema>;
+
+/**
+ * Every diff response carries the comparison it was computed for, so the panel
+ * can label the current mode and drop a response that arrives after the user
+ * switched modes.
+ */
+export const DiffDescriptorSchema = z.object({
+  mode: DiffModeSchema,
+  /** Ref the workspace is compared against in `base` mode; null otherwise. */
+  baseRef: z.string().nullable(),
+  /**
+   * True when the workspace side is the working tree with the index applied,
+   * so staged work is part of the comparison (`base` mode).
+   */
+  workspaceIncludesIndex: z.boolean(),
+  /** Which side new line numbers and comment anchors refer to. */
+  anchorSide: DiffAnchorSideSchema,
+});
+export type DiffDescriptor = z.infer<typeof DiffDescriptorSchema>;
+
 export const GitDiffSchema = z.object({
+  descriptor: DiffDescriptorSchema,
   files: z.array(DiffFileSchema),
 });
 export type GitDiff = z.infer<typeof GitDiffSchema>;

@@ -119,4 +119,14 @@ export const migrations: Migration[] = [
       WHERE title GLOB '* [0-9]*';
     `,
   },
+  {
+    id: 7,
+    name: 'task_base_ref',
+    sql: `
+      -- The ref a worktree task was branched from, so the Diff panel can review
+      -- the workspace against the task base instead of HEAD.
+      ALTER TABLE tasks
+        ADD COLUMN base_ref TEXT;
+    `,
+  },
 ];

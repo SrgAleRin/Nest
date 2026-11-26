@@ -25,6 +25,8 @@ export const TaskSchema = z.object({
   slug: z.string().min(1),
   title: z.string().min(1),
   branch: z.string().min(1),
+  /** Ref the task's branch was created from; null for main checkouts. */
+  baseRef: z.string().nullable(),
   workspacePath: z.string().min(1),
   status: TaskStatusSchema,
   setupError: z.string().nullable(),

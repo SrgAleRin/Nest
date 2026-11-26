@@ -2,6 +2,8 @@ import { DEFAULT_TERMINAL_PREFERENCES, DEFAULT_UPDATE_FEED_URL } from '@nest/sha
 import type {
   AppInfo,
   AppSettings,
+  DiffDescriptor,
+  DiffMode,
   GitBranches,
   GitCommit,
   GitDiff,
@@ -42,6 +44,7 @@ export function createMockClient(): NestClient {
       slug: '@main',
       title: 'main checkout',
       branch: 'main',
+      baseRef: null,
       workspacePath: 'D:\\dev\\nest-demo',
       status: 'active',
       setupError: null,
@@ -55,6 +58,7 @@ export function createMockClient(): NestClient {
       slug: 'terminal-reconnect',
       title: 'terminal reconnect',
       branch: 'nest/terminal-reconnect',
+      baseRef: 'origin/main',
       workspacePath: 'D:\\dev\\nest-worktrees\\nest-demo\\terminal-reconnect',
       status: 'active',
       setupError: null,
@@ -258,6 +262,12 @@ export function createMockClient(): NestClient {
   };
 
   const diff: GitDiff = {
+    descriptor: {
+      mode: 'both',
+      baseRef: null,
+      workspaceIncludesIndex: false,
+      anchorSide: 'mixed',
+    },
     files: [
       {
         path: 'src/App.tsx',
@@ -526,6 +536,7 @@ export function createMockClient(): NestClient {
           slug: '@main',
           title: 'main checkout',
           branch: 'main',
+          baseRef: null,
           workspacePath: path,
           status: 'active',
           setupError: null,
@@ -580,6 +591,7 @@ export function createMockClient(): NestClient {
           slug,
           title,
           branch: `nest/${slug}`,
+          baseRef: 'origin/main',
           workspacePath: `D:\\dev\\nest-worktrees\\nest-demo\\${slug}`,
           status: 'active',
           setupError: null,
@@ -665,8 +677,18 @@ export function createMockClient(): NestClient {
         return { data: params.sessionId === 'session-fake' ? GREETING : '' };
       case 'git.status':
         return status;
-      case 'git.diff':
-        return diff;
+      case 'git.diff': {
+        const mode = (params.mode as DiffMode | undefined) ?? 'both';
+        const descriptor: DiffDescriptor = {
+          mode,
+          baseRef: mode === 'base' ? 'origin/main' : null,
+          workspaceIncludesIndex: mode === 'base',
+          anchorSide: mode === 'staged' ? 'index' : mode === 'both' ? 'mixed' : 'worktree',
+        };
+        if (mode === 'both' || mode === 'base') return { descriptor, files: diff.files };
+        const staged = mode === 'staged';
+        return { descriptor, files: diff.files.filter((file) => file.staged === staged) };
+      }
       case 'git.stage':
       case 'git.unstage':
         return status;

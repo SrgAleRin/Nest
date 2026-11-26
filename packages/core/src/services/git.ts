@@ -1,7 +1,10 @@
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
+import { DEFAULT_DIFF_MODE } from '@nest/shared';
 import type {
+  DiffDescriptor,
   DiffFile,
+  DiffMode,
   GitBranches,
   GitBranch,
   GitCommitDetail,
@@ -12,6 +15,7 @@ import type {
   GitRemote,
   GitStatus,
   NestEvent,
+  Task,
 } from '@nest/shared';
 import type { Db } from '../db/database.js';
 import { NestError } from '../errors.js';
@@ -36,6 +40,15 @@ const DEFAULT_LOG_LIMIT = 50;
 const MAX_LOG_LIMIT = 200;
 const MAX_COMPARE_COMMITS = 100;
 const MAX_COMPARE_FILES = 2000;
+/** Reading untracked files costs IO; a huge untracked tree only needs a sample. */
+const MAX_UNTRACKED_FILES = 200;
+const DIFF_ARGS = ['--no-color', '-M', '--unified=3', '--src-prefix=a/', '--dst-prefix=b/'];
+
+export interface DiffRequest {
+  mode?: DiffMode;
+  /** Restrict the diff to one workspace-relative path. */
+  path?: string;
+}
 
 export class GitService {
   constructor(
@@ -49,33 +62,86 @@ export class GitService {
     return readStatus(task.workspacePath);
   }
 
-  async diff(taskId: string, filePath?: string, staged = false): Promise<GitDiff> {
+  /**
+   * The Diff panel's review view. Each mode names its two sides explicitly and
+   * returns the descriptor it was computed with, so the panel never labels a
+   * patch with a comparison it does not describe.
+   *
+   * - `unstaged`: index → working tree (untracked files as additions)
+   * - `staged`: HEAD → index
+   * - `both`: per-file union of the two; a partially staged file appears once
+   *   per side, so the stage state is never hidden in a merged patch
+   * - `base`: task base ref → working tree *including the index*
+   */
+  async diff(taskId: string, request: DiffRequest = {}): Promise<GitDiff> {
     const task = this.tasks.get(taskId);
     const cwd = task.workspacePath;
-    const args = ['diff', '--no-color', '-M', '--unified=3', '--src-prefix=a/', '--dst-prefix=b/'];
-    if (staged) args.push('--cached');
-    if (filePath) args.push('--', filePath);
+    const mode = request.mode ?? DEFAULT_DIFF_MODE;
+    const pathspec = request.path ? ['--', request.path] : [];
 
-    const { stdout } = await git(cwd, args);
-    const files = parseUnifiedDiff(stdout, { staged });
+    switch (mode) {
+      case 'staged':
+        return {
+          descriptor: descriptorFor('staged', null),
+          files: sortDiffFiles(
+            await this.readDiff(cwd, ['diff', ...DIFF_ARGS, '--cached', ...pathspec], true),
+          ),
+        };
 
-    if (!staged) {
-      const status = await readStatus(cwd);
-      const untracked = status.files
-        .filter((file) => file.untracked && (!filePath || file.path === filePath))
-        .slice(0, 200);
+      case 'base': {
+        const baseRef = await this.resolveDiffBase(cwd, task);
+        const files = await this.readDiff(cwd, ['diff', ...DIFF_ARGS, baseRef, ...pathspec], false);
+        await appendUntracked(cwd, files, request.path);
+        return { descriptor: descriptorFor('base', baseRef), files: sortDiffFiles(files) };
+      }
 
-      for (const file of untracked) {
-        const synthetic = await buildUntrackedFile(cwd, file.path);
-        if (synthetic) files.push(synthetic);
+      case 'unstaged': {
+        const files = await this.readDiff(cwd, ['diff', ...DIFF_ARGS, ...pathspec], false);
+        await appendUntracked(cwd, files, request.path);
+        return { descriptor: descriptorFor('unstaged', null), files: sortDiffFiles(files) };
+      }
+
+      case 'both': {
+        const [unstaged, staged] = await Promise.all([
+          this.readDiff(cwd, ['diff', ...DIFF_ARGS, ...pathspec], false),
+          this.readDiff(cwd, ['diff', ...DIFF_ARGS, '--cached', ...pathspec], true),
+        ]);
+        const files = [...unstaged, ...staged];
+        await appendUntracked(cwd, files, request.path);
+        return { descriptor: descriptorFor('both', null), files: sortDiffFiles(files) };
       }
     }
+  }
 
-    return { files };
+  private async readDiff(cwd: string, args: string[], staged: boolean): Promise<DiffFile[]> {
+    const { stdout } = await git(cwd, args);
+    return parseUnifiedDiff(stdout, { staged });
+  }
+
+  /**
+   * Ref the task base mode compares against: the recorded branch point of a
+   * worktree task, else the compare default. A checkout on its own base branch
+   * would otherwise diff against itself, so HEAD is used and labelled instead.
+   */
+  private async resolveDiffBase(cwd: string, task: Task): Promise<string> {
+    if (task.baseRef) {
+      await assertRevision(cwd, task.baseRef, 'task base ref');
+      return task.baseRef;
+    }
+    if (!(await hasHead(cwd))) {
+      throw new NestError(
+        'no_head',
+        'Nothing is committed yet, so there is no base to compare against',
+      );
+    }
+    const branches = await this.branches(task.id);
+    const base = branches.baseRef;
+    return !base || base === branches.current ? 'HEAD' : base;
   }
 
   async stage(taskId: string, paths: string[]): Promise<GitStatus> {
     const task = this.tasks.get(taskId);
+    assertPathsInside(task.workspacePath, paths);
     await git(task.workspacePath, ['add', '--', ...paths]);
     this.emit({ type: 'git:changed', taskId });
     return readStatus(task.workspacePath);
@@ -83,6 +149,7 @@ export class GitService {
 
   async unstage(taskId: string, paths: string[]): Promise<GitStatus> {
     const task = this.tasks.get(taskId);
+    assertPathsInside(task.workspacePath, paths);
     await git(task.workspacePath, ['restore', '--staged', '--', ...paths]).catch(async () => {
       await git(task.workspacePath, ['reset', 'HEAD', '--', ...paths]);
     });
@@ -472,6 +539,43 @@ function toPublicBranch(record: BranchRecord): GitBranch {
   return branch;
 }
 
+/**
+ * The sides each mode compares, stated once so the panel and the tests agree
+ * with what the git command actually asked for.
+ */
+function descriptorFor(mode: DiffMode, baseRef: string | null): DiffDescriptor {
+  switch (mode) {
+    case 'staged':
+      return { mode, baseRef: null, workspaceIncludesIndex: false, anchorSide: 'index' };
+    case 'base':
+      // `git diff <base>` reads the working tree with the index applied.
+      return { mode, baseRef, workspaceIncludesIndex: true, anchorSide: 'worktree' };
+    case 'both':
+      // Each file carries its own side, hence the per-file anchor.
+      return { mode, baseRef: null, workspaceIncludesIndex: false, anchorSide: 'mixed' };
+    case 'unstaged':
+      return { mode, baseRef: null, workspaceIncludesIndex: false, anchorSide: 'worktree' };
+  }
+}
+
+/** Files by path; the same path appears at most once per side. */
+function sortDiffFiles(files: DiffFile[]): DiffFile[] {
+  return files.sort((a, b) => a.path.localeCompare(b.path) || Number(a.staged) - Number(b.staged));
+}
+
+/** Untracked files are missing from `git diff`, so they are built from disk. */
+async function appendUntracked(cwd: string, files: DiffFile[], filePath?: string): Promise<void> {
+  const status = await readStatus(cwd);
+  const untracked = status.files
+    .filter((file) => file.untracked && (!filePath || file.path === filePath))
+    .slice(0, MAX_UNTRACKED_FILES);
+
+  for (const file of untracked) {
+    const synthetic = await buildUntrackedFile(cwd, file.path);
+    if (synthetic) files.push(synthetic);
+  }
+}
+
 function combineOutput(result: { stdout: string; stderr: string }): string {
   return [result.stdout, result.stderr]
     .map((value) => value.trim())
@@ -517,6 +621,10 @@ function assertInsideWorkspace(workspacePath: string, filePath: string): void {
   if (path.isAbsolute(filePath) || (target !== root && !target.startsWith(`${root}${path.sep}`))) {
     throw new NestError('invalid_path', `Path is outside the workspace: ${filePath}`);
   }
+}
+
+function assertPathsInside(workspacePath: string, paths: string[]): void {
+  for (const filePath of paths) assertInsideWorkspace(workspacePath, filePath);
 }
 
 async function readStatus(cwd: string): Promise<GitStatus> {

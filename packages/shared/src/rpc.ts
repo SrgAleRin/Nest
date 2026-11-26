@@ -11,6 +11,7 @@ import {
   UpdateStatusSchema,
 } from './schemas.js';
 import {
+  DiffModeSchema,
   GitBranchesSchema,
   GitCommitDetailSchema,
   GitCompareSchema,
@@ -80,7 +81,8 @@ export const rpcMethods = {
     params: z.object({
       taskId: id,
       path: z.string().min(1).optional(),
-      staged: z.boolean().optional(),
+      /** Which comparison to run; core defaults to `both`. */
+      mode: DiffModeSchema.optional(),
     }),
     result: GitDiffSchema,
   },

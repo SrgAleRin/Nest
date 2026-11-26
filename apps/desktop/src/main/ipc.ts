@@ -98,7 +98,7 @@ export function registerIpc(context: IpcContext): void {
 
     'git.status': async ({ taskId }) => core.git.status(taskId),
 
-    'git.diff': async ({ taskId, path, staged }) => core.git.diff(taskId, path, staged),
+    'git.diff': async ({ taskId, path, mode }) => core.git.diff(taskId, { path, mode }),
 
     'git.stage': async ({ taskId, paths }) => core.git.stage(taskId, paths),
 
