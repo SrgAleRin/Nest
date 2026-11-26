@@ -13,6 +13,11 @@ import type { Db } from '../db/database.js';
 import { NestError } from '../errors.js';
 import { HarnessDiscovery } from '../harness/discovery.js';
 import { HarnessRegistry } from '../harness/registry.js';
+import {
+  stopSessionsAndWait,
+  type SessionStopper,
+  type StopSessionsOptions,
+} from './lifecycle.js';
 import { toSession, type SessionRow } from './rows.js';
 import type { TaskService } from './tasks.js';
 
@@ -247,6 +252,9 @@ export class SessionService {
     this.runtimes.set(sessionId, runtime);
 
     child.onData((data) => {
+      // A closed or already-deleted session must not reach the renderer: the
+      // runtime entry is removed before its rows are (close) or together with
+      // the confirmed stop that precedes row deletion.
       const active = this.runtimes.get(sessionId);
       if (!active) return;
       active.buffer = (active.buffer + data).slice(-MAX_SCROLLBACK);
@@ -368,18 +376,32 @@ export class SessionService {
     this.db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
   }
 
-  stopForTask(taskId: string): void {
-    for (const runtime of this.runtimes.values()) {
-      if (runtime.taskId === taskId) {
-        runtime.stopping = true;
-        this.stopDiscovery(runtime);
-        try {
-          runtime.pty.kill();
-        } catch {
-          // already gone
-        }
-      }
+  /**
+   * Stops every live session of the given tasks and waits for confirmed process
+   * exit. Task and project removal call this before touching Git or SQLite: a
+   * row must never disappear while its PTY still runs, and a stop that cannot
+   * be confirmed is reported as an error instead of a success.
+   */
+  async stopTasksAndWait(
+    taskIds: readonly string[],
+    options: StopSessionsOptions = {},
+  ): Promise<void> {
+    const stopper: SessionStopper = {
+      liveSessions: (ids) => this.liveSessions(ids),
+      requestStop: (sessionId) => this.stop(sessionId),
+      isLive: (sessionId) => this.runtimes.has(sessionId),
+    };
+    await stopSessionsAndWait(stopper, taskIds, options);
+  }
+
+  /** Session ids that still have a live PTY, limited to the given tasks. */
+  liveSessions(taskIds: readonly string[]): string[] {
+    const wanted = new Set(taskIds);
+    const ids: string[] = [];
+    for (const [id, runtime] of this.runtimes) {
+      if (wanted.has(runtime.taskId)) ids.push(id);
     }
+    return ids;
   }
 
   scrollback(sessionId: string): string {

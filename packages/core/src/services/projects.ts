@@ -15,7 +15,17 @@ import { toProject, toTask, type ProjectRow, type TaskRow } from './rows.js';
 import { normalizeSetupScript } from './setup.js';
 
 export class ProjectService {
+  private beforeRemove: (project: Project) => void | Promise<void> = () => {};
+
   constructor(private readonly db: Db) {}
+
+  /**
+   * Runs before a project row is deleted. Composition uses it to stop and verify
+   * the PTYs of every task of the project.
+   */
+  onBeforeRemove(handler: (project: Project) => void | Promise<void>): void {
+    this.beforeRemove = handler;
+  }
 
   list(): Project[] {
     const rows = this.db
@@ -107,8 +117,15 @@ export class ProjectService {
     return { project, checkout };
   }
 
-  remove(projectId: string): void {
-    this.get(projectId);
+  /**
+   * Removes the project and its rows (tasks, sessions, comments, settings).
+   * Every live PTY of the project must confirm exit first; if that fails the
+   * project stays registered and nothing is deleted. Checkouts and worktrees are
+   * never removed from disk here: they stay exactly as they are.
+   */
+  async remove(projectId: string): Promise<void> {
+    const project = this.get(projectId);
+    await this.beforeRemove(project);
     this.db.prepare('DELETE FROM projects WHERE id = ?').run(projectId);
   }
 

@@ -64,8 +64,10 @@ export function registerIpc(context: IpcContext): void {
       return result;
     },
 
-    'projects.remove': ({ projectId }) => {
-      core.projects.remove(projectId);
+    'projects.remove': async ({ projectId }) => {
+      // Live PTYs are stopped and confirmed before rows disappear; a failure
+      // throws and the renderer keeps the project visible.
+      await core.projects.remove(projectId);
       tasksChanged();
     },
 

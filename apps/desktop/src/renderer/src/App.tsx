@@ -342,7 +342,20 @@ export function App() {
 
   const removeProject = useCallback(
     async (project: Project) => {
-      if (!window.confirm(`Remove ${project.name} from Nest? Worktrees stay on disk.`)) return;
+      const message = [
+        `Remove "${project.name}" from Nest?`,
+        '',
+        'Deleted from Nest: its tasks, sessions and their scrollback, review comments',
+        'and project settings (including the setup script).',
+        '',
+        'Kept on disk: the main checkout and every worktree, untouched. Git branches',
+        'stay too. They are not re-registered when you add the project back — only the',
+        'main checkout returns.',
+        '',
+        'Running sessions of this project are stopped first. If one does not stop,',
+        'nothing is deleted and you can retry.',
+      ].join('\n');
+      if (!window.confirm(message)) return;
       try {
         await client.invoke('projects.remove', { projectId: project.id });
         setProjects((prev) => prev.filter((candidate) => candidate.id !== project.id));

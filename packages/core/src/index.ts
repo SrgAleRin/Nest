@@ -62,7 +62,16 @@ export function createCore(options: CoreOptions): Core {
   sessions.resumePending();
   const comments = new CommentsService(db, tasks, sessions);
 
-  tasks.onBeforeRemove((task) => sessions.stopForTask(task.id));
+  tasks.onBeforeRemove((task) =>
+    sessions.stopTasksAndWait([task.id], { subject: 'task' }),
+  );
+
+  // A project deletion owns every PTY of every task, including the main
+  // checkout. Unconfirmed stops throw and keep the project and its rows.
+  projects.onBeforeRemove(async (project) => {
+    const taskIds = tasks.list(project.id).map((task) => task.id);
+    await sessions.stopTasksAndWait(taskIds, { subject: 'project' });
+  });
 
   return {
     db,

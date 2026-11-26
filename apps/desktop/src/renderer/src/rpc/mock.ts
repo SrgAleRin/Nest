@@ -34,7 +34,7 @@ export function createMockClient(): NestClient {
       createdAt: now,
     },
   ];
-  const tasks: Task[] = [
+  let tasks: Task[] = [
     {
       id: 'task-checkout',
       projectId: 'project-nest',
@@ -536,8 +536,14 @@ export function createMockClient(): NestClient {
         return { project, checkout };
       }
       case 'projects.remove': {
-        const index = projects.findIndex((project) => project.id === params.projectId);
+        const projectId = String(params.projectId);
+        const removed = new Set(
+          tasks.filter((task) => task.projectId === projectId).map((task) => task.id),
+        );
+        const index = projects.findIndex((project) => project.id === projectId);
         if (index >= 0) projects.splice(index, 1);
+        tasks = tasks.filter((task) => task.projectId !== projectId);
+        sessions = sessions.filter((session) => !removed.has(session.taskId));
         return undefined;
       }
       case 'projects.reveal':
