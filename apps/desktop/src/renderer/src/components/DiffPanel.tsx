@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { DEFAULT_DIFF_MODE } from '@nest/shared';
 import type {
@@ -19,6 +19,19 @@ import { Button, EmptyState, ErrorState } from '@nest/ui';
 import { CheckIcon, ChevronIcon, SendIcon, TrashIcon } from './Icons';
 import { DiffPanelSkeleton } from './PanelSkeletons';
 import { panelPhase } from '../panelState';
+import { useGitSnapshotStore } from '../state/GitSnapshotProvider';
+import type { GitSelection } from '../state/gitSnapshot';
+import {
+  diffSideCounts,
+  initialMode,
+  isCurrentDiffAnswer,
+  isTypingTarget,
+  missingTargetMessage,
+  pickTargetFile,
+  restrictComments,
+  targetLabel,
+  type DiffRequest,
+} from '../diffTarget';
 import {
   countSides,
   describeDiff,
@@ -26,7 +39,6 @@ import {
   emptyDiffMessage,
   fileSideBadge,
   fileStageAction,
-  isStaleDiff,
   type SideCounts,
 } from '../diffMode';
 import {
@@ -41,6 +53,7 @@ import {
 } from '../commentPlacement';
 import { diffStatusLetter, diffStatusTone, errorMessage } from '../utils';
 import { highlightHunk, tokenStyle, type HunkHighlight } from '../highlight';
+import '../diffTarget.css';
 
 /**
  * Highlighting a whole diff is wasted work for generated files with tens of
@@ -57,6 +70,13 @@ interface DiffPanelProps {
   refreshKey: number;
   onChanged: () => void;
   onNotify: (level: 'info' | 'warn' | 'error', message: string) => void;
+  /**
+   * File and side the change list selected. When set, the panel asks git for
+   * that one file and opens on that side; `null` keeps the whole patch.
+   */
+  target?: GitSelection | null;
+  /** Leaves the single-file view for the change list (the store keeps it). */
+  onBackToList?: () => void;
 }
 
 interface ComposerState {
@@ -97,12 +117,26 @@ export function DiffPanel({
   refreshKey,
   onChanged,
   onNotify,
+  target = null,
+  onBackToList,
 }: DiffPanelProps) {
+  const targetPath = target?.path ?? null;
+  const targetSide = target?.mode ?? null;
+  /** Path and side of the open row; a change here opens its own view again. */
+  const targetKey = targetPath === null ? '' : `${targetPath}\u0000${targetSide ?? ''}`;
+
   const [diff, setDiff] = useState<GitDiff | null>(null);
   const [comments, setComments] = useState<CommentView[]>([]);
   const [highlights, setHighlights] = useState<Map<DiffHunk, HunkHighlight>>(new Map());
-  const [mode, setMode] = useState<DiffMode>(DEFAULT_DIFF_MODE);
-  const [counts, setCounts] = useState<SideCounts>({ staged: 0, unstaged: 0 });
+  const [mode, setMode] = useState<DiffMode>(() => initialMode(target, DEFAULT_DIFF_MODE));
+  /** The selection the mode was opened for; a new row opens on its own side. */
+  const [modeTargetKey, setModeTargetKey] = useState(targetKey);
+  if (modeTargetKey !== targetKey) {
+    // Adjusting during render: the request below is built with the new side, so
+    // a fresh row never fires one wasted request for the previous comparison.
+    setModeTargetKey(targetKey);
+    if (targetSide !== null) setMode(targetSide);
+  }
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -112,14 +146,27 @@ export function DiffPanel({
   const [focusCommentId, setFocusCommentId] = useState<string | null>(null);
   const [outsideOpen, setOutsideOpen] = useState(true);
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  /** Only the newest request may write state; mode switches race with reloads. */
+  /** Only the newest request may write state; mode or file switches race with reloads. */
   const requestSeq = useRef(0);
+  /** The request the view wants right now; an answer for anything else is dropped. */
+  const wantedRequest = useRef<DiffRequest | null>(null);
   /**
    * Bumped by every note the panel writes itself. A reload that started before
    * that write still answers with the old list, and applying it would make a
    * note the user just saved disappear until the next refresh.
    */
   const commentsEpoch = useRef(0);
+
+  /**
+   * The status snapshot belongs to the store, not to this panel: the counters
+   * only read it, so opening the diff never asks git for the status again.
+   */
+  const snapshotStore = useGitSnapshotStore();
+  const readStatusFiles = useCallback(
+    () => (task ? (snapshotStore.getTask(task.id)?.status.data?.files ?? null) : null),
+    [snapshotStore, task],
+  );
+  const statusFiles = useSyncExternalStore(snapshotStore.subscribe, readStatusFiles);
 
   const activeSession = useMemo(() => {
     const running = sessions.filter(
@@ -128,30 +175,39 @@ export function DiffPanel({
     return running.find((session) => session.id === selectedSessionId) ?? running[0] ?? null;
   }, [sessions, selectedSessionId]);
 
+  /** Exactly what the view asks git for: task, comparison and (maybe) one file. */
+  const request = useMemo<DiffRequest | null>(
+    () => (task ? { taskId: task.id, mode, path: targetPath } : null),
+    [task, mode, targetPath],
+  );
+
+  const counts = useMemo(
+    () => (statusFiles ? countSides(statusFiles) : diffSideCounts(diff)),
+    [statusFiles, diff],
+  );
+
   const load = useCallback(
-    async (requested: DiffMode) => {
-      if (!task) {
-        setDiff(null);
-        setComments([]);
-        setError(null);
-        return;
-      }
+    async (wanted: DiffRequest) => {
       const seq = (requestSeq.current += 1);
       const epoch = commentsEpoch.current;
       setLoading(true);
       setError(null);
       try {
-        const [nextDiff, nextComments, nextStatus] = await Promise.all([
-          client.invoke('git.diff', { taskId: task.id, mode: requested }),
-          client.invoke('comments.list', { taskId: task.id, mode: requested }),
-          client.invoke('git.status', { taskId: task.id }),
+        const [nextDiff, nextComments] = await Promise.all([
+          client.invoke('git.diff', {
+            taskId: wanted.taskId,
+            mode: wanted.mode,
+            ...(wanted.path !== null ? { path: wanted.path } : {}),
+          }),
+          client.invoke('comments.list', { taskId: wanted.taskId, mode: wanted.mode }),
         ]);
-        // A response for another mode must not replace the selected view.
-        if (seq !== requestSeq.current || isStaleDiff(nextDiff.descriptor, requested)) return;
+        // Another file or another comparison was asked for while this ran: its
+        // answer must never be drawn as the current view.
+        if (seq !== requestSeq.current) return;
+        if (!isCurrentDiffAnswer(wanted, wantedRequest.current, nextDiff.descriptor)) return;
         setDiff(nextDiff);
         // Notes written while this request was in flight win over its answer.
         if (commentsEpoch.current === epoch) setComments(nextComments);
-        setCounts(countSides(nextStatus.files));
       } catch (loadError) {
         if (seq !== requestSeq.current) return;
         setError(errorMessage(loadError));
@@ -159,17 +215,28 @@ export function DiffPanel({
         if (seq === requestSeq.current) setLoading(false);
       }
     },
-    [client, task],
+    [client],
   );
 
   useEffect(() => {
-    void load(mode);
-  }, [load, mode, refreshKey]);
+    wantedRequest.current = request;
+    if (!request) {
+      // Nothing is wanted any more: a late answer from the closed task must
+      // not be drawn either.
+      requestSeq.current += 1;
+      setDiff(null);
+      setComments([]);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+    void load(request);
+  }, [load, request, refreshKey]);
 
-  // Switching tasks starts at the top of the new diff.
+  // A new task or a new selection starts at the head of its file.
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: 0 });
-  }, [task?.id]);
+  }, [task?.id, targetKey]);
 
   useEffect(() => {
     if (!diff) {
@@ -206,11 +273,40 @@ export function DiffPanel({
     };
   }, [diff]);
 
-  const rows = useMemo(() => buildRows(diff, comments, composer), [diff, comments, composer]);
+  /**
+   * The answer restricted to the selected file. A path-filtered diff contains
+   * that file only; if it does not, the rows stay empty and the panel says the
+   * file is not in this comparison instead of drawing another patch.
+   */
+  const targetFile = useMemo(
+    () => pickTargetFile(diff?.files ?? [], targetPath),
+    [diff, targetPath],
+  );
+  const targetMissing = targetPath !== null && diff !== null && targetFile === null;
+  const shownDiff = useMemo<GitDiff | null>(() => {
+    if (!diff || targetPath === null) return diff;
+    const files = targetFile ? [targetFile] : [];
+    if (files.length === diff.files.length && files[0] === diff.files[0]) return diff;
+    return { ...diff, files };
+  }, [diff, targetPath, targetFile]);
+
+  /**
+   * Core places notes against the whole comparison; with one file open, notes
+   * of the other files belong in `Outside this patch` with their reason.
+   */
+  const placedComments = useMemo(
+    () => restrictComments(comments, targetPath),
+    [comments, targetPath],
+  );
+
+  const rows = useMemo(
+    () => buildRows(shownDiff, placedComments, composer),
+    [shownDiff, placedComments, composer],
+  );
 
   /** Notes that are real but not on this patch, grouped by why. */
-  const outsideGroups = useMemo(() => groupOutsideComments(comments), [comments]);
-  const outsideOpenNotes = useMemo(() => openOutsideComments(comments), [comments]);
+  const outsideGroups = useMemo(() => groupOutsideComments(placedComments), [placedComments]);
+  const outsideOpenNotes = useMemo(() => openOutsideComments(placedComments), [placedComments]);
 
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -247,6 +343,27 @@ export function DiffPanel({
   }, [focusCommentId, loading, rows, virtualizer]);
 
   const virtualItems = virtualizer.getVirtualItems();
+
+  /**
+   * Escape leaves the single-file view — after the composer, which owns the key
+   * while it is open, and never while the user types in a field.
+   */
+  useEffect(() => {
+    if (!onBackToList) return;
+    const leave = onBackToList;
+    function onKeyDown(event: KeyboardEvent): void {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      if (composer !== null) {
+        setComposer(null);
+        return;
+      }
+      if (isTypingTarget(event.target)) return;
+      event.preventDefault();
+      leave();
+    }
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [composer, onBackToList]);
 
   // Which file the viewport currently sits in, for the sticky header overlay.
   const stickyFile = useMemo(() => {
@@ -426,7 +543,8 @@ export function DiffPanel({
       });
       // Other panels show the same index, so the whole window refreshes.
       onChanged();
-      await load(mode);
+      // Only the view that was on screen reloads, with the same file and side.
+      if (request) await load(request);
     } catch (stageError) {
       onNotify('error', errorMessage(stageError));
     } finally {
@@ -572,11 +690,13 @@ export function DiffPanel({
           count={diff?.files.length ?? null}
           mode={mode}
           counts={counts}
+          target={target}
           loading={loading}
           onMode={setMode}
-          onRefresh={() => void load(mode)}
+          onRefresh={() => request && void load(request)}
+          onBackToList={onBackToList}
         />
-        <ErrorState title="Diff unavailable" onRetry={() => void load(mode)}>
+        <ErrorState title="Diff unavailable" onRetry={() => request && void load(request)}>
           {error}
         </ErrorState>
       </div>
@@ -591,16 +711,18 @@ export function DiffPanel({
     <div className="diff-panel">
       <DiffHead
         descriptor={diff.descriptor}
-        count={diff.files.length}
+        count={targetMissing ? null : diff.files.length}
         mode={mode}
         counts={counts}
+        target={target}
         loading={loading}
         onMode={setMode}
-        onRefresh={() => void load(mode)}
+        onRefresh={() => request && void load(request)}
+        onBackToList={onBackToList}
       />
 
       <OutsidePatchNotes
-        comments={comments}
+        comments={placedComments}
         groups={outsideGroups}
         openCount={outsideOpenNotes.length}
         expanded={outsideOpen}
@@ -621,7 +743,19 @@ export function DiffPanel({
 
       <div className="diff-body">
         <div className="diff-scroll" ref={scrollRef}>
-          {diff.files.length === 0 ? (            <div className="panel-empty">
+          {targetMissing && target ? (
+            <div className="diff-missing">
+              <p className="diff-missing-text" role="status">
+                {missingTargetMessage(target, mode)}
+              </p>
+              {onBackToList ? (
+                <button className="diff-missing-back" onClick={onBackToList}>
+                  Back to list
+                </button>
+              ) : null}
+            </div>
+          ) : diff.files.length === 0 ? (
+            <div className="panel-empty">
               {emptyDiffMessage(mode, counts, diff.descriptor.baseRef)}
             </div>
           ) : null}
@@ -656,22 +790,36 @@ function DiffHead({
   count,
   mode,
   counts,
+  target = null,
   loading,
   onMode,
   onRefresh,
+  onBackToList,
 }: {
   descriptor: DiffDescriptor | null;
   count: number | null;
   mode: DiffMode;
   counts: SideCounts;
+  target?: GitSelection | null;
   loading: boolean;
   onMode: (mode: DiffMode) => void;
   onRefresh: () => void;
+  onBackToList?: () => void;
 }) {
   const hint = DIFF_MODE_OPTIONS.find((option) => option.mode === mode)?.hint ?? '';
   return (
     <>
       <div className="diff-head">
+        {onBackToList ? (
+          <button
+            className="mini-btn diff-back-btn"
+            aria-label="Back to Source Control"
+            title="Back to the change list; the selected file stays remembered"
+            onClick={onBackToList}
+          >
+            ← Source Control
+          </button>
+        ) : null}
         <span className="section-label">
           Diff
           {count !== null ? ` · ${count} file${count === 1 ? '' : 's'}` : ''}
@@ -680,6 +828,15 @@ function DiffHead({
           {loading ? 'Loading…' : 'Refresh'}
         </button>
       </div>
+
+      {/* One row open: the file and the side it was opened on, stated, not guessed. */}
+      {target ? (
+        <div className="diff-target-bar">
+          <span className="diff-target-label" title={target.path}>
+            {targetLabel(target)}
+          </span>
+        </div>
+      ) : null}
 
       {/* The switch is part of the panel: the compared side is explicit, never inferred. */}
       <div className="diff-modes" role="tablist" aria-label="Diff comparison">

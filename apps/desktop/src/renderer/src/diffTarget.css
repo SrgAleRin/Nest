@@ -1,0 +1,74 @@
+/* ---------- change list → diff of that file and side ---------- */
+
+/*
+ * The back control and the target label sit above the comparison switch, so in
+ * the single-file view the user always sees which file is open and can leave
+ * it. Styles live here, not in styles.css, because an e2e/panel task owns that
+ * file.
+ */
+.diff-target-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 6px;
+}
+
+.diff-back-btn {
+  flex: 0 0 auto;
+}
+
+.diff-target-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font: 10px var(--mono);
+}
+
+/* The selected file is not in the comparison: say so, never draw another patch. */
+.diff-missing {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 16px 10px;
+}
+
+.diff-missing-text {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.diff-missing-back {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--blue);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.diff-missing-back:hover,
+.diff-missing-back:focus-visible {
+  color: var(--text);
+}
+
+/*
+ * Wide view (opened from `Open diff`): the patch fills whatever width the panel
+ * is given, the file head keeps sticking to the top of the scroll area, and the
+ * notes outside the patch keep their own scroll.
+ */
+.diff-panel {
+  width: 100%;
+}
+
+.diff-panel .diff-body,
+.diff-panel .diff-scroll,
+.diff-panel .diff-row {
+  min-width: 0;
+}
