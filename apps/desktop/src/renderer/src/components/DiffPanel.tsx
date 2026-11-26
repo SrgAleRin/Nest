@@ -114,6 +114,12 @@ export function DiffPanel({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   /** Only the newest request may write state; mode switches race with reloads. */
   const requestSeq = useRef(0);
+  /**
+   * Bumped by every note the panel writes itself. A reload that started before
+   * that write still answers with the old list, and applying it would make a
+   * note the user just saved disappear until the next refresh.
+   */
+  const commentsEpoch = useRef(0);
 
   const activeSession = useMemo(() => {
     const running = sessions.filter(
@@ -131,6 +137,7 @@ export function DiffPanel({
         return;
       }
       const seq = (requestSeq.current += 1);
+      const epoch = commentsEpoch.current;
       setLoading(true);
       setError(null);
       try {
@@ -142,7 +149,8 @@ export function DiffPanel({
         // A response for another mode must not replace the selected view.
         if (seq !== requestSeq.current || isStaleDiff(nextDiff.descriptor, requested)) return;
         setDiff(nextDiff);
-        setComments(nextComments);
+        // Notes written while this request was in flight win over its answer.
+        if (commentsEpoch.current === epoch) setComments(nextComments);
         setCounts(countSides(nextStatus.files));
       } catch (loadError) {
         if (seq !== requestSeq.current) return;
@@ -289,6 +297,7 @@ export function DiffPanel({
         },
       });
       // The note was just written on a visible row of this view.
+      commentsEpoch.current += 1;
       setComments((prev) => [...prev, { ...comment, placement: { kind: 'inline' } }]);
       setComposer(null);
       setDraft('');
@@ -311,6 +320,7 @@ export function DiffPanel({
         ...(patch.status ? { status: patch.status } : {}),
       });
       // Editing or resolving a note does not move it; keep the placement.
+      commentsEpoch.current += 1;
       setComments((prev) =>
         prev.map((item) =>
           item.id === next.id
@@ -335,6 +345,7 @@ export function DiffPanel({
     setBusy(true);
     try {
       await client.invoke('comments.remove', { commentId: comment.id });
+      commentsEpoch.current += 1;
       setComments((prev) => prev.filter((item) => item.id !== comment.id));
     } catch (error) {
       onNotify('error', errorMessage(error));
