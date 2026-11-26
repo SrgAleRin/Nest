@@ -15,7 +15,7 @@ Nest запускает harness как обычный CLI в PTY. Поэтому
 |---|---|---|---|---|---|---|
 | Claude Code | `claude` | `claude` | PTY | `claude --resume <id>` / `claude --continue` | best effort по docs | supported; реальный smoke — после MVP, коллеги |
 | Codex | `codex` | `codex` | PTY | `codex resume <id>` / `codex resume --last` | `notify` | tested |
-| DeepSeek Harness | `dsh` | `dsh` | PTY | `dsh tui --resume <session>` (нужен id; пока не подключено) | generic | tested |
+| DeepSeek Harness | `dsh` | `dsh --profile <tui>` | PTY | `dsh --profile <tui> --continue` / `dsh --profile <tui> --resume <session>` | generic | tested |
 | OpenCode | `opencode` | `opencode` | PTY | `opencode --session <id>` / `opencode --continue` | generic | tested: exact resume проверен вручную |
 | pi | `pi` | `pi` | PTY | `pi --session-id <id>` / `pi --continue` | generic | supported |
 | GitHub Copilot CLI | `copilot` | `copilot` | PTY | `copilot --resume <id>` / `copilot --continue` | generic | supported |
@@ -25,6 +25,8 @@ Nest запускает harness как обычный CLI в PTY. Поэтому
 | Custom | `custom` | любая | PTY | — | — | generic |
 
 `fake` — служебный профиль для e2e и разработки; в обычных списках он скрыт и появляется только при заданном `NEST_FAKE_SESSION_DIR` или `NEST_ENABLE_FAKE_HARNESS=1`. Через `get()` он остаётся доступен уже сохранённым сессиям и тестам.
+
+`dsh` — только лончер: без `--profile <name>` он выходит с `error: --profile <name> is required`. Имя профиля реестр читает с диска (`$DSH_HOME/profiles`, по умолчанию `~/.dsh/profiles`): сначала `tui`, затем любой профиль, который подключает TUI-бандл (`@deepseek-harness-tui/dsh-tui`, у части релизов профиль называется `dsh-tui`). Если профилей нет, профиль остаётся пустым и лончер печатает свою ошибку. Флаги лончера всегда идут первыми, аргументы из Settings — после них.
 
 Для `shell` команда резолвится так: `NEST_SHELL`, если задан; на Windows — `pwsh` при наличии в `PATH`, иначе `powershell.exe`, иначе `ComSpec`/`cmd.exe`; на остальных платформах — `$SHELL` или `bash`.
 

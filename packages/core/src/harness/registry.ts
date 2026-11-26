@@ -1,5 +1,7 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type { AppSettings, HarnessId, HarnessProfile } from '@nest/shared';
 import { NestError } from '../errors.js';
 import { splitArgs } from './args.js';
@@ -14,6 +16,8 @@ export interface HarnessRegistryOptions {
     AppSettings,
     'disabledHarnesses' | 'customCommand' | 'harnessArgs' | 'shellCommand'
   >;
+  /** `$DSH_HOME/profiles`; defaults to `DSH_HOME` or `~/.dsh`. Tests point it at a fixture. */
+  dshHome?: string;
 }
 
 /** Profiles without confirmed bracketed-paste handling, also for stored sessions. */
@@ -42,14 +46,23 @@ export class HarnessRegistry {
   private readonly cache = new Map<string, boolean>();
   private readonly builtins: Definition[];
   private readonly fallbackCustomCommand: string;
+  /**
+   * Profile the `dsh` launcher boots. Deepseek's CLI refuses to start without
+   * `--profile <name>`, and the shipped name is not stable (`tui` in the docs,
+   * `dsh-tui` in some releases), so it is read from the profiles directory.
+   */
+  private readonly dshProfile: string | null;
 
   constructor(private readonly options: HarnessRegistryOptions) {
     const fakeCommand = process.env.NEST_NODE ?? 'node';
+    this.dshProfile = resolveDshProfile(options.dshHome ?? defaultDshHome());
     this.fallbackCustomCommand = (
       options.customCommand ??
       process.env.NEST_CUSTOM_COMMAND ??
       ''
     ).trim();
+
+    const dshArgs = this.dshProfile ? ['--profile', this.dshProfile] : [];
 
     this.builtins = [
       {
@@ -77,8 +90,10 @@ export class HarnessRegistry {
         label: 'DeepSeek Harness',
         description: 'DeepSeek harness CLI',
         command: 'dsh',
-        args: [],
-        resumeArgs: [],
+        // `dsh <name>` is an abbreviation of `dsh --profile <name>`; without a
+        // profile the launcher exits with "--profile <name> is required".
+        args: dshArgs,
+        resumeArgs: this.dshProfile ? [...dshArgs, '--continue'] : [],
         inputMode: 'line',
         source: 'builtin',
       },
@@ -211,6 +226,9 @@ export class HarnessRegistry {
    */
   exactResumeArgs(harnessId: string, sessionId: string): string[] | null {
     switch (harnessId) {
+      case 'dsh':
+        // Launcher flags come first, then the app's own `--resume <session>`.
+        return this.dshProfile ? ['--profile', this.dshProfile, '--resume', sessionId] : null;
       case 'claude':
         return ['--resume', sessionId];
       case 'codex':
@@ -326,6 +344,63 @@ export class HarnessRegistry {
     const available = commandExists(definition.command);
     this.cache.set(definition.command, available);
     return available;
+  }
+}
+
+/** `$DSH_HOME`, where the launcher keeps `profiles/<name>` directories. */
+function defaultDshHome(): string {
+  const override = process.env.DSH_HOME?.trim();
+  return override || path.join(os.homedir(), '.dsh');
+}
+
+const DSH_PREFERRED_PROFILES = ['tui', 'dsh-tui'];
+const DSH_IGNORED_ENTRIES = new Set(['node_modules']);
+
+/**
+ * Name of the profile `dsh` should boot, or null when none is installed (the
+ * launcher then fails with its own message, as before). A profile is a
+ * directory under `<dsh home>/profiles`; the TUI one ships as `tui` in the
+ * docs but as `dsh-tui` (bundle `@deepseek-harness-tui/dsh-tui`) in some
+ * releases, so the bundles are checked when the known names are absent.
+ */
+export function resolveDshProfile(dshHome: string): string | null {
+  const root = path.join(dshHome, 'profiles');
+  const names = listDirectories(root);
+  if (names.length === 0) return null;
+
+  for (const preferred of DSH_PREFERRED_PROFILES) {
+    if (names.includes(preferred)) return preferred;
+  }
+
+  for (const name of names) {
+    if (bundlesTui(path.join(root, name))) return name;
+  }
+  return null;
+}
+
+function bundlesTui(profileDir: string): boolean {
+  try {
+    const manifest = JSON.parse(readFileSync(path.join(profileDir, 'package.json'), 'utf8')) as {
+      dsh?: { profile?: { bundles?: unknown } };
+    };
+    const bundles = manifest.dsh?.profile?.bundles;
+    if (!Array.isArray(bundles)) return false;
+    return bundles.some(
+      (bundle) => typeof bundle === 'string' && /(^|[/@-])tui\b/.test(bundle.toLowerCase()),
+    );
+  } catch {
+    return false;
+  }
+}
+
+function listDirectories(root: string): string[] {
+  try {
+    return readdirSync(root, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+      .map((entry) => entry.name)
+      .filter((name) => !DSH_IGNORED_ENTRIES.has(name));
+  } catch {
+    return [];
   }
 }
 
