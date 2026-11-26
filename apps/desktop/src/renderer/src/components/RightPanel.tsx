@@ -91,6 +91,7 @@ export function RightPanel(props: RightPanelProps) {
   const tab = props.tab;
   const setTab = props.onTabChange;
   const taskId = props.task?.id ?? null;
+  const subview = tab === 'history' || tab === 'compare' || tab === 'diff' ? tab : null;
   const memory = useGitTaskMemory(taskId);
   const [restoreFocus, setRestoreFocus] = useState<GitSelection | null>(null);
   const railButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -135,6 +136,22 @@ export function RightPanel(props: RightPanelProps) {
     if (wasOpen.current && !props.open) railButtonRef.current?.focus();
     wasOpen.current = props.open;
   }, [props.open]);
+
+  // A drawer is dismissed with Escape, the way every overlay is — except where
+  // the section already owns that key: a patch marks it as handled to go back to
+  // the list, and the list itself clears its selection. Those run first and set
+  // `defaultPrevented`, which is why this listens on the document and not on the
+  // panel. It stays above the collapsed-rail return: every hook runs every render.
+  useEffect(() => {
+    if (!props.drawer || subview !== null) return;
+    const onKeyDown = (event: globalThis.KeyboardEvent): void => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      event.preventDefault();
+      props.onClose();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [props.drawer, props.onClose, subview]);
 
   const onResizeKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     const next = rightPanelWidthForKey(props.width, event.key, window.innerWidth);
@@ -189,19 +206,9 @@ export function RightPanel(props: RightPanelProps) {
   if (!props.open) return rail;
 
   const section = rightSectionOf(tab);
-  const subview = tab === 'history' || tab === 'compare' || tab === 'diff' ? tab : null;
 
   const panel = (
-    <aside
-      className={`right ${props.drawer ? 'right-drawer' : ''}`}
-      aria-label="Right panel"
-      onKeyDown={(event) => {
-        if (event.key === 'Escape' && props.drawer) {
-          event.stopPropagation();
-          props.onClose();
-        }
-      }}
-    >
+    <aside className={`right ${props.drawer ? 'right-drawer' : ''}`} aria-label="Right panel">
       {props.drawer ? null : (
         <div
           className="right-resizer"

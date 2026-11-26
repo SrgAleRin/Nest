@@ -97,8 +97,8 @@ describe('persisted preference', () => {
     const storage = memoryStorage({
       [RIGHT_PANEL_STORAGE_KEY]: serializeRightPanelUi({ width: 420, collapsed: false }),
     });
-    expect(isNarrowRightPanel(1000)).toBe(true);
-    expect(isNarrowRightPanel(1001)).toBe(false);
-    expect(readRightPanelUi(storage, 900)).toEqual({ width: 420, collapsed: true });
+    expect(isNarrowRightPanel(1040)).toBe(true);
+    expect(isNarrowRightPanel(1181)).toBe(false);
+    expect(readRightPanelUi(storage, 1100)).toEqual({ width: 420, collapsed: true });
   });
 });

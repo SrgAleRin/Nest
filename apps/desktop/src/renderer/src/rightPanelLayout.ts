@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-/** Narrow window: the panel is a drawer over the terminal, not a column. */
-export const RIGHT_PANEL_NARROW_WIDTH = 1000;
+/**
+ * Narrow window: the panel is a drawer over the terminal, not a column.
+ *
+ * It sits above the window's own minimum width (`minWidth: 1040` in the main
+ * process): a threshold below that would make the drawer unreachable, and the
+ * panel would keep taking a column out of a window that is too small for it.
+ */
+export const RIGHT_PANEL_NARROW_WIDTH = 1180;
 export const RIGHT_PANEL_MIN_WIDTH = 300;
 export const RIGHT_PANEL_DEFAULT_WIDTH = 390;
 /** A share of the window, so the terminal keeps a usable column on big screens. */
