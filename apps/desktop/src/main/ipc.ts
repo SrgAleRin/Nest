@@ -107,7 +107,7 @@ export function registerIpc(context: IpcContext): void {
     'git.commit': async ({ taskId, message, stageAll, amend }) =>
       core.git.commit(taskId, message, stageAll, amend),
 
-    'git.push': async ({ taskId, force }) => core.git.push(taskId, force),
+    'git.push': async ({ taskId, force, publish }) => core.git.push(taskId, { force, publish }),
 
     'git.log': async ({ taskId, ref, limit, skip }) => core.git.log(taskId, { ref, limit, skip }),
 

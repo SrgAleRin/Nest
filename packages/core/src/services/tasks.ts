@@ -28,6 +28,12 @@ const FETCH_TIMEOUT_MS = 60_000;
 
 export class TaskService {
   private beforeRemove: (task: Task) => void | Promise<void> = () => {};
+  /**
+   * One tail per project: two concurrent creations would otherwise race for the
+   * same slug, workspace path and branch. The stored promise never rejects, so
+   * a failed creation does not block the next one.
+   */
+  private readonly creating = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly db: Db,
@@ -72,7 +78,23 @@ export class TaskService {
     return checkout;
   }
 
+  /** Creates a task, serialized per project. */
   async create(input: CreateTaskInput): Promise<Task> {
+    const previous = this.creating.get(input.projectId) ?? Promise.resolve();
+    const run = previous.then(
+      () => this.createTask(input),
+      () => this.createTask(input),
+    );
+    const tail = run.catch(() => {});
+    this.creating.set(input.projectId, tail);
+    try {
+      return await run;
+    } finally {
+      if (this.creating.get(input.projectId) === tail) this.creating.delete(input.projectId);
+    }
+  }
+
+  private async createTask(input: CreateTaskInput): Promise<Task> {
     let project = this.projects.get(input.projectId);
     if (input.setupScript !== undefined) {
       project = this.projects.update(project.id, { setupScript: input.setupScript });
@@ -109,11 +131,24 @@ export class TaskService {
       branchCounter += 1;
     }
 
-    const projectDir = sanitizeDir(project.name);
-    const worktreePath = path.join(this.worktreesRoot, projectDir, slug);
+    const worktreePath = path.join(this.worktreesRoot, projectDirName(project), slug);
+    const worktreeExisted = existsSync(worktreePath);
+    const branchExisted = await branchExists(project.path, branch);
 
     this.emit({ type: 'task:progress', projectId: project.id, step: 'worktree' });
-    await git(project.path, ['worktree', 'add', '-b', branch, worktreePath, base]);
+    try {
+      // --no-track keeps base and upstream apart: nest/<slug> starts at
+      // origin/main without inheriting it as its own upstream, so push.default
+      // cannot turn the first push into an update of main.
+      await git(project.path, ['worktree', 'add', '--no-track', '-b', branch, worktreePath, base]);
+    } catch (error) {
+      // git may have created the branch or a half-made directory first.
+      await this.rollbackCreate(project.path, worktreePath, branch, {
+        worktree: !worktreeExisted && existsSync(worktreePath),
+        branch: !branchExisted,
+      });
+      throw error;
+    }
 
     const id = newId();
     const timestamp = nowIso();
@@ -135,7 +170,12 @@ export class TaskService {
           timestamp,
         );
     } catch (error) {
-      await git(project.path, ['worktree', 'remove', '--force', worktreePath]).catch(() => {});
+      // Only this call's artifacts: the worktree created just above and, if
+      // nobody else uses it, the branch. Other tasks are never touched.
+      await this.rollbackCreate(project.path, worktreePath, branch, {
+        worktree: true,
+        branch: !branchExisted,
+      });
       throw error;
     }
 
@@ -243,6 +283,40 @@ export class TaskService {
     }
   }
 
+  /**
+   * Undoes the artifacts of a creation that failed before its row existed. A
+   * branch is deleted only when this call created it and no worktree uses it,
+   * so another task's worktree or branch is never removed.
+   */
+  private async rollbackCreate(
+    repoPath: string,
+    worktreePath: string,
+    branch: string,
+    created: { worktree: boolean; branch: boolean },
+  ): Promise<void> {
+    if (created.worktree) {
+      await gitOrNull(repoPath, ['worktree', 'remove', '--force', worktreePath]);
+      await gitOrNull(repoPath, ['worktree', 'prune']);
+    }
+    if (created.branch && !(await this.branchInUse(repoPath, branch))) {
+      await gitOrNull(repoPath, ['branch', '-D', branch]);
+    }
+  }
+
+  /** True when any worktree of the repo has this branch checked out. */
+  private async branchInUse(repoPath: string, branch: string): Promise<boolean> {
+    const listing = await gitOrNull(repoPath, [
+      '-c',
+      'core.quotepath=false',
+      'worktree',
+      'list',
+      '--porcelain',
+    ]);
+    // An unreadable list makes the answer unknown; never delete on a guess.
+    if (listing === null) return true;
+    return listing.split('\n').some((line) => line.trim() === `branch refs/heads/${branch}`);
+  }
+
   private deleteRow(taskId: string): void {
     // Sessions and comments are removed by the schema cascade.
     this.db.prepare('DELETE FROM tasks WHERE id = ?').run(taskId);
@@ -335,4 +409,14 @@ async function branchExists(repoPath: string, branch: string): Promise<boolean> 
 function sanitizeDir(value: string): string {
   // eslint-disable-next-line no-control-regex
   return value.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-').replace(/\.+$/g, '') || 'project';
+}
+
+/**
+ * Directory for a project's worktrees. The basename alone is not an identity:
+ * two checkouts named `repo` would share it, and so would two of their tasks.
+ * A short project-id suffix keeps new paths apart; paths already stored on
+ * existing tasks are left as they are.
+ */
+function projectDirName(project: { id: string; name: string }): string {
+  return `${sanitizeDir(project.name)}-${project.id.replace(/-/g, '').slice(0, 8)}`;
 }

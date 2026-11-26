@@ -104,7 +104,15 @@ export const rpcMethods = {
     result: z.object({ hash: z.string(), summary: z.string() }),
   },
   'git.push': {
-    params: z.object({ taskId: id, force: z.boolean().optional() }),
+    params: z.object({
+      taskId: id,
+      force: z.boolean().optional(),
+      /**
+       * Publish the current branch as its own remote branch even when its
+       * upstream points somewhere else; the upstream is switched only with it.
+       */
+      publish: z.boolean().optional(),
+    }),
     result: z.object({ output: z.string() }),
   },
   'git.log': {

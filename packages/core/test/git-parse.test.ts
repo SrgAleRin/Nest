@@ -3,6 +3,7 @@ import { parseBranches, parseTrack } from '../src/git/branches.js';
 import { parseNameStatus, toCompareFiles } from '../src/git/compare.js';
 import { parseLog } from '../src/git/log.js';
 import { assertRef, parseRefDecorations } from '../src/git/refs.js';
+import { parseStatus } from '../src/git/status.js';
 
 const RS = '\u001e';
 
@@ -179,5 +180,76 @@ describe('compare files', () => {
     const files = toCompareFiles(entries, new Map([['src/a.ts', { additions: 3, deletions: 1 }]]));
     expect(files[0]).toMatchObject({ path: 'src/a.ts', additions: 3, deletions: 1 });
     expect(files[1]).toMatchObject({ path: 'src/b.ts', additions: null, deletions: null });
+  });
+});
+
+describe('parseStatus', () => {
+  it('keeps the source path of renames and copies apart', () => {
+    const raw = [
+      '## main...origin/main [ahead 1, behind 2]',
+      'R  renamed.txt',
+      'original.txt',
+      'C  copy.txt',
+      'source.txt',
+      ' M edited.txt',
+      '',
+    ].join('\u0000');
+
+    const parsed = parseStatus(raw);
+    expect(parsed).toMatchObject({
+      branch: 'main',
+      upstream: 'origin/main',
+      ahead: 1,
+      behind: 2,
+    });
+    const byPath = new Map(parsed.files.map((file) => [file.path, file]));
+    expect(byPath.get('renamed.txt')).toMatchObject({
+      oldPath: 'original.txt',
+      copied: false,
+      indexStatus: 'R',
+      staged: true,
+    });
+    expect(byPath.get('copy.txt')).toMatchObject({
+      oldPath: 'source.txt',
+      copied: true,
+      indexStatus: 'C',
+      staged: true,
+    });
+    expect(byPath.get('edited.txt')).toMatchObject({
+      oldPath: null,
+      copied: false,
+      untracked: false,
+    });
+    expect(parsed.files).toHaveLength(3);
+  });
+
+  it('reads a worktree-side rename and plain changes', () => {
+    const raw = [
+      '## HEAD (no branch)',
+      ' R moved.txt',
+      'was.txt',
+      '?? untracked.md',
+      ' D gone.txt',
+      ' M modified.txt',
+      '',
+    ].join('\u0000');
+
+    const parsed = parseStatus(raw);
+    expect(parsed).toMatchObject({ branch: 'HEAD', upstream: null, ahead: 0, behind: 0 });
+    const byPath = new Map(parsed.files.map((file) => [file.path, file]));
+    expect(byPath.get('moved.txt')).toMatchObject({
+      oldPath: 'was.txt',
+      copied: false,
+      worktreeStatus: 'R',
+    });
+    expect(byPath.get('untracked.md')).toMatchObject({ untracked: true, staged: false });
+    expect(byPath.get('gone.txt')).toMatchObject({ worktreeStatus: 'D', untracked: false });
+    expect(parsed.files).toHaveLength(4);
+  });
+
+  it('reads the branch of an unborn repository', () => {
+    const parsed = parseStatus(['## No commits yet on main', 'A  first.txt', ''].join('\u0000'));
+    expect(parsed).toMatchObject({ branch: 'main', upstream: null });
+    expect(parsed.files[0]).toMatchObject({ path: 'first.txt', indexStatus: 'A', staged: true });
   });
 });

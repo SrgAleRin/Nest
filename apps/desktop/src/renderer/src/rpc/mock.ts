@@ -233,6 +233,8 @@ export function createMockClient(): NestClient {
     files: [
       {
         path: 'src/App.tsx',
+        oldPath: null,
+        copied: false,
         indexStatus: ' ',
         worktreeStatus: 'M',
         staged: false,
@@ -242,7 +244,9 @@ export function createMockClient(): NestClient {
       },
       {
         path: 'src/terminal/bus.ts',
-        indexStatus: 'A',
+        oldPath: 'src/terminal/legacy.ts',
+        copied: false,
+        indexStatus: 'R',
         worktreeStatus: ' ',
         staged: true,
         untracked: false,
@@ -251,6 +255,8 @@ export function createMockClient(): NestClient {
       },
       {
         path: 'docs/notes.md',
+        oldPath: null,
+        copied: false,
         indexStatus: '?',
         worktreeStatus: '?',
         staged: false,
