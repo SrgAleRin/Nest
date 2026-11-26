@@ -179,7 +179,9 @@ export function GitPanel({
           const forced = await client.invoke('git.push', { taskId: task.id, force: true });
           onNotify('info', forced.output || 'Force pushed');
         } else {
-          throw pushError;
+          // The commit already exists, so a failed push must not read like the
+          // whole operation was lost.
+          throw new Error(`Push failed, the commit stays local. ${details}`);
         }
       }
       await load();
