@@ -19,6 +19,7 @@ import { ProjectService } from '../src/services/projects.js';
 import { SessionService } from '../src/services/sessions.js';
 import { TaskService } from '../src/services/tasks.js';
 import './gitEnv.js';
+import { spawnPipedPty } from './pipedPty.js';
 
 /**
  * Stub harnesses for conversation-identity tests. The scenario lives in the
@@ -161,7 +162,9 @@ function createSessions(
     homeDir: path.dirname(sessionsDir),
     env: { NEST_FAKE_SESSION_DIR: sessionsDir },
   });
-  return new SessionService(db, tasks, harnesses, discovery, (event) => events.push(event));
+  return new SessionService(db, tasks, harnesses, discovery, (event) => events.push(event), {
+    spawnPty: spawnPipedPty,
+  });
 }
 
 /** Simulates a full quit and the next app start on the same database. */

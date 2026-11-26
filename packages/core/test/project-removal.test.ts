@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { NestEvent, Project } from '@nest/shared';
 import { createCore, NestError, type Core } from '../src/index.js';
 import './gitEnv.js';
+import { spawnPipedPty } from './pipedPty.js';
 
 const fakeHarnessScript = fileURLToPath(
   new URL('../../../scripts/fake-harness.mjs', import.meta.url),
@@ -60,6 +61,7 @@ beforeAll(async () => {
     worktreesRoot: path.join(tempRoot, 'worktrees'),
     fakeHarnessScript,
     onEvent: (event) => events.push(event),
+    sessions: { spawnPty: spawnPipedPty },
   });
   ({ project } = await core.projects.add(repoPath));
 });

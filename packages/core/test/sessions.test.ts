@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 import { createCore, type Core } from '../src/index.js';
 import './gitEnv.js';
+import { spawnPipedPty } from './pipedPty.js';
 
 const fakeHarnessScript = fileURLToPath(
   new URL('../../../scripts/fake-harness.mjs', import.meta.url),
@@ -52,6 +53,7 @@ describe('core vertical slice', () => {
       dbPath: path.join(tempRoot, 'nest.db'),
       worktreesRoot: path.join(tempRoot, 'worktrees'),
       fakeHarnessScript,
+      sessions: { spawnPty: spawnPipedPty },
     });
 
     const { project, checkout } = await core.projects.add(repoPath);
@@ -86,7 +88,7 @@ describe('core vertical slice', () => {
     expect(commit.hash.length).toBeGreaterThan(3);
   });
 
-  it('runs the fake harness over a real PTY and stores scrollback', async () => {
+  it('runs the fake harness and stores scrollback', async () => {
     if (!core) throw new Error('core was not created');
     const checkout = core.tasks.list().find((task) => task.kind === 'checkout');
     if (!checkout) throw new Error('checkout missing');
