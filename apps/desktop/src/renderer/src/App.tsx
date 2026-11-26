@@ -612,6 +612,49 @@ export function App() {
       kind: 'action',
       run: bumpGit,
     });
+    const gitAction = (
+      id: string,
+      title: string,
+      keywords: string,
+      run: () => Promise<{ output: string }>,
+    ) => {
+      paletteCommands.push({
+        id,
+        title,
+        detail: selectedTask.branch,
+        keywords,
+        kind: 'action',
+        run: () => {
+          void run()
+            .then((result) => notify('info', result.output || title))
+            .catch((error) => notify('error', errorMessage(error)));
+        },
+      });
+    };
+    if (selectedTask) {
+      gitAction('git:fetch', 'Fetch from remote', 'prune update origin', () =>
+        client.invoke('git.fetch', { taskId: selectedTask.id }),
+      );
+      gitAction('git:pull', 'Pull (fast-forward only)', 'update upstream pull', () =>
+        client.invoke('git.pull', { taskId: selectedTask.id }),
+      );
+    }
+    paletteCommands.push({
+      id: 'git:compare',
+      title: 'Compare branches',
+      detail: 'base, head and upstream',
+      keywords: 'diff branches remote origin compare',
+      kind: 'action',
+      run: () => setRightTab('compare'),
+    });
+    paletteCommands.push({
+      id: 'git:history',
+      title: 'Show commit history',
+      detail: selectedTask.branch,
+      keywords: 'log commits past',
+      kind: 'action',
+      run: () => setRightTab('history'),
+    });
   }
   if (selectedProject) {
     paletteCommands.push({
@@ -655,6 +698,8 @@ export function App() {
   }
   for (const [tab, label] of [
     ['git', 'Git'],
+    ['history', 'History'],
+    ['compare', 'Compare'],
     ['diff', 'Diff'],
     ['sessions', 'Sessions'],
   ] as Array<[RightTab, string]>) {

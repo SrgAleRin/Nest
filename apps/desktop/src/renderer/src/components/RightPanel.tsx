@@ -1,9 +1,12 @@
+import { useState } from 'react';
 import type { NestClient, Session, Task } from '@nest/shared';
+import { ComparePanel } from './ComparePanel';
 import { DiffPanel } from './DiffPanel';
 import { GitPanel } from './GitPanel';
+import { HistoryPanel } from './HistoryPanel';
 import { SessionsPanel } from './SessionsPanel';
 
-export type RightTab = 'git' | 'diff' | 'sessions';
+export type RightTab = 'git' | 'history' | 'compare' | 'diff' | 'sessions';
 
 interface RightPanelProps {
   client: NestClient;
@@ -26,6 +29,21 @@ interface RightPanelProps {
 export function RightPanel(props: RightPanelProps) {
   const tab = props.tab;
   const setTab = props.onTabChange;
+  // The target is tagged with the task it belongs to: a commit hash from
+  // another workspace must never be requested against the current one.
+  const [commitTarget, setCommitTarget] = useState<{ taskId: string; hash: string } | null>(null);
+  const taskId = props.task?.id ?? null;
+  const commitHash = commitTarget && commitTarget.taskId === taskId ? commitTarget.hash : null;
+
+  const openCommit = (hash: string): void => {
+    if (!taskId) return;
+    setCommitTarget({ taskId, hash });
+    setTab('history');
+  };
+
+  const selectCommit = (hash: string | null): void => {
+    setCommitTarget(hash && taskId ? { taskId, hash } : null);
+  };
 
   return (
     <aside className="right">
@@ -33,6 +51,8 @@ export function RightPanel(props: RightPanelProps) {
         {(
           [
             ['git', 'Git'],
+            ['history', 'History'],
+            ['compare', 'Compare'],
             ['diff', 'Diff'],
             ['sessions', `Sessions${props.sessions.length ? ` ${props.sessions.length}` : ''}`],
           ] as Array<[RightTab, string]>
@@ -57,6 +77,34 @@ export function RightPanel(props: RightPanelProps) {
             task={props.task}
             refreshKey={props.refreshKey}
             onChanged={props.onGitChanged}
+            onNotify={props.onNotify}
+            onOpenCommit={openCommit}
+            onOpenHistory={() => {
+              selectCommit(null);
+              setTab('history');
+            }}
+          />
+        ) : null}
+
+        {tab === 'history' ? (
+          <HistoryPanel
+            key={props.task?.id ?? 'none'}
+            client={props.client}
+            task={props.task}
+            refreshKey={props.refreshKey}
+            selectedHash={commitHash}
+            onSelectCommit={selectCommit}
+            onNotify={props.onNotify}
+          />
+        ) : null}
+
+        {tab === 'compare' ? (
+          <ComparePanel
+            key={props.task?.id ?? 'none'}
+            client={props.client}
+            task={props.task}
+            refreshKey={props.refreshKey}
+            onOpenCommit={openCommit}
             onNotify={props.onNotify}
           />
         ) : null}

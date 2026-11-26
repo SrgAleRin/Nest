@@ -58,3 +58,92 @@ export const GitDiffSchema = z.object({
   files: z.array(DiffFileSchema),
 });
 export type GitDiff = z.infer<typeof GitDiffSchema>;
+
+/** Ref names shown next to a commit: branches, remote-tracking refs, `tag: v1`. */
+export const GitCommitSchema = z.object({
+  hash: z.string(),
+  parents: z.array(z.string()),
+  authorName: z.string(),
+  authorEmail: z.string(),
+  authoredAt: z.string(),
+  committedAt: z.string(),
+  subject: z.string(),
+  body: z.string(),
+  refs: z.array(z.string()),
+});
+export type GitCommit = z.infer<typeof GitCommitSchema>;
+
+export const GitLogSchema = z.object({
+  commits: z.array(GitCommitSchema),
+  /** More commits exist past the requested window. */
+  hasMore: z.boolean(),
+});
+export type GitLog = z.infer<typeof GitLogSchema>;
+
+export const GitCommitDetailSchema = z.object({
+  commit: GitCommitSchema,
+  files: z.array(DiffFileSchema),
+});
+export type GitCommitDetail = z.infer<typeof GitCommitDetailSchema>;
+
+export const GitBranchSchema = z.object({
+  name: z.string(),
+  remote: z.boolean(),
+  current: z.boolean(),
+  /** Short upstream name, e.g. `origin/main`; null when the branch has none. */
+  upstream: z.string().nullable(),
+  ahead: z.number().int().nonnegative(),
+  behind: z.number().int().nonnegative(),
+  /** Upstream was configured but no longer exists on the remote. */
+  gone: z.boolean(),
+  tip: z.string(),
+  subject: z.string(),
+  committedAt: z.string(),
+});
+export type GitBranch = z.infer<typeof GitBranchSchema>;
+
+export const GitRemoteSchema = z.object({
+  name: z.string(),
+  fetchUrl: z.string(),
+  pushUrl: z.string(),
+});
+export type GitRemote = z.infer<typeof GitRemoteSchema>;
+
+export const GitBranchesSchema = z.object({
+  /** Current branch, null in detached HEAD. */
+  current: z.string().nullable(),
+  detached: z.boolean(),
+  /** Repository has no commits yet. */
+  unborn: z.boolean(),
+  /** Ref the current branch is compared against by default. */
+  baseRef: z.string().nullable(),
+  remotes: z.array(GitRemoteSchema),
+  local: z.array(GitBranchSchema),
+  remote: z.array(GitBranchSchema),
+});
+export type GitBranches = z.infer<typeof GitBranchesSchema>;
+
+export const GitCompareFileSchema = z.object({
+  path: z.string(),
+  oldPath: z.string().nullable(),
+  status: DiffFileStatusSchema,
+  /** Lines added/deleted; null for binary files. */
+  additions: z.number().int().nonnegative().nullable(),
+  deletions: z.number().int().nonnegative().nullable(),
+});
+export type GitCompareFile = z.infer<typeof GitCompareFileSchema>;
+
+export const GitCompareSchema = z.object({
+  base: z.string(),
+  head: z.string(),
+  mergeBase: z.string().nullable(),
+  /** Commits in head that base does not have. */
+  ahead: z.number().int().nonnegative(),
+  /** Commits in base that head does not have. */
+  behind: z.number().int().nonnegative(),
+  commits: z.array(GitCommitSchema),
+  /** Commits beyond the requested window; `commits` is truncated. */
+  commitsTruncated: z.boolean(),
+  files: z.array(GitCompareFileSchema),
+});
+export type GitCompare = z.infer<typeof GitCompareSchema>;

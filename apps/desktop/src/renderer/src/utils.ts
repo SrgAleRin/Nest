@@ -1,4 +1,4 @@
-import type { GitFile } from '@nest/shared';
+import type { DiffFileStatus, GitFile } from '@nest/shared';
 
 export function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -50,4 +50,50 @@ export function relativeTime(iso: string): string {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.round(hours / 24);
   return `${days}d ago`;
+}
+
+export function shortHash(hash: string, length = 7): string {
+  return hash.slice(0, length);
+}
+
+export function absoluteTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+export function diffStatusLetter(status: DiffFileStatus): string {
+  switch (status) {
+    case 'added':
+      return 'A';
+    case 'deleted':
+      return 'D';
+    case 'renamed':
+      return 'R';
+    case 'modified':
+      return 'M';
+    default:
+      return '?';
+  }
+}
+
+export function diffStatusTone(status: DiffFileStatus): string {
+  switch (status) {
+    case 'added':
+      return 'tone-added';
+    case 'deleted':
+      return 'tone-deleted';
+    case 'renamed':
+      return 'tone-renamed';
+    case 'modified':
+      return 'tone-modified';
+    default:
+      return 'tone-untracked';
+  }
 }

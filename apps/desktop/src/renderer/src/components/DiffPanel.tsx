@@ -15,7 +15,7 @@ import { Button, EmptyState, ErrorState } from '@nest/ui';
 import { CheckIcon, SendIcon, TrashIcon } from './Icons';
 import { DiffPanelSkeleton } from './PanelSkeletons';
 import { panelPhase } from '../panelState';
-import { errorMessage } from '../utils';
+import { diffStatusLetter, diffStatusTone, errorMessage } from '../utils';
 import { highlightHunk, tokenStyle, type HunkHighlight } from '../highlight';
 
 /**
@@ -482,7 +482,9 @@ function DiffHead({
 function DiffFileHeader({ file, sticky = false }: { file: DiffFile; sticky?: boolean }) {
   return (
     <header className={`diff-file-head ${sticky ? 'diff-file-head-sticky' : ''}`}>
-      <span className={`git-letter ${diffTone(file)}`}>{diffLetter(file)}</span>
+      <span className={`git-letter ${diffStatusTone(file.status)}`}>
+        {diffStatusLetter(file.status)}
+      </span>
       <span className="diff-path" title={file.path}>
         {file.path}
       </span>
@@ -662,31 +664,5 @@ function estimateRowSize(row: DiffRow): number {
       return 128;
     default:
       return 24;
-  }
-}
-
-function diffLetter(file: DiffFile): string {
-  switch (file.status) {
-    case 'added':
-      return 'A';
-    case 'deleted':
-      return 'D';
-    case 'renamed':
-      return 'R';
-    default:
-      return 'M';
-  }
-}
-
-function diffTone(file: DiffFile): string {
-  switch (file.status) {
-    case 'added':
-      return 'tone-added';
-    case 'deleted':
-      return 'tone-deleted';
-    case 'renamed':
-      return 'tone-renamed';
-    default:
-      return 'tone-modified';
   }
 }

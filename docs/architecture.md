@@ -233,10 +233,19 @@ export const rpcContract = {
   'sessions.list':   { input: z.object({ taskId: z.string().optional() }), output: z.array(SessionSchema) },
 
   'git.status': { input: z.object({ taskId: z.string() }), output: GitStatusSchema },
-  'git.diff':   { input: z.object({ taskId: z.string(), path: z.string(), staged: z.boolean().optional() }), output: DiffSchema },
-  'git.stage':  { input: z.object({ taskId: z.string(), paths: z.array(z.string()), staged: z.boolean() }), output: z.void() },
-  'git.commit': { input: z.object({ taskId: z.string(), message: z.string().min(1) }), output: z.object({ sha: z.string() }) },
-  'git.push':   { input: z.object({ taskId: z.string() }), output: z.void() },
+  'git.diff':   { input: z.object({ taskId: z.string(), path: z.string(), staged: z.boolean().optional() }), output: GitDiffSchema },
+  'git.stage':  { input: z.object({ taskId: z.string(), paths: z.array(z.string()) }), output: GitStatusSchema },
+  'git.unstage':{ input: z.object({ taskId: z.string(), paths: z.array(z.string()) }), output: GitStatusSchema },
+  'git.commit': { input: z.object({ taskId: z.string(), message: z.string().min(1), stageAll: z.boolean().optional(), amend: z.boolean().optional() }), output: z.object({ hash: z.string(), summary: z.string() }) },
+  'git.push':   { input: z.object({ taskId: z.string(), force: z.boolean().optional() }), output: z.object({ output: z.string() }) },
+  'git.log':    { input: z.object({ taskId: z.string(), ref: z.string().optional(), limit: z.number().int().optional(), skip: z.number().int().optional() }), output: GitLogSchema },
+  'git.commitDetail': { input: z.object({ taskId: z.string(), hash: z.string() }), output: GitCommitDetailSchema },
+  'git.branches': { input: z.object({ taskId: z.string() }), output: GitBranchesSchema },
+  'git.compare': { input: z.object({ taskId: z.string(), base: z.string(), head: z.string().optional() }), output: GitCompareSchema },
+  'git.fetch':  { input: z.object({ taskId: z.string() }), output: z.object({ output: z.string() }) },
+  'git.pull':   { input: z.object({ taskId: z.string() }), output: z.object({ output: z.string() }) },
+  'git.checkout': { input: z.object({ taskId: z.string(), branch: z.string(), create: z.boolean().optional(), from: z.string().optional() }), output: GitStatusSchema },
+  'git.discard': { input: z.object({ taskId: z.string(), paths: z.array(z.string()) }), output: GitStatusSchema },
 
   'comments.list':   { input: z.object({ taskId: z.string(), path: z.string().optional() }), output: z.array(CommentSchema) },
   'comments.create': { input: z.object({
@@ -436,7 +445,7 @@ pty.onData(chunk)
 
 ### 6.9 Command palette
 
-`Ctrl+Shift+P` открывает палитру команд (намеренно не `Ctrl+K` — в шелле это kill-line). Renderer строит плоский список `CommandItem` на каждый рендер: задачи, сессии, запуск доступных harness, stop/resume текущей сессии, переключение панелей Git/Diff/Sessions, `New task`, `Add project`, `Settings`, `Reveal workspace`, `Refresh git`. `filterCommands` сортирует совпадения по prefix > substring > subsequence и учитывает `detail`/`keywords`.
+`Ctrl+Shift+P` открывает палитру команд (намеренно не `Ctrl+K` — в шелле это kill-line). Renderer строит плоский список `CommandItem` на каждый рендер: задачи, сессии, запуск доступных harness, stop/resume текущей сессии, переключение панелей Git/History/Compare/Diff/Sessions, `New task`, `Add project`, `Settings`, `Reveal workspace`, `Refresh git`, `Fetch`, `Pull`. `filterCommands` сортирует совпадения по prefix > substring > subsequence и учитывает `detail`/`keywords`.
 
 Палитра — обычный `modal-overlay` с `max-height` и скроллом: ↑↓/Enter/Esc, клик по строке, фокус в поле поиска, выбранная строка подскролливается. Команда выполняется после закрытия палитры, поэтому `New task`/`Settings` открываются без наложения модалов.
 
@@ -518,12 +527,30 @@ Rollback:
 | untracked | читать файл, показывать как added; бинарные — placeholder, строки считает сам Nest (лимит 1 МБ и первые 200 файлов) |
 | stage | `git add -A -- <path>` |
 | unstage | `git restore --staged -- <path>` |
-| commit | `git commit -m <message>` |
-| push | `git push -u origin HEAD` |
+| discard | `git restore --source=HEAD --staged --worktree -- <path>`; untracked — `git clean -f -- <path>` |
+| commit | `git commit -m <message>`; с `amend` — `git commit --amend -m <message>` |
+| push | `git push -u origin HEAD`; force — `git push --force-with-lease` после подтверждения |
+| log | `git log --max-count=<n+1> --skip=<m> --format=<NUL-поля>`; без HEAD — пустая страница |
+| commit detail | `git log -1 --format=<meta>` + `git diff <parent> <hash>` (корневой — `git show`, merge — первый parent) |
+| branches | `git for-each-ref --format=... refs/heads refs/remotes` + `git symbolic-ref --short -q HEAD`, `git remote -v` |
+| compare | `git rev-list --left-right --count <base>...<head>`, `git merge-base`, `git log <base>..<head>`, numstat/name-status от merge-base |
+| fetch | `git fetch --prune` (60 с, без remotes — `no_remotes`) |
+| pull | `git pull --ff-only` (120 с, non-ff — `pull_not_fast_forward`) |
+| checkout | `git switch <branch>`; remote — `git switch --track <remote>`; новая — `git switch -c <name> [<from>]` |
 | delete worktree | `git worktree remove <path>`; `--force` — только после подтверждения dirty-файлов |
 | list worktrees | `git worktree list --porcelain` |
 
-Все команды — через `execa` с `windowsHide: true`, таймаутом и `maxBuffer`. Долгие (`fetch`, `status` на огромном репо, `diff`) — в worker thread или дочернем процессе, чтобы не блокировать main.
+Все команды — через `node:child_process.execFile` с массивом аргументов, `windowsHide: true`, таймаутом и `maxBuffer`. Долгие (`fetch`, `status` на огромном репо, `diff`) должны уходить в worker thread или дочерний процесс, чтобы не блокировать main.
+
+Все ref/commit-аргументы проходят `assertRef` (`packages/core/src/git/refs.ts`): allowlist символов, запрет `-` в начале, `..`, `@{`, `//` и `.lock`. Paths для stage/discard дополнительно проверяются на принадлежность workspace и на наличие реальных изменений.
+
+### 7.2.1 История, ветки и сравнение
+
+Панель `Git` показывает изменения деревом (сворачиваемые каталоги, одиночные цепочки схлопываются: `apps/desktop/src/main`) или плоским списком, последние 5 коммитов и действия `Fetch`/`Pull`/`Push`; ветка в шапке открывает переключатель локальных и remote-веток и создание новой. `History` — мастер-деталь: страница `git.log` по 50 коммитов, `Load older commits`, карточка коммита с метаданными и патчами файлов (аккордеон, лимит 2000 строк на файл). `Compare` — три-точечное сравнение `base...head` (как в PR): коммиты, которых нет в базе, и файлы, изменённые относительно merge-base; по умолчанию база — upstream текущей ветки, затем `origin/HEAD`, затем `origin/main`, затем `main`. Клик по коммиту открывает его в `History`.
+
+Дерево строится в renderer (`fileTree.ts`, без запросов к core) из плоских путей `git status`/`git diff`, поэтому одинаково работает для изменений, коммита и сравнения веток.
+
+Pull не создаёт merge-коммитов: при расхождении возвращается `pull_not_fast_forward`, и пользователь решает сам. Push после amend сначала идёт обычным путём, а `--force-with-lease` предлагается только после отклонения и явного подтверждения. Переключение ветки и discard — действия пользователя с подтверждением dirty-изменений в UI; Nest по-прежнему не сбрасывает main checkout сам.
 
 PR и checks в MVP нет. Если появятся позже, это отдельный `CodeHostProvider` (GitHub/GitLab), а не часть GitService.
 

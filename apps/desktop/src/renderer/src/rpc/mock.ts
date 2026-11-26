@@ -2,6 +2,8 @@ import { DEFAULT_UPDATE_FEED_URL } from '@nest/shared';
 import type {
   AppInfo,
   AppSettings,
+  GitBranches,
+  GitCommit,
   GitDiff,
   GitStatus,
   HarnessProfile,
@@ -284,6 +286,107 @@ export function createMockClient(): NestClient {
     ],
   };
 
+  const commits: GitCommit[] = [
+    {
+      hash: 'f1e2d3c4b5a6978877665544332211ffeeddccbb',
+      parents: ['a1b2c3d4e5f60718293a4b5c6d7e8f9012345678'],
+      authorName: 'Nest Dev',
+      authorEmail: 'dev@example.com',
+      authoredAt: '2026-11-20T09:40:00.000Z',
+      committedAt: '2026-11-20T09:40:00.000Z',
+      subject: 'feat: git history and branch compare',
+      body: 'Adds the commit log, commit detail view and a three-dot comparison\nagainst the base branch.',
+      refs: ['HEAD -> main', 'origin/main'],
+    },
+    {
+      hash: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678',
+      parents: ['b2c3d4e5f60718293a4b5c6d7e8f901234567890'],
+      authorName: 'Nest Dev',
+      authorEmail: 'dev@example.com',
+      authoredAt: '2026-11-19T15:10:00.000Z',
+      committedAt: '2026-11-19T15:10:00.000Z',
+      subject: 'fix: keep terminal scrollback on resume',
+      body: '',
+      refs: [],
+    },
+    {
+      hash: 'b2c3d4e5f60718293a4b5c6d7e8f901234567890',
+      parents: ['c3d4e5f60718293a4b5c6d7e8f9012345678a1'],
+      authorName: 'Nest Dev',
+      authorEmail: 'dev@example.com',
+      authoredAt: '2026-11-18T11:02:00.000Z',
+      committedAt: '2026-11-18T11:02:00.000Z',
+      subject: 'feat: workspace tabs',
+      body: '',
+      refs: ['tag: v0.2.0'],
+    },
+    {
+      hash: 'c3d4e5f60718293a4b5c6d7e8f9012345678a1b2',
+      parents: [],
+      authorName: 'Nest Dev',
+      authorEmail: 'dev@example.com',
+      authoredAt: '2026-11-16T08:30:00.000Z',
+      committedAt: '2026-11-16T08:30:00.000Z',
+      subject: 'init: project skeleton',
+      body: '',
+      refs: [],
+    },
+  ];
+
+  const branches: GitBranches = {
+    current: status.branch,
+    detached: false,
+    unborn: false,
+    baseRef: 'origin/main',
+    remotes: [
+      {
+        name: 'origin',
+        fetchUrl: 'https://github.com/acme/nest-demo.git',
+        pushUrl: 'https://github.com/acme/nest-demo.git',
+      },
+    ],
+    local: [
+      {
+        name: 'main',
+        remote: false,
+        current: true,
+        upstream: 'origin/main',
+        ahead: status.ahead,
+        behind: status.behind,
+        gone: false,
+        tip: commits[0]!.hash,
+        subject: commits[0]!.subject,
+        committedAt: commits[0]!.committedAt,
+      },
+      {
+        name: 'nest/terminal-reconnect',
+        remote: false,
+        current: false,
+        upstream: null,
+        ahead: 0,
+        behind: 0,
+        gone: false,
+        tip: commits[1]!.hash,
+        subject: commits[1]!.subject,
+        committedAt: commits[1]!.committedAt,
+      },
+    ],
+    remote: [
+      {
+        name: 'origin/main',
+        remote: true,
+        current: false,
+        upstream: null,
+        ahead: 0,
+        behind: 0,
+        gone: false,
+        tip: commits[0]!.hash,
+        subject: commits[0]!.subject,
+        committedAt: commits[0]!.committedAt,
+      },
+    ],
+  };
+
   const handlers = new Set<(event: NestEvent) => void>();
   const emit = (event: NestEvent): void => {
     for (const handler of handlers) handler(event);
@@ -504,6 +607,74 @@ export function createMockClient(): NestClient {
       }
       case 'git.push':
         return { output: 'Everything up-to-date (mock)' };
+      case 'git.log': {
+        const limit = Number(params.limit ?? 50);
+        const skip = Number(params.skip ?? 0);
+        const ref = params.ref ? String(params.ref) : 'HEAD';
+        const list = ref === 'HEAD' || ref === 'main' ? commits : commits.slice(1);
+        return {
+          commits: list.slice(skip, skip + limit),
+          hasMore: list.length > skip + limit,
+        };
+      }
+      case 'git.commitDetail': {
+        const hash = String(params.hash);
+        const commit = commits.find((candidate) => candidate.hash === hash) ?? commits[0]!;
+        return { commit, files: diff.files };
+      }
+      case 'git.branches':
+        return branches;
+      case 'git.compare': {
+        const base = String(params.base);
+        const head = params.head ? String(params.head) : 'HEAD';
+        return {
+          base,
+          head,
+          mergeBase: commits[1]!.hash,
+          ahead: 2,
+          behind: 0,
+          commits: commits.slice(0, 2),
+          commitsTruncated: false,
+          files: diff.files.map((file) => ({
+            path: file.path,
+            oldPath: file.oldPath,
+            status: file.status,
+            additions: file.additions,
+            deletions: file.deletions,
+          })),
+        };
+      }
+      case 'git.fetch':
+        return { output: 'Fetched origin (mock)' };
+      case 'git.pull':
+        return { output: 'Already up to date (mock)' };
+      case 'git.checkout': {
+        const branch = String(params.branch);
+        if (params.create && !branches.local.some((item) => item.name === branch)) {
+          branches.local.push({
+            name: branch,
+            remote: false,
+            current: true,
+            upstream: null,
+            ahead: 0,
+            behind: 0,
+            gone: false,
+            tip: commits[0]!.hash,
+            subject: 'Created in the mock client',
+            committedAt: new Date().toISOString(),
+          });
+        }
+        status.branch = branch;
+        branches.current = branch;
+        for (const item of branches.local) item.current = item.name === branch;
+        return status;
+      }
+      case 'git.discard': {
+        const paths = new Set((params.paths as string[] | undefined) ?? []);
+        status.files = status.files.filter((file) => !paths.has(file.path));
+        emit({ type: 'git:changed', taskId: String(params.taskId) });
+        return status;
+      }
       case 'comments.list':
         return comments;
       case 'comments.create': {

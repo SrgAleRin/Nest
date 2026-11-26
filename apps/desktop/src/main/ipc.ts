@@ -102,10 +102,27 @@ export function registerIpc(context: IpcContext): void {
 
     'git.unstage': async ({ taskId, paths }) => core.git.unstage(taskId, paths),
 
-    'git.commit': async ({ taskId, message, stageAll }) =>
-      core.git.commit(taskId, message, stageAll),
+    'git.commit': async ({ taskId, message, stageAll, amend }) =>
+      core.git.commit(taskId, message, stageAll, amend),
 
-    'git.push': async ({ taskId }) => core.git.push(taskId),
+    'git.push': async ({ taskId, force }) => core.git.push(taskId, force),
+
+    'git.log': async ({ taskId, ref, limit, skip }) => core.git.log(taskId, { ref, limit, skip }),
+
+    'git.commitDetail': async ({ taskId, hash }) => core.git.commitDetail(taskId, hash),
+
+    'git.branches': async ({ taskId }) => core.git.branches(taskId),
+
+    'git.compare': async ({ taskId, base, head }) => core.git.compare(taskId, base, head),
+
+    'git.fetch': async ({ taskId }) => core.git.fetch(taskId),
+
+    'git.pull': async ({ taskId }) => core.git.pull(taskId),
+
+    'git.checkout': async ({ taskId, branch, create, from }) =>
+      core.git.checkout(taskId, branch, { create, from }),
+
+    'git.discard': async ({ taskId, paths }) => core.git.discard(taskId, paths),
 
     'comments.list': ({ taskId }) => core.comments.list(taskId),
 

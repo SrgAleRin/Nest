@@ -10,7 +10,14 @@ import {
   TaskSchema,
   UpdateStatusSchema,
 } from './schemas.js';
-import { GitDiffSchema, GitStatusSchema } from './git.js';
+import {
+  GitBranchesSchema,
+  GitCommitDetailSchema,
+  GitCompareSchema,
+  GitDiffSchema,
+  GitLogSchema,
+  GitStatusSchema,
+} from './git.js';
 
 export const AppInfoSchema = z.object({
   version: z.string(),
@@ -89,10 +96,54 @@ export const rpcMethods = {
       taskId: id,
       message: z.string().trim().min(1).max(5000),
       stageAll: z.boolean().optional(),
+      amend: z.boolean().optional(),
     }),
     result: z.object({ hash: z.string(), summary: z.string() }),
   },
-  'git.push': { params: z.object({ taskId: id }), result: z.object({ output: z.string() }) },
+  'git.push': {
+    params: z.object({ taskId: id, force: z.boolean().optional() }),
+    result: z.object({ output: z.string() }),
+  },
+  'git.log': {
+    params: z.object({
+      taskId: id,
+      /** Start from this ref instead of HEAD. */
+      ref: z.string().min(1).max(250).optional(),
+      limit: z.number().int().min(1).max(200).optional(),
+      skip: z.number().int().min(0).max(100_000).optional(),
+    }),
+    result: GitLogSchema,
+  },
+  'git.commitDetail': {
+    params: z.object({ taskId: id, hash: z.string().min(1).max(250) }),
+    result: GitCommitDetailSchema,
+  },
+  'git.branches': { params: z.object({ taskId: id }), result: GitBranchesSchema },
+  'git.compare': {
+    params: z.object({
+      taskId: id,
+      base: z.string().min(1).max(250),
+      head: z.string().min(1).max(250).optional(),
+    }),
+    result: GitCompareSchema,
+  },
+  'git.fetch': { params: z.object({ taskId: id }), result: z.object({ output: z.string() }) },
+  'git.pull': { params: z.object({ taskId: id }), result: z.object({ output: z.string() }) },
+  'git.checkout': {
+    params: z.object({
+      taskId: id,
+      branch: z.string().min(1).max(250),
+      /** Create the branch instead of switching to an existing one. */
+      create: z.boolean().optional(),
+      /** Start point for a created branch; defaults to the current HEAD. */
+      from: z.string().min(1).max(250).optional(),
+    }),
+    result: GitStatusSchema,
+  },
+  'git.discard': {
+    params: z.object({ taskId: id, paths: z.array(z.string().min(1)).min(1) }),
+    result: GitStatusSchema,
+  },
 
   'comments.list': {
     params: z.object({ taskId: id }),
