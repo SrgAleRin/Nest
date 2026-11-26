@@ -13,7 +13,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { NestEvent, Task } from '@nest/shared';
 import { migrate, openDatabase, type Db } from '../src/db/database.js';
-import { HarnessDiscovery } from '../src/harness/discovery.js';
+import { HarnessDiscovery, type DiscoveryResult } from '../src/harness/discovery.js';
 import { HarnessRegistry } from '../src/harness/registry.js';
 import { ProjectService } from '../src/services/projects.js';
 import { SessionService } from '../src/services/sessions.js';
@@ -156,15 +156,47 @@ function createSessions(
   stub: string,
   sessionsDir: string,
   events: NestEvent[],
+  discovery?: HarnessDiscovery,
 ): SessionService {
   const harnesses = new HarnessRegistry({ fakeHarnessScript: stub });
-  const discovery = new HarnessDiscovery({
-    homeDir: path.dirname(sessionsDir),
-    env: { NEST_FAKE_SESSION_DIR: sessionsDir },
+  const resolved =
+    discovery ??
+    new HarnessDiscovery({
+      homeDir: path.dirname(sessionsDir),
+      env: { NEST_FAKE_SESSION_DIR: sessionsDir },
+    });
+  const sessions = new SessionService(
+    db,
+    tasks,
+    harnesses,
+    resolved,
+    (event) => events.push(event),
+    { spawnPty: spawnPipedPty },
+  );
+  cleanup.push(() => {
+    try {
+      sessions.shutdownAll();
+    } catch {
+      // the database may already be closed
+    }
   });
-  return new SessionService(db, tasks, harnesses, discovery, (event) => events.push(event), {
-    spawnPty: spawnPipedPty,
-  });
+  return sessions;
+}
+
+/**
+ * A tab whose harness printed a conversation id that another tab already owns.
+ * The real stub races the first tab's claim, so the collision is fixed here to
+ * test the guard itself rather than the order two processes happened to run in.
+ */
+function reportingDiscovery(id: string): HarnessDiscovery {
+  const result: DiscoveryResult = {
+    id,
+    confidence: 'exact',
+    reason: 'process_reported',
+    candidates: 1,
+    createdAtMs: Date.now(),
+  };
+  return { find: async () => result } as unknown as HarnessDiscovery;
 }
 
 /** Simulates a full quit and the next app start on the same database. */
@@ -303,13 +335,26 @@ describe('session conversation identity', () => {
   it('never lets two tabs hold the same conversation id', async () => {
     const fixture = await setup('shared');
     process.env.NEST_TEST_SHARED_ID = 'shared-conversation';
-    await fixture.sessions.start({
+    const first = await fixture.sessions.start({
       taskId: fixture.checkout.id,
       harnessId: 'fake',
       cols: 80,
       rows: 24,
     });
-    await fixture.sessions.start({
+    await waitFor(() => fixture.sessions.get(first.id).harnessSessionId === 'shared-conversation');
+
+    // The second tab's harness reports the same conversation after the first
+    // one already owns it: the claim must lose and the tab must keep the
+    // "Resume latest" fallback with a warning.
+    const second = createSessions(
+      fixture.db,
+      fixture.tasks,
+      fixture.stub,
+      fixture.sessionsDir,
+      fixture.events,
+      reportingDiscovery('shared-conversation'),
+    );
+    await second.start({
       taskId: fixture.checkout.id,
       harnessId: 'fake',
       cols: 80,

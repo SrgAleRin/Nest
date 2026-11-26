@@ -60,6 +60,8 @@ interface Fixture {
   projects: ProjectService;
   tasks: TaskService;
   sessions: SessionService;
+  /** Every service opened on this database, so all timers die before it closes. */
+  services: SessionService[];
   events: NestEvent[];
   ptys: FakePty[];
   taskId: string;
@@ -129,12 +131,27 @@ function createFixture(options: SessionServiceOptions = {}): Fixture {
     },
   );
 
-  const fixture: Fixture = { root, db, projects, tasks, sessions, events, ptys, taskId };
+  const fixture: Fixture = {
+    root,
+    db,
+    projects,
+    tasks,
+    sessions,
+    services: [sessions],
+    events,
+    ptys,
+    taskId,
+  };
   cleanup.push(() => {
-    try {
-      fixture.sessions.shutdownAll();
-    } catch {
-      // the database may already be closed
+    // A restarted service replaces `fixture.sessions`, so shut down every
+    // instance: an idle timer that survives the close would touch a closed
+    // database and surface as an uncaught exception.
+    for (const service of fixture.services) {
+      try {
+        service.shutdownAll();
+      } catch {
+        // the database may already be closed
+      }
     }
     try {
       db.close();
@@ -165,15 +182,9 @@ function restart(fixture: Fixture, options: SessionServiceOptions = {}): Session
       },
     },
   );
-  // The restarted service owns fresh discovery timers; stop them before the
-  // database closes, the way the cleanup of a fresh fixture does.
-  cleanup.push(() => {
-    try {
-      sessions.shutdownAll();
-    } catch {
-      // the database may already be closed
-    }
-  });
+  // The restarted service owns fresh timers; register it with the fixture so
+  // every instance is shut down before the database closes.
+  fixture.services.push(sessions);
   sessions.recoverStale();
   sessions.resumePending();
   return sessions;
