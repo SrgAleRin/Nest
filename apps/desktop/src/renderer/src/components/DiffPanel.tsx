@@ -288,7 +288,7 @@ export function DiffPanel({
       case 'file':
         return <DiffFileHeader file={row.file} />;
       case 'empty':
-        return <div className="diff-empty">Binary file or no textual hunks</div>;
+        return <div className="diff-empty">{emptyDiffLabel(row.file)}</div>;
       case 'stale-file':
         return (
           <header className="diff-file-head">
@@ -477,6 +477,12 @@ function DiffHead({
       </button>
     </div>
   );
+}
+
+function emptyDiffLabel(file: DiffFile): string {
+  if (file.binary) return 'Binary file';
+  if (file.modeChanged) return 'File mode changed';
+  return 'No textual hunks';
 }
 
 function DiffFileHeader({ file, sticky = false }: { file: DiffFile; sticky?: boolean }) {

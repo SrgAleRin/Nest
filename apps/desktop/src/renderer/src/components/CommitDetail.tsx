@@ -139,7 +139,9 @@ function PatchView({ file }: { file: DiffFile }) {
   let budget = MAX_PATCH_LINES;
 
   if (file.hunks.length === 0) {
-    return <div className="diff-empty">Binary file or no textual changes</div>;
+    if (file.binary) return <div className="diff-empty">Binary file</div>;
+    if (file.modeChanged) return <div className="diff-empty">File mode changed</div>;
+    return <div className="diff-empty">No textual changes</div>;
   }
 
   return (
