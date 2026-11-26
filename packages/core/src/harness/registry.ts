@@ -2,13 +2,17 @@ import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import type { AppSettings, HarnessId, HarnessProfile } from '@nest/shared';
 import { NestError } from '../errors.js';
+import { splitArgs } from './args.js';
 
 export interface HarnessRegistryOptions {
   fakeHarnessScript: string;
   /** Dev fallback used when the persisted custom command is empty. */
   customCommand?: string;
   /** Read at call time so a settings change applies without a restart. */
-  getSettings?: () => Pick<AppSettings, 'disabledHarnesses' | 'customCommand'>;
+  getSettings?: () => Pick<
+    AppSettings,
+    'disabledHarnesses' | 'customCommand' | 'harnessArgs' | 'shellCommand'
+  >;
 }
 
 interface Definition {
@@ -208,11 +212,24 @@ export class HarnessRegistry {
   }
 
   private definitions(): Definition[] {
-    const custom = (this.currentSettings().customCommand || this.fallbackCustomCommand).trim();
-    if (!custom) return this.builtins;
+    const settings = this.currentSettings();
+    const custom = (settings.customCommand || this.fallbackCustomCommand).trim();
+    const builtins = settings.shellCommand.trim()
+      ? this.builtins.map((definition) =>
+          definition.id === 'shell'
+            ? { ...definition, command: settings.shellCommand.trim() }
+            : definition,
+        )
+      : this.builtins;
+    const withArgs = (definition: Definition): Definition => {
+      const extra = splitArgs(settings.harnessArgs?.[definition.id] ?? '');
+      return extra.length > 0 ? { ...definition, args: [...definition.args, ...extra] } : definition;
+    };
+
+    if (!custom) return builtins.map(withArgs);
     return [
-      ...this.builtins,
-      {
+      ...builtins.map(withArgs),
+      withArgs({
         id: 'custom',
         label: 'Custom command',
         description: custom,
@@ -220,12 +237,22 @@ export class HarnessRegistry {
         args: [],
         resumeArgs: [],
         source: 'custom',
-      },
+      }),
     ];
   }
 
-  private currentSettings(): Pick<AppSettings, 'disabledHarnesses' | 'customCommand'> {
-    return this.options.getSettings?.() ?? { disabledHarnesses: [], customCommand: '' };
+  private currentSettings(): Pick<
+    AppSettings,
+    'disabledHarnesses' | 'customCommand' | 'harnessArgs' | 'shellCommand'
+  > {
+    return (
+      this.options.getSettings?.() ?? {
+        disabledHarnesses: [],
+        customCommand: '',
+        harnessArgs: {},
+        shellCommand: '',
+      }
+    );
   }
 
   private disabledIds(): Set<string> {

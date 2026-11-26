@@ -3,7 +3,15 @@ import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
-import type { HarnessProfile, NestClient, Session, Task } from '@nest/shared';
+import type { ITheme } from '@xterm/xterm';
+import type {
+  HarnessProfile,
+  NestClient,
+  Session,
+  Task,
+  TerminalPreferences,
+  TerminalTheme,
+} from '@nest/shared';
 import { Button, EmptyState } from '@nest/ui';
 import {
   ChevronIcon,
@@ -24,6 +32,57 @@ const SEARCH_DECORATIONS = {
   activeMatchColorOverviewRuler: '#e0af68',
 } as const;
 
+export const TERMINAL_THEMES: Record<TerminalTheme, ITheme> = {
+  nest: {
+    background: '#080a0e',
+    foreground: '#e7ecf6',
+    cursor: '#7aa2f7',
+    selectionBackground: 'rgba(122, 162, 247, 0.25)',
+    black: '#1b2230',
+    red: '#f7768e',
+    green: '#9ece6a',
+    yellow: '#e0af68',
+    blue: '#7aa2f7',
+    magenta: '#bb9af7',
+    cyan: '#7dcfff',
+    white: '#c3cbd9',
+    brightBlack: '#5d6676',
+    brightWhite: '#e7ecf6',
+  },
+  solarized: {
+    background: '#002b36',
+    foreground: '#93a1a1',
+    cursor: '#b58900',
+    selectionBackground: 'rgba(147, 161, 161, 0.25)',
+    black: '#073642',
+    red: '#dc322f',
+    green: '#859900',
+    yellow: '#b58900',
+    blue: '#268bd2',
+    magenta: '#d33682',
+    cyan: '#2aa198',
+    white: '#eee8d5',
+    brightBlack: '#586e75',
+    brightWhite: '#fdf6e3',
+  },
+  paper: {
+    background: '#fbfbfa',
+    foreground: '#24292f',
+    cursor: '#0969da',
+    selectionBackground: 'rgba(9, 105, 218, 0.2)',
+    black: '#24292f',
+    red: '#cf222e',
+    green: '#116329',
+    yellow: '#9a6700',
+    blue: '#0969da',
+    magenta: '#8250df',
+    cyan: '#1b7c83',
+    white: '#6e7781',
+    brightBlack: '#57606a',
+    brightWhite: '#24292f',
+  },
+};
+
 /**
  * Mounted xterm instances. A PTY keeps running regardless; evicted terminals
  * are disposed and replayed from scrollback when the tab is selected again.
@@ -41,6 +100,8 @@ interface TerminalPaneProps {
   harnesses: HarnessProfile[];
   /** Every known profile is switched off in Settings. */
   allHarnessesDisabled: boolean;
+  /** Fonts, cursor and colours for the xterm instances. */
+  terminal: TerminalPreferences;
   busy: boolean;
   onSelectSession: (sessionId: string) => void;
   onStart: (harnessId: string) => void;
@@ -179,6 +240,7 @@ export function TerminalPane(props: TerminalPaneProps) {
             key={session.id}
             client={props.client}
             session={session}
+            terminal={props.terminal}
             active={session.id === activeSession?.id}
             canResume={props.resumableHarnesses.has(session.harnessId)}
             onResume={props.onResume}
@@ -402,6 +464,7 @@ function resumeLabel(session: Session): string {
 function TerminalView({
   client,
   session,
+  terminal,
   active,
   canResume,
   onError,
@@ -411,6 +474,7 @@ function TerminalView({
 }: {
   client: NestClient;
   session: Session;
+  terminal: TerminalPreferences;
   active: boolean;
   canResume: boolean;
   onError: (message: string) => void;
@@ -479,31 +543,17 @@ function TerminalView({
     if (!host) return;
 
     const term = new Terminal({
-      cursorBlink: true,
-      fontFamily: "'Cascadia Code', 'JetBrains Mono', Consolas, monospace",
-      fontSize: 13,
-      lineHeight: 1.25,
-      scrollback: 10000,
+      cursorBlink: terminal.cursorBlink,
+      cursorStyle: terminal.cursorStyle,
+      fontFamily: terminal.fontFamily,
+      fontSize: terminal.fontSize,
+      lineHeight: terminal.lineHeight,
+      scrollback: terminal.scrollback,
       // SearchAddon highlights matches through the decorations API, which xterm
       // still exposes behind allowProposedApi. xterm is pinned, so the surface
       // cannot drift between releases.
       allowProposedApi: true,
-      theme: {
-        background: '#080a0e',
-        foreground: '#e7ecf6',
-        cursor: '#7aa2f7',
-        selectionBackground: 'rgba(122, 162, 247, 0.25)',
-        black: '#1b2230',
-        red: '#f7768e',
-        green: '#9ece6a',
-        yellow: '#e0af68',
-        blue: '#7aa2f7',
-        magenta: '#bb9af7',
-        cyan: '#7dcfff',
-        white: '#c3cbd9',
-        brightBlack: '#5d6676',
-        brightWhite: '#e7ecf6',
-      },
+      theme: TERMINAL_THEMES[terminal.theme],
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -656,6 +706,20 @@ function TerminalView({
     termRef.current?.focus();
     applyFitRef.current();
   }, [active]);
+
+  // Settings save updates an already-open terminal without remounting it.
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    term.options.fontFamily = terminal.fontFamily;
+    term.options.fontSize = terminal.fontSize;
+    term.options.lineHeight = terminal.lineHeight;
+    term.options.scrollback = terminal.scrollback;
+    term.options.cursorStyle = terminal.cursorStyle;
+    term.options.cursorBlink = terminal.cursorBlink;
+    term.options.theme = TERMINAL_THEMES[terminal.theme];
+    applyFitRef.current();
+  }, [terminal]);
 
   const previousStatusRef = useRef(session.status);
   useEffect(() => {

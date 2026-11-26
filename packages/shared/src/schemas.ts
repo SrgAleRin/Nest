@@ -64,11 +64,49 @@ export type HarnessProfile = z.infer<typeof HarnessProfileSchema>;
 export const NewSessionDefaultSchema = z.union([HarnessIdSchema, z.literal('ask')]);
 export type NewSessionDefault = z.infer<typeof NewSessionDefaultSchema>;
 
+export const TerminalThemeSchema = z.enum(['nest', 'solarized', 'paper']);
+export type TerminalTheme = z.infer<typeof TerminalThemeSchema>;
+
+export const TerminalCursorStyleSchema = z.enum(['block', 'underline', 'bar']);
+export type TerminalCursorStyle = z.infer<typeof TerminalCursorStyleSchema>;
+
+export const DEFAULT_TERMINAL_PREFERENCES = {
+  fontFamily: "'Cascadia Code', 'JetBrains Mono', Consolas, monospace",
+  fontSize: 13,
+  lineHeight: 1.25,
+  scrollback: 10000,
+  cursorStyle: 'block' as TerminalCursorStyle,
+  cursorBlink: true,
+  theme: 'nest' as TerminalTheme,
+};
+
+export const TerminalPreferencesSchema = z.object({
+  fontFamily: z.string().trim().min(1).max(300).default(DEFAULT_TERMINAL_PREFERENCES.fontFamily),
+  fontSize: z.number().int().min(8).max(32).default(DEFAULT_TERMINAL_PREFERENCES.fontSize),
+  lineHeight: z.number().min(0.8).max(2).default(DEFAULT_TERMINAL_PREFERENCES.lineHeight),
+  scrollback: z
+    .number()
+    .int()
+    .min(1000)
+    .max(200_000)
+    .default(DEFAULT_TERMINAL_PREFERENCES.scrollback),
+  cursorStyle: TerminalCursorStyleSchema.default(DEFAULT_TERMINAL_PREFERENCES.cursorStyle),
+  cursorBlink: z.boolean().default(DEFAULT_TERMINAL_PREFERENCES.cursorBlink),
+  theme: TerminalThemeSchema.default(DEFAULT_TERMINAL_PREFERENCES.theme),
+});
+export type TerminalPreferences = z.infer<typeof TerminalPreferencesSchema>;
+
 export const AppSettingsSchema = z.object({
   /** Harness ids hidden from the start pickers; existing sessions still resume. */
   disabledHarnesses: z.array(HarnessIdSchema),
   /** Executable on PATH or a full path, started without arguments. */
   customCommand: z.string().max(2000),
+  /** Extra CLI arguments per harness id, parsed as words with optional quotes. */
+  harnessArgs: z.partialRecord(HarnessIdSchema, z.string().max(2000)).default({}),
+  /** Plain-terminal command; empty auto-detects pwsh, powershell or the login shell. */
+  shellCommand: z.string().max(2000).default(''),
+  /** Fonts, cursor and colours used by every xterm instance. */
+  terminal: TerminalPreferencesSchema.default(DEFAULT_TERMINAL_PREFERENCES),
   /** Generic update feed (electron-updater latest.yml); empty uses the built-in feed. */
   updateFeedUrl: z.string().max(2000).default(''),
   /** What the new-tab plus button starts: ask every time or a specific profile. */
@@ -79,6 +117,9 @@ export type AppSettings = z.infer<typeof AppSettingsSchema>;
 export const AppSettingsPatchSchema = z.object({
   disabledHarnesses: z.array(HarnessIdSchema).optional(),
   customCommand: z.string().max(2000).optional(),
+  harnessArgs: z.partialRecord(HarnessIdSchema, z.string().max(2000)).optional(),
+  shellCommand: z.string().max(2000).optional(),
+  terminal: TerminalPreferencesSchema.optional(),
   updateFeedUrl: z.string().max(2000).optional(),
   newSessionDefault: NewSessionDefaultSchema.optional(),
 });

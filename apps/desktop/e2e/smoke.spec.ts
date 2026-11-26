@@ -79,8 +79,8 @@ test('runs the fake harness, persists scrollback and recovers after restart', as
   await expect(page.locator('.terminal-tab')).toContainText('Fake harness', { timeout: 30_000 });
   await expect(page.locator('.xterm-rows')).toContainText('FakeHarness', { timeout: 30_000 });
 
-  // The sidebar groups live sessions above the project tree.
-  await expect(page.locator('.running .running-row')).toContainText('Fake harness', {
+  // The sidebar keeps every task's sessions visible, not only the open one.
+  await expect(page.locator('.session-row').filter({ hasText: 'Fake harness' })).toBeVisible({
     timeout: 30_000,
   });
 

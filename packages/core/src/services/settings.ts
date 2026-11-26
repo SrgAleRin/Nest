@@ -1,5 +1,5 @@
 import type { AppSettings, AppSettingsPatch } from '@nest/shared';
-import { AppSettingsSchema } from '@nest/shared';
+import { AppSettingsSchema, DEFAULT_TERMINAL_PREFERENCES } from '@nest/shared';
 import type { Db } from '../db/database.js';
 
 const SETTINGS_KEY = 'app';
@@ -7,6 +7,9 @@ const SETTINGS_KEY = 'app';
 export const DEFAULT_SETTINGS: AppSettings = {
   disabledHarnesses: [],
   customCommand: '',
+  harnessArgs: {},
+  shellCommand: '',
+  terminal: { ...DEFAULT_TERMINAL_PREFERENCES },
   updateFeedUrl: '',
   newSessionDefault: 'ask',
 };
@@ -51,13 +54,28 @@ export class SettingsService {
 }
 
 function cloneDefaults(): AppSettings {
-  return { ...DEFAULT_SETTINGS, disabledHarnesses: [] };
+  return {
+    ...DEFAULT_SETTINGS,
+    disabledHarnesses: [],
+    harnessArgs: {},
+    terminal: { ...DEFAULT_SETTINGS.terminal },
+  };
 }
 
 function normalize(settings: AppSettings): AppSettings {
   return {
     customCommand: settings.customCommand.trim(),
     disabledHarnesses: [...new Set(settings.disabledHarnesses)],
+    harnessArgs: Object.fromEntries(
+      Object.entries(settings.harnessArgs)
+        .map(([id, args]) => [id, args.trim()] as const)
+        .filter(([, args]) => args.length > 0),
+    ),
+    shellCommand: settings.shellCommand.trim(),
+    terminal: {
+      ...settings.terminal,
+      fontFamily: settings.terminal.fontFamily.trim(),
+    },
     updateFeedUrl: settings.updateFeedUrl.trim(),
     newSessionDefault: settings.newSessionDefault,
   };

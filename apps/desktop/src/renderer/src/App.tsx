@@ -10,6 +10,7 @@ import type {
   TaskProgressStep,
   UpdateStatus,
 } from '@nest/shared';
+import { DEFAULT_TERMINAL_PREFERENCES } from '@nest/shared';
 import { Badge, Button, IconButton } from '@nest/ui';
 import { BootSkeleton, FatalScreen } from './components/Boot';
 import { CommandPalette } from './components/CommandPalette';
@@ -702,7 +703,7 @@ export function App() {
   paletteCommands.push({
     id: 'app:settings',
     title: 'Settings',
-    detail: 'harness profiles and custom command',
+    detail: 'terminal appearance, harness commands and updates',
     keywords: 'preferences config options',
     kind: 'action',
     run: () => setSettingsOpen(true),
@@ -793,6 +794,9 @@ export function App() {
               {selectedTask.branch}
             </Badge>
           ) : null}
+          <IconButton label="Settings" title="Settings" onClick={() => setSettingsOpen(true)}>
+            <GearIcon size={14} />
+          </IconButton>
           <Button
             variant="primary"
             size="sm"
@@ -835,6 +839,7 @@ export function App() {
           unread={unread}
           harnesses={visibleHarnesses}
           allHarnessesDisabled={allHarnessesDisabled}
+          terminal={settings?.terminal ?? DEFAULT_TERMINAL_PREFERENCES}
           busy={busy}
           onSelectSession={setSelectedSessionId}
           onStart={(harnessId) => void startSession(harnessId)}
@@ -904,11 +909,6 @@ export function App() {
             </button>
           </span>
         ) : null}
-        <span className="status-item">
-          <IconButton label="Settings" className="tiny" onClick={() => setSettingsOpen(true)}>
-            <GearIcon size={12} />
-          </IconButton>
-        </span>
         {info ? (
           <span className="status-item muted">
             Electron {info.electron} ·{' '}

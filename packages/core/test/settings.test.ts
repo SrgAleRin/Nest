@@ -55,6 +55,12 @@ describe('settings service', () => {
       'https://updates.example.com/nest/',
     );
     expect(settings.update({ newSessionDefault: 'shell' }).newSessionDefault).toBe('shell');
+    expect(
+      settings.update({ harnessArgs: { claude: '  --model opus  ', codex: '   ' } }).harnessArgs,
+    ).toEqual({ claude: '--model opus' });
+    expect(settings.update({ shellCommand: '  pwsh  ' }).shellCommand).toBe('pwsh');
+    expect(settings.update({ terminal: { ...DEFAULT_SETTINGS.terminal, fontSize: 16 } }).terminal)
+      .toMatchObject({ fontSize: 16, theme: 'nest' });
     db.close();
   });
 
@@ -67,6 +73,9 @@ describe('settings service', () => {
     expect(second.settings.get()).toEqual({
       disabledHarnesses: ['fake'],
       customCommand: 'agent',
+      harnessArgs: {},
+      shellCommand: '',
+      terminal: DEFAULT_SETTINGS.terminal,
       updateFeedUrl: '',
       newSessionDefault: 'ask',
     });
@@ -85,6 +94,9 @@ describe('settings service', () => {
     expect(settings.get()).toEqual({
       disabledHarnesses: ['fake'],
       customCommand: 'agent',
+      harnessArgs: {},
+      shellCommand: '',
+      terminal: DEFAULT_SETTINGS.terminal,
       updateFeedUrl: '',
       newSessionDefault: 'ask',
     });
@@ -99,9 +111,14 @@ describe('settings service', () => {
 });
 
 describe('settings-aware harness registry', () => {
-  const state: Pick<AppSettings, 'disabledHarnesses' | 'customCommand'> = {
+  const state: Pick<
+    AppSettings,
+    'disabledHarnesses' | 'customCommand' | 'harnessArgs' | 'shellCommand'
+  > = {
     disabledHarnesses: [],
     customCommand: '',
+    harnessArgs: {},
+    shellCommand: '',
   };
   const registry = new HarnessRegistry({
     fakeHarnessScript,
@@ -150,6 +167,20 @@ describe('settings-aware harness registry', () => {
 
     state.customCommand = '';
     expect(registry.list().some((candidate) => candidate.id === 'custom')).toBe(false);
+  });
+
+  it('appends launch arguments from settings and overrides the shell command', () => {
+    state.harnessArgs = { claude: '--model "gpt 4"' };
+    const claude = registry.list().find((profile) => profile.id === 'claude');
+    expect(claude?.args).toEqual(['--model', 'gpt 4']);
+
+    state.shellCommand = process.execPath;
+    const shell = registry.list().find((profile) => profile.id === 'shell');
+    expect(shell?.command).toBe(process.execPath);
+    expect(shell?.available).toBe(true);
+
+    state.harnessArgs = {};
+    state.shellCommand = '';
   });
 
   it('caches PATH lookups until invalidated', () => {

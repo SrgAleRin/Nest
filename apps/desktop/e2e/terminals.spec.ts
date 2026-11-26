@@ -122,7 +122,7 @@ test('opens a plain terminal and closes tabs for good', async () => {
   await page.locator('.terminal-new-caret').click();
   await expect(page.locator('.new-tab-heading', { hasText: 'Terminal' })).toBeVisible();
   await page.locator('[data-harness-id="shell"]').click();
-  await expect(page.locator('.terminal-tab')).toContainText('Terminal 1', { timeout: 30_000 });
+  await expect(page.locator('.terminal-tab')).toContainText('Terminal', { timeout: 30_000 });
 
   const countSessions = async (): Promise<number> =>
     page.evaluate(async () => {

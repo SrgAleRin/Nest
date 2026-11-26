@@ -1,6 +1,7 @@
 import type { Project, Session, Task } from '@nest/shared';
 import { IconButton } from '@nest/ui';
 import { BranchIcon, FolderIcon, FolderOpenIcon, PlusIcon, TerminalIcon, TrashIcon } from './Icons';
+import { collectActivity, type ActivityItem, type ActivityKind } from '../activity';
 import { relativeTime } from '../utils';
 
 interface SidebarProps {
@@ -21,11 +22,47 @@ interface SidebarProps {
   onRemoveTask: (task: Task) => void;
 }
 
+const ACTIVITY_GROUPS: Array<{ kind: ActivityKind; label: string }> = [
+  { kind: 'working', label: 'Working' },
+  { kind: 'waiting', label: 'Waiting for you' },
+  { kind: 'finished', label: 'Finished' },
+];
+
 export function Sidebar(props: SidebarProps) {
   const { projects, tasks, sessions, selectedTaskId, selectedSessionId } = props;
-  const live = sessions.filter(
-    (session) => session.status === 'running' || session.status === 'idle',
-  );
+  const activity = collectActivity({ sessions, unread: props.unread, selectedSessionId });
+  const groups = ACTIVITY_GROUPS.map((group) => ({
+    ...group,
+    items: activity[group.kind],
+  })).filter((group) => group.items.length > 0);
+
+  const renderActivity = (item: ActivityItem) => {
+    const session = item.session;
+    const task = tasks.find((candidate) => candidate.id === session.taskId);
+    const project = projects.find((candidate) => candidate.id === task?.projectId);
+    return (
+      <button
+        className={`activity-row activity-${item.kind} ${
+          session.id === selectedSessionId ? 'selected' : ''
+        }`}
+        key={`${item.kind}:${session.id}`}
+        onClick={() => props.onSelectSession(session)}
+        title={`${project?.name ?? ''} · ${task?.branch ?? ''} · ${item.kind}`}
+      >
+        <span className={`activity-dot activity-dot-${item.kind}`} />
+        <span className="activity-name">{session.title}</span>
+        {props.unread[session.id] ? (
+          <span className="unread-badge" title="Finished while you were away">
+            {props.unread[session.id]}
+          </span>
+        ) : null}
+        <span className="activity-context">
+          {project?.name ?? '—'}
+          {task?.kind === 'checkout' ? ' · main' : task ? ` · ${task.title}` : ''}
+        </span>
+      </button>
+    );
+  };
 
   return (
     <aside className="sidebar">
@@ -37,33 +74,18 @@ export function Sidebar(props: SidebarProps) {
       </div>
 
       <div className="sidebar-scroll">
-        {live.length > 0 ? (
-          <div className="running">
-            <div className="section-label">Running</div>
-            {live.map((session) => {
-              const task = tasks.find((candidate) => candidate.id === session.taskId);
-              const project = projects.find((candidate) => candidate.id === task?.projectId);
-              return (
-                <button
-                  className={`running-row ${session.id === selectedSessionId ? 'selected' : ''}`}
-                  key={session.id}
-                  onClick={() => props.onSelectSession(session)}
-                  title={`${project?.name ?? ''} · ${task?.branch ?? ''} · ${session.status}`}
-                >
-                  <span className={`dot dot-${session.status}`} />
-                  <span className="running-name">{session.title}</span>
-                  {props.unread[session.id] ? (
-                    <span className="unread-badge" title="Finished while you were away">
-                      {props.unread[session.id]}
-                    </span>
-                  ) : null}
-                  <span className="running-context">
-                    {project?.name ?? '—'}
-                    {task?.kind === 'checkout' ? ' · main' : task ? ` · ${task.title}` : ''}
-                  </span>
-                </button>
-              );
-            })}
+        {groups.length > 0 ? (
+          <div className="activity">
+            <div className="section-label">Activity</div>
+            {groups.map((group) => (
+              <div className="activity-group" key={group.kind}>
+                <div className="activity-heading">
+                  <span>{group.label}</span>
+                  <span className="activity-count">{group.items.length}</span>
+                </div>
+                {group.items.map(renderActivity)}
+              </div>
+            ))}
           </div>
         ) : null}
         {projects.length === 0 ? (
@@ -154,30 +176,26 @@ export function Sidebar(props: SidebarProps) {
                         ) : null}
                       </div>
 
-                      {active
-                        ? taskSessions.map((session) => (
-                            <button
-                              className={`session-row ${
-                                session.id === selectedSessionId ? 'selected' : ''
-                              }`}
-                              key={session.id}
-                              onClick={() => props.onSelectSession(session)}
-                              title={`${session.harnessId} · ${session.status}`}
-                            >
-                              <span className={`dot dot-${session.status}`} />
-                              <TerminalIcon size={11} />
-                              <span className="session-name">{session.title}</span>
-                              {props.unread[session.id] ? (
-                                <span className="unread-badge" title="Finished while you were away">
-                                  {props.unread[session.id]}
-                                </span>
-                              ) : null}
-                              <span className="session-time">
-                                {relativeTime(session.updatedAt)}
-                              </span>
-                            </button>
-                          ))
-                        : null}
+                      {taskSessions.map((session) => (
+                        <button
+                          className={`session-row ${active ? '' : 'inactive'} ${
+                            session.id === selectedSessionId ? 'selected' : ''
+                          }`}
+                          key={session.id}
+                          onClick={() => props.onSelectSession(session)}
+                          title={`${session.harnessId} · ${session.status}`}
+                        >
+                          <span className={`dot dot-${session.status}`} />
+                          <TerminalIcon size={11} />
+                          <span className="session-name">{session.title}</span>
+                          {props.unread[session.id] ? (
+                            <span className="unread-badge" title="Finished while you were away">
+                              {props.unread[session.id]}
+                            </span>
+                          ) : null}
+                          <span className="session-time">{relativeTime(session.updatedAt)}</span>
+                        </button>
+                      ))}
 
                       {active && taskSessions.length === 0 ? (
                         <div className="task-hint">no sessions yet</div>

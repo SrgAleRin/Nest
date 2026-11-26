@@ -1,4 +1,4 @@
-import { DEFAULT_UPDATE_FEED_URL } from '@nest/shared';
+import { DEFAULT_TERMINAL_PREFERENCES, DEFAULT_UPDATE_FEED_URL } from '@nest/shared';
 import type {
   AppInfo,
   AppSettings,
@@ -67,7 +67,7 @@ export function createMockClient(): NestClient {
       id: 'session-fake',
       taskId: 'task-checkout',
       harnessId: 'claude',
-      title: 'Claude Code 1',
+      title: 'Claude Code',
       status: 'idle',
       cwd: 'D:\\dev\\nest-demo',
       exitCode: null,
@@ -80,7 +80,7 @@ export function createMockClient(): NestClient {
       id: 'session-old',
       taskId: 'task-term',
       harnessId: 'claude',
-      title: 'Claude Code 1',
+      title: 'Claude Code',
       status: 'exited',
       cwd: 'D:\\dev\\nest-worktrees\\nest-demo\\terminal-reconnect',
       exitCode: 0,
@@ -182,6 +182,9 @@ export function createMockClient(): NestClient {
   let settings: AppSettings = {
     disabledHarnesses: [],
     customCommand: '',
+    harnessArgs: {},
+    shellCommand: '',
+    terminal: { ...DEFAULT_TERMINAL_PREFERENCES },
     updateFeedUrl: '',
     newSessionDefault: 'ask',
   };
@@ -470,6 +473,18 @@ export function createMockClient(): NestClient {
             typeof params.customCommand === 'string'
               ? params.customCommand.trim()
               : settings.customCommand,
+          harnessArgs:
+            params.harnessArgs === undefined
+              ? settings.harnessArgs
+              : (params.harnessArgs as AppSettings['harnessArgs']),
+          shellCommand:
+            typeof params.shellCommand === 'string'
+              ? params.shellCommand.trim()
+              : settings.shellCommand,
+          terminal:
+            params.terminal === undefined
+              ? settings.terminal
+              : (params.terminal as AppSettings['terminal']),
           updateFeedUrl:
             typeof params.updateFeedUrl === 'string'
               ? params.updateFeedUrl.trim()

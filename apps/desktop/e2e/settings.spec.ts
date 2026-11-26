@@ -5,6 +5,7 @@ import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { _electron as electron, type ElectronApplication } from 'playwright';
 import type { NestBridge } from '@nest/shared';
+import { DEFAULT_TERMINAL_PREFERENCES } from '@nest/shared';
 import { openNewTabPicker } from './helpers';
 
 declare global {
@@ -94,13 +95,22 @@ test('saves harness settings and keeps a disabled harness resumable', async () =
     await expect(page.locator('.settings-modal')).toBeVisible();
     expect(await page.locator('.settings-row').count()).toBeGreaterThanOrEqual(7);
     await expect(page.locator('.update-state')).toHaveText('Updates disabled');
-    const customField = page.locator('.field').filter({ hasText: 'Custom command' });
+    const customSection = page
+      .locator('.settings-section')
+      .filter({ hasText: 'Custom command' });
+    const customCommandField = customSection
+      .locator('.field')
+      .filter({ hasText: 'Command' });
     const feedField = page.locator('.field').filter({ hasText: 'Update feed' });
+    const fontSizeField = page.locator('.field').filter({ hasText: 'Font size' });
 
     const fakeRow = page.locator('.settings-row').filter({ hasText: 'Fake harness' });
     await expect(fakeRow.locator('input')).toBeChecked();
     await fakeRow.locator('input').uncheck();
-    await customField.locator('input').fill('node');
+    await page.getByLabel('Fake harness launch arguments').fill('--demo');
+    await fontSizeField.locator('input').fill('15');
+    await fontSizeField.locator('input').press('Enter');
+    await customCommandField.locator('input').fill('node');
     await feedField.locator('input').fill('https://updates.example.com/nest/');
     await page.getByRole('button', { name: 'Save', exact: true }).click();
 
@@ -143,6 +153,9 @@ test('saves harness settings and keeps a disabled harness resumable', async () =
     expect(stored).toEqual({
       disabledHarnesses: ['fake'],
       customCommand: 'node',
+      harnessArgs: { fake: '--demo' },
+      shellCommand: '',
+      terminal: { ...DEFAULT_TERMINAL_PREFERENCES, fontSize: 15 },
       updateFeedUrl: 'https://updates.example.com/nest/',
       newSessionDefault: 'ask',
     });
@@ -150,8 +163,10 @@ test('saves harness settings and keeps a disabled harness resumable', async () =
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await expect(page.locator('.settings-modal')).toBeVisible();
     await expect(fakeRow.locator('input')).not.toBeChecked();
-    await expect(customField.locator('input')).toHaveValue('node');
+    await expect(customCommandField.locator('input')).toHaveValue('node');
     await expect(feedField.locator('input')).toHaveValue('https://updates.example.com/nest/');
+    await expect(page.getByLabel('Fake harness launch arguments')).toHaveValue('--demo');
+    await expect(fontSizeField.locator('input')).toHaveValue('15');
     await expect(page.locator('.update-meta')).toContainText('feed configured');
   } finally {
     await app.close();

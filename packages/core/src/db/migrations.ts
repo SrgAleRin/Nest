@@ -108,4 +108,15 @@ export const migrations: Migration[] = [
         ADD COLUMN anchor_text TEXT;
     `,
   },
+  {
+    id: 6,
+    name: 'strip_session_title_numbers',
+    sql: `
+      -- The old title generator appended a per-task counter. The tab label
+      -- only needs the profile name, so drop a trailing " 1", " 2", ...
+      UPDATE sessions
+      SET title = rtrim(rtrim(title, '0123456789'), ' ')
+      WHERE title GLOB '* [0-9]*';
+    `,
+  },
 ];

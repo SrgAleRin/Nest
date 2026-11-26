@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  DEFAULT_TERMINAL_PREFERENCES,
   DEFAULT_UPDATE_FEED_URL,
   type AppSettings,
   type HarnessId,
   type HarnessProfile,
   type NestClient,
   type NewSessionDefault,
+  type TerminalPreferences,
   type UpdateStatus,
 } from '@nest/shared';
 import { Button } from '@nest/ui';
@@ -23,6 +25,11 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
   const [profiles, setProfiles] = useState<HarnessProfile[] | null>(null);
   const [disabled, setDisabled] = useState<Set<string>>(new Set());
   const [customCommand, setCustomCommand] = useState('');
+  const [harnessArgs, setHarnessArgs] = useState<Partial<Record<HarnessId, string>>>({});
+  const [shellCommand, setShellCommand] = useState('');
+  const [terminal, setTerminal] = useState<TerminalPreferences>({
+    ...DEFAULT_TERMINAL_PREFERENCES,
+  });
   const [updateFeedUrl, setUpdateFeedUrl] = useState('');
   const [newSessionDefault, setNewSessionDefault] = useState<NewSessionDefault>('ask');
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
@@ -53,6 +60,9 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
       setProfiles(list.filter((profile) => profile.source === 'builtin'));
       setDisabled(new Set(settings.disabledHarnesses));
       setCustomCommand(settings.customCommand);
+      setHarnessArgs(settings.harnessArgs);
+      setShellCommand(settings.shellCommand);
+      setTerminal(settings.terminal);
       setUpdateFeedUrl(settings.updateFeedUrl);
       setNewSessionDefault(settings.newSessionDefault);
       if (status) setUpdateStatus(status);
@@ -88,13 +98,34 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
     });
   };
 
+  const setArgs = (id: HarnessId, value: string): void => {
+    setHarnessArgs((prev) => ({ ...prev, [id]: value }));
+  };
+
+  const setTerminalValue = <K extends keyof TerminalPreferences>(
+    key: K,
+    value: TerminalPreferences[K],
+  ): void => {
+    setTerminal((prev) => ({ ...prev, [key]: value }));
+  };
+
   const save = async (): Promise<void> => {
     setBusy(true);
     setError(null);
     try {
+      const args: AppSettings['harnessArgs'] = {};
+      for (const [id, value] of Object.entries(harnessArgs)) {
+        if (typeof value === 'string' && value.trim()) {
+          args[id as HarnessId] = value.trim();
+        }
+      }
+
       const settings = await client.invoke('settings.update', {
         disabledHarnesses: [...disabled] as HarnessId[],
         customCommand: customCommand.trim(),
+        harnessArgs: args,
+        shellCommand: shellCommand.trim(),
+        terminal,
         updateFeedUrl: updateFeedUrl.trim(),
         newSessionDefault,
       });
@@ -141,8 +172,8 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
           <div>
             <h2>Settings</h2>
             <p>
-              Harnesses Nest may start. Disabling one only hides it from the start pickers —
-              sessions that already exist keep resuming.
+              Terminal appearance, harness launch arguments and updates. Disabling a profile only
+              hides it from the start pickers — sessions that already exist keep resuming.
             </p>
           </div>
           <button type="button" className="icon-btn" onClick={onClose} aria-label="Close settings">
@@ -170,31 +201,149 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
         ) : (
           <>
             <div className="settings-section">
+              <span className="section-label">Terminal</span>
+              <label className="field">
+                <span>Font family</span>
+                <input
+                  value={terminal.fontFamily}
+                  onChange={(event) => setTerminalValue('fontFamily', event.target.value)}
+                  placeholder={DEFAULT_TERMINAL_PREFERENCES.fontFamily}
+                  maxLength={300}
+                  spellCheck={false}
+                />
+                <small className="field-hint">
+                  A CSS font stack. Install the font on this machine; missing families fall back to
+                  the next one in the list.
+                </small>
+              </label>
+              <div className="settings-grid">
+                <NumberField
+                  label="Font size"
+                  value={terminal.fontSize}
+                  min={8}
+                  max={32}
+                  onChange={(value) => setTerminalValue('fontSize', value)}
+                />
+                <NumberField
+                  label="Line height"
+                  value={terminal.lineHeight}
+                  min={0.8}
+                  max={2}
+                  step={0.05}
+                  onChange={(value) => setTerminalValue('lineHeight', value)}
+                />
+                <NumberField
+                  label="Scrollback"
+                  value={terminal.scrollback}
+                  min={1000}
+                  max={200000}
+                  step={1000}
+                  onChange={(value) => setTerminalValue('scrollback', value)}
+                />
+              </div>
+              <div className="settings-grid">
+                <label className="field">
+                  <span>Colours</span>
+                  <select
+                    className="settings-select"
+                    value={terminal.theme}
+                    onChange={(event) =>
+                      setTerminalValue(
+                        'theme',
+                        event.target.value as TerminalPreferences['theme'],
+                      )
+                    }
+                  >
+                    <option value="nest">Nest dark</option>
+                    <option value="solarized">Solarized dark</option>
+                    <option value="paper">Paper light</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Cursor</span>
+                  <select
+                    className="settings-select"
+                    value={terminal.cursorStyle}
+                    onChange={(event) =>
+                      setTerminalValue(
+                        'cursorStyle',
+                        event.target.value as TerminalPreferences['cursorStyle'],
+                      )
+                    }
+                  >
+                    <option value="block">Block</option>
+                    <option value="underline">Underline</option>
+                    <option value="bar">Bar</option>
+                  </select>
+                </label>
+              </div>
+              <label className="settings-check">
+                <input
+                  type="checkbox"
+                  checked={terminal.cursorBlink}
+                  onChange={(event) => setTerminalValue('cursorBlink', event.target.checked)}
+                />
+                Blinking cursor
+              </label>
+              <label className="field">
+                <span>
+                  Shell command <em>optional</em>
+                </span>
+                <input
+                  value={shellCommand}
+                  onChange={(event) => setShellCommand(event.target.value)}
+                  placeholder="Auto: pwsh, powershell or the login shell"
+                  maxLength={2000}
+                  spellCheck={false}
+                />
+                <small className="field-hint">
+                  Used by the Terminal profile. Leave empty to auto-detect. Extra terminal
+                  arguments belong in the Terminal row below.
+                </small>
+              </label>
+            </div>
+
+            <div className="settings-section">
               <span className="section-label">Harnesses</span>
-              <div className="settings-list">
+              <div className="settings-list harness-list">
                 {profiles.map((profile) => {
                   const enabled = !disabled.has(profile.id);
                   return (
-                    <label className="settings-row" key={profile.id}>
-                      <input
-                        type="checkbox"
-                        checked={enabled}
-                        onChange={(event) => toggle(profile.id, event.target.checked)}
-                      />
-                      <span className="settings-row-main">
-                        <span className="settings-row-title">
-                          {profile.label}
-                          <code>{profile.command}</code>
+                    <div className="settings-harness" key={profile.id}>
+                      <label className="settings-row">
+                        <input
+                          type="checkbox"
+                          checked={enabled}
+                          onChange={(event) => toggle(profile.id, event.target.checked)}
+                        />
+                        <span className="settings-row-main">
+                          <span className="settings-row-title">
+                            {profile.label}
+                            <code>{profile.command}</code>
+                          </span>
+                          <span className="settings-row-sub">{profile.description}</span>
                         </span>
-                        <span className="settings-row-sub">{profile.description}</span>
-                      </span>
-                      <span className={`settings-avail ${profile.available ? 'ok' : ''}`}>
-                        {profile.available ? 'found' : 'not found'}
-                      </span>
-                    </label>
+                        <span className={`settings-avail ${profile.available ? 'ok' : ''}`}>
+                          {profile.available ? 'found' : 'not found'}
+                        </span>
+                      </label>
+                      <input
+                        className="harness-args"
+                        value={harnessArgs[profile.id] ?? ''}
+                        onChange={(event) => setArgs(profile.id, event.target.value)}
+                        placeholder="Extra launch arguments, e.g. --model opus"
+                        maxLength={2000}
+                        spellCheck={false}
+                        aria-label={`${profile.label} launch arguments`}
+                      />
+                    </div>
                   );
                 })}
               </div>
+              <small className="field-hint">
+                Arguments are added after the profile command and before resume flags. Quotes keep
+                words together.
+              </small>
             </div>
 
             <div className="settings-section">
@@ -227,22 +376,35 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
               </label>
             </div>
 
-            <label className="field">
-              <span>
-                Custom command <em>optional</em>
-              </span>
-              <input
-                value={customCommand}
-                onChange={(event) => setCustomCommand(event.target.value)}
-                placeholder="my-agent or C:\Tools\my-agent.cmd"
-                maxLength={2000}
-                spellCheck={false}
-              />
-              <small className="field-hint">
-                An executable on PATH or a full path. It starts in the task workspace without
-                arguments and has no resume support. Clear the field to hide it.
-              </small>
-            </label>
+            <div className="settings-section">
+              <span className="section-label">Custom command</span>
+              <label className="field">
+                <span>
+                  Command <em>optional</em>
+                </span>
+                <input
+                  value={customCommand}
+                  onChange={(event) => setCustomCommand(event.target.value)}
+                  placeholder="my-agent or C:\Tools\my-agent.cmd"
+                  maxLength={2000}
+                  spellCheck={false}
+                />
+                <small className="field-hint">
+                  An executable on PATH or a full path. It starts in the task workspace and has no
+                  resume support. Clear the field to hide it.
+                </small>
+              </label>
+              <label className="field">
+                <span>Launch arguments</span>
+                <input
+                  value={harnessArgs.custom ?? ''}
+                  onChange={(event) => setArgs('custom', event.target.value)}
+                  placeholder="Extra launch arguments"
+                  maxLength={2000}
+                  spellCheck={false}
+                />
+              </label>
+            </div>
 
             <div className="settings-section">
               <span className="section-label">Updates</span>
@@ -325,6 +487,57 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
         </footer>
       </div>
     </div>
+  );
+}
+
+function NumberField({
+  label,
+  value,
+  min,
+  max,
+  step = 1,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  onChange: (value: number) => void;
+}) {
+  const [text, setText] = useState(String(value));
+
+  useEffect(() => {
+    setText(String(value));
+  }, [value]);
+
+  const commit = (): void => {
+    const parsed = Number(text);
+    if (!Number.isFinite(parsed)) {
+      setText(String(value));
+      return;
+    }
+    const clamped = Math.min(max, Math.max(min, parsed));
+    onChange(clamped);
+    setText(String(clamped));
+  };
+
+  return (
+    <label className="field">
+      <span>{label}</span>
+      <input
+        type="number"
+        value={text}
+        min={min}
+        max={max}
+        step={step}
+        onChange={(event) => setText(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') commit();
+        }}
+      />
+    </label>
   );
 }
 

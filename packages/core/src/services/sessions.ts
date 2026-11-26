@@ -97,17 +97,9 @@ export class SessionService {
     const task = this.tasks.get(input.taskId);
     const harness = this.harnesses.get(input.harnessId);
 
-    const count = Number(
-      (
-        this.db
-          .prepare('SELECT COUNT(*) AS count FROM sessions WHERE task_id = ?')
-          .get(task.id) as { count: number | bigint }
-      ).count,
-    );
-
     const id = newId();
     const timestamp = nowIso();
-    const title = `${harness.label} ${count + 1}`;
+    const title = harness.label;
 
     this.db
       .prepare(

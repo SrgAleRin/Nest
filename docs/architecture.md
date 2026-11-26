@@ -406,6 +406,7 @@ pty.onData(chunk)
 - При переключении задачи не убиваем PTY; скрываем контейнер.
 - Крестик на вкладке (или средний клик) закрывает её окончательно: PTY останавливается, строка сессии и scrollback удаляются из БД; `Stop` в терминале, наоборот, оставляет сессию для resume.
 - Кнопка `+` открывает новую вкладку, стрелка рядом — общий пикер профилей (Terminal + агенты). Что делает сам `+`, задаёт настройка `newSessionDefault`: `ask` (пикер) или конкретный профиль.
+- Секция **Activity** в сайдбаре показывает не все открытые вкладки, а только те, что требуют внимания: `Working` (PTY выдаёт вывод), `Waiting for you` (агент затих, но процесс жив — обычно ждёт ответа) и `Finished` (завершился, пока пользователь смотрел другое). Выбранная вкладка и простой shell в ожидание не попадают. Сессии всех задач остаются видимы в дереве проектов, даже когда задача не активна.
 
 ### 6.6 Жизненный цикл и приложение
 
@@ -680,17 +681,35 @@ export interface HarnessProfile {
 | `shell` | `$NEST_SHELL`, `pwsh` / `powershell.exe` / `cmd.exe` или `$SHELL` / `bash` | нет |
 | `fake` | `node scripts/fake-harness.mjs` | `--session-id <id>` / `--continue` |
 
-`fake` скрыт из обычных списков и показывается только при заданном `NEST_FAKE_SESSION_DIR` (так делают e2e) или `NEST_ENABLE_FAKE_HARNESS=1`; через `get()` он остаётся доступен уже сохранённым сессиям и тестам. Профиль `shell` запускает обычный терминал в workspace задачи: команда берётся из `NEST_SHELL`, иначе на Windows — первый найденный `pwsh` / `powershell.exe` / `ComSpec`, а на остальных платформах — `$SHELL` или `bash`.
+`fake` скрыт из обычных списков и показывается только при заданном `NEST_FAKE_SESSION_DIR` (так делают e2e) или `NEST_ENABLE_FAKE_HARNESS=1`; через `get()` он остаётся доступен уже сохранённым сессиям и тестам. Профиль `shell` запускает обычный терминал в workspace задачи: команда берётся из настройки `shellCommand`, затем из `NEST_SHELL`, иначе на Windows — первый найденный `pwsh` / `powershell.exe` / `ComSpec`, а на остальных платформах — `$SHELL` или `bash`.
 
 Доступность (`where.exe` / `which`) кешируется на процесс; `harnesses.invalidate()` сбрасывает кеш после смены custom-команды. Неустановленный профиль показывается в настройках как `not found` и не даёт себя запустить, но приложение не падает. Discovery conversation id — `harness/discovery.ts`; для `dsh` он пока не реализован.
 
-Custom-команда задаётся в настройках (⚙ в статусбаре), а не отдельным списком профилей: одно поле — имя на PATH или полный путь. Аргументов нет, resume не поддерживается; пустое поле убирает профиль из реестра. Env `NEST_CUSTOM_COMMAND` остаётся dev-fallback, если в настройках пусто.
+Custom-команда задаётся в настройках (⚙ в статусбаре), а не отдельным списком профилей: одно поле — имя на PATH или полный путь, второе — необязательные аргументы запуска. Resume не поддерживается; пустое поле убирает профиль из реестра. Env `NEST_CUSTOM_COMMAND` остаётся dev-fallback, если в настройках пусто.
 
 Настройки — одна JSON-строка в таблице `settings` (ключ `app`):
 
 ```ts
-{ disabledHarnesses: HarnessId[], customCommand: string, updateFeedUrl: string, newSessionDefault: HarnessId | 'ask' }
+{
+  disabledHarnesses: HarnessId[];
+  customCommand: string;
+  harnessArgs: Partial<Record<HarnessId, string>>;
+  shellCommand: string;
+  terminal: {
+    fontFamily: string;
+    fontSize: number;
+    lineHeight: number;
+    scrollback: number;
+    cursorStyle: 'block' | 'underline' | 'bar';
+    cursorBlink: boolean;
+    theme: 'nest' | 'solarized' | 'paper';
+  };
+  updateFeedUrl: string;
+  newSessionDefault: HarnessId | 'ask';
+}
 ```
+
+`terminal` задаёт шрифт, размер, высоту строки, scrollback, курсор и палитру всех xterm-инстансов; изменения применяются к уже открытым вкладкам без перезапуска сессии. `harnessArgs` — дополнительные аргументы CLI для конкретного профиля (разбираются на слова с поддержкой кавычек, Windows-пути сохраняются), они добавляются после команды профиля и перед аргументами resume. Пустые строки аргументов не сохраняются.
 
 `newSessionDefault` решает, что делает кнопка `+` в панели вкладок: `ask` открывает пикер, значение профиля запускает его сразу (стрелка рядом всё равно открывает пикер). `disabledHarnesses` скрывает профили из пикера новой вкладки и стартового экрана; `harness.list` с `includeDisabled: true` возвращает их для диалога настроек. Запуск новой сессии с выключенным профилем даёт `harness_disabled`, но `sessions.resume` продолжает уже существующую беседу (`get(id, { allowDisabled: true })`): выключение — это про выбор в UI, а не про отзыв доступа к разговору.
 
@@ -820,7 +839,7 @@ CREATE TABLE settings (
 
 `slug = '@main'` зарезервирован за main checkout; пользовательские задачи не могут его использовать. `workspace_path` для checkout равен пути проекта, для worktree — пути worktree. `review_comments` удаляются каскадом вместе с task.
 
-`settings` — пары ключ/значение. Сейчас единственный ключ `app` хранит JSON `{ disabledHarnesses, customCommand }`, который валидируется `AppSettingsSchema` с дефолтами: новые поля не требуют миграции, а битая строка откатывается к дефолтам.
+`settings` — пары ключ/значение. Сейчас единственный ключ `app` хранит JSON `AppSettings`, который валидируется `AppSettingsSchema` с дефолтами: новые поля не требуют миграции, а битая строка откатывается к дефолтам.
 
 Миграции: `PRAGMA user_version`, SQL-файлы в `packages/core/src/db/migrations`. Перед миграцией — копия БД.
 
