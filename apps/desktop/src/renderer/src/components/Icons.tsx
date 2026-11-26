@@ -125,6 +125,18 @@ export function ChevronIcon({ size = 14 }: IconProps) {
   );
 }
 
+export function SourceControlIcon({ size = 14 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <circle cx="5" cy="3.5" r="1.5" />
+      <circle cx="5" cy="12.5" r="1.5" />
+      <path d="M5 5v6" />
+      <path d="M8.5 12.5h2A1.5 1.5 0 0 0 12 11V4.2" />
+      <circle cx="12" cy="2.9" r="1.3" />
+    </svg>
+  );
+}
+
 export function GearIcon({ size = 14 }: IconProps) {
   return (
     <svg {...svgProps(size)}>

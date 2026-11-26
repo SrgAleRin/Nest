@@ -30,16 +30,19 @@ export function SettingsListSkeleton() {
   );
 }
 
-export function GitPanelSkeleton() {
+export function SourceControlSkeleton() {
   return (
-    <div className="panel-scroll git-panel" role="status" aria-label="Loading git status">
-      <div className="git-head">
-        <Skeleton width={132} height={10} />
-        <Skeleton width={16} height={16} radius={4} />
+    <div className="source-control-skeleton" role="status" aria-label="Loading git status">
+      <div className="source-control-head">
+        <div className="source-control-head-top">
+          <Skeleton width={132} height={10} />
+          <Skeleton width={68} height={10} />
+          <Skeleton width={58} height={16} radius={5} />
+        </div>
       </div>
-      <div className="git-files-head">
+      <div className="change-toolbar">
         <Skeleton width={70} height={8} />
-        <Skeleton width={58} height={16} radius={5} />
+        <Skeleton width={148} height={18} radius={5} />
       </div>
       <div className="git-files">
         {GIT_ROW_WIDTHS.map((width, row) => (
@@ -52,7 +55,7 @@ export function GitPanelSkeleton() {
       </div>
       <div className="commit-box">
         <Skeleton width={58} height={8} />
-        <Skeleton height={52} radius={6} />
+        <Skeleton height={44} radius={6} />
         <Skeleton width={120} height={20} radius={6} />
       </div>
       <span className="sr-only">Loading git status…</span>

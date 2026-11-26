@@ -23,6 +23,22 @@
   box-sizing: border-box;
 }
 
+/* Visible focus everywhere: the terminal is keyboard-first, so is the panel. */
+:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+
+/* A focused row keeps the outline inside the list, so nothing shifts. */
+.change-open:focus-visible {
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
+.change-row:focus-within {
+  background: var(--panel-2);
+}
+
 html,
 body,
 #root {
@@ -167,8 +183,15 @@ code,
 
 .columns {
   display: grid;
-  grid-template-columns: 270px minmax(0, 1fr) 390px;
+  grid-template-columns: 270px minmax(0, 1fr) auto;
   min-height: 0;
+  /* The shell never scrolls sideways: every column clips its own content. */
+  overflow: hidden;
+}
+
+/* Narrow window: the sidebar, the terminal and the collapsed rail. */
+.columns-narrow {
+  grid-template-rows: minmax(0, 1fr);
 }
 
 /* ---------- sidebar ---------- */
@@ -1042,36 +1065,150 @@ code,
   text-align: center;
 }
 
-/* ---------- right panel ---------- */
+/* ---------- right panel shell ---------- */
 
 .right {
+  position: relative;
   display: flex;
   flex-direction: column;
+  min-width: 0;
   min-height: 0;
   border-left: 1px solid var(--border);
   background: var(--panel);
+  overflow: hidden;
+}
+
+/* Collapsed: a rail, so the terminal keeps the width it had. */
+.right-rail {
+  align-items: center;
+  gap: 8px;
+  padding-top: 6px;
+  overflow: hidden;
+}
+
+.rail-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.rail-toggle:hover {
+  border-color: var(--border);
+  background: #121823;
+  color: var(--text);
+}
+
+.rail-chevron {
+  display: inline-flex;
+  transform: rotate(180deg);
+}
+
+.rail-chevron.flipped {
+  transform: none;
+}
+
+.rail-labels {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--dim);
+}
+
+.rail-label {
+  writing-mode: vertical-rl;
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* Drag handle on the left edge: 6 px of pointer target, 1 px line. */
+.right-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 2;
+  touch-action: none;
+}
+
+.right-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  background: transparent;
+}
+
+.right-resizer:hover::after,
+.right-resizer:focus-visible::after {
+  background: var(--blue);
+}
+
+.right-head {
+  display: flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+  height: 34px;
+  border-bottom: 1px solid var(--border);
 }
 
 .right-tabs {
   display: flex;
-  flex: 0 0 auto;
-  height: 38px;
-  border-bottom: 1px solid var(--border);
+  flex: 1;
+  min-width: 0;
 }
 
 .right-tab {
-  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  flex: 0 1 auto;
   min-width: 0;
-  padding: 0 4px;
+  padding: 0 8px;
   background: none;
   border: 0;
   border-bottom: 2px solid transparent;
   color: var(--muted);
   font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
+}
+
+.right-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.right-tab-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--dim);
+}
+
+.right-tab-count {
+  flex: 0 0 auto;
+  min-width: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #1b2431;
+  color: var(--muted);
+  font: 9.5px var(--mono);
+  text-align: center;
 }
 
 .right-tab.selected {
@@ -1080,10 +1217,341 @@ code,
   background: rgba(122, 162, 247, 0.04);
 }
 
+.right-tab.selected .right-tab-icon,
+.right-tab.selected .right-tab-count {
+  color: var(--text);
+}
+
+.right-collapse {
+  flex: 0 0 auto;
+  margin: 6px 4px;
+}
+
 .right-body {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   display: flex;
+  flex-direction: column;
+}
+
+.right-subhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.right-subhead-title {
+  font-size: 11px;
+  color: var(--text);
+}
+
+/* Narrow window: the panel is an overlay drawer over the terminal. */
+.right-drawer-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.right-drawer-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(3, 5, 9, 0.55);
+}
+
+.right-drawer {
+  position: relative;
+  width: min(460px, 92vw);
+  height: 100%;
+  border-left: 1px solid var(--border);
+  box-shadow: -18px 0 40px rgba(0, 0, 0, 0.45);
+}
+
+/* ---------- source control ---------- */
+
+.source-control,
+.source-control-skeleton {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.source-control-head {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex: 0 0 auto;
+  padding: 8px 8px 6px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.source-control-head-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.main-checkout-badge {
+  font-size: 9.5px;
+}
+
+.source-control-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.source-control-note {
+  font-size: 10.5px;
+  color: var(--dim);
+  overflow-wrap: anywhere;
+}
+
+.source-control-note.muted {
+  color: var(--muted);
+}
+
+.source-control-note.warn {
+  color: var(--amber);
+}
+
+/* ---------- panel menu (the dot-dot-dot popup) ---------- */
+
+.panel-menu {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.panel-menu-trigger {
+  padding: 2px 5px;
+}
+
+.panel-menu-popup {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  min-width: 190px;
+  max-width: 280px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #0b0f15;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5);
+}
+
+.panel-menu-popup.left {
+  right: auto;
+  left: 0;
+}
+
+.panel-menu-popup.up {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+.panel-menu-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.panel-menu-item:hover:not(:disabled),
+.panel-menu-item:focus-visible {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.panel-menu-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.panel-menu-item.destructive:hover:not(:disabled) {
+  color: var(--red);
+}
+
+.panel-menu-check {
+  width: 10px;
+  flex: 0 0 auto;
+  color: var(--green);
+}
+
+.panel-menu-label {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.panel-menu-label em {
+  font-style: normal;
+  font-size: 9.5px;
+  color: var(--dim);
+}
+
+/* ---------- change list ---------- */
+
+.change-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.change-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.change-filter {
+  width: 128px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: #0b0e13;
+  color: var(--text);
+  font-size: 11px;
+  outline: none;
+}
+
+.change-filter:focus {
+  border-color: var(--blue);
+}
+
+.view-toggle {
+  display: inline-flex;
+  gap: 2px;
+}
+
+/* Only the change list scrolls; the head and the commit block stay pinned. */
+.change-list-scroll {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 6px 8px;
+}
+
+.change-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.change-section {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.change-group-head {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.change-group-hint {
+  font-size: 10px;
+  color: var(--dim);
+}
+
+.change-row {
+  gap: 4px;
+  padding-right: 2px;
+  min-width: 0;
+}
+
+.change-row.selected {
+  background: rgba(122, 162, 247, 0.1);
+  color: var(--text);
+}
+
+.change-open {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.change-open:disabled {
+  cursor: default;
+}
+
+.tone-conflict {
+  color: var(--red);
+  background: rgba(247, 118, 142, 0.18);
+}
+
+/* ---------- commit block ---------- */
+
+.commit-box-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.commit-scope {
+  font-size: 10px;
+  color: var(--muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commit-scope.muted,
+.commit-reason {
+  color: var(--dim);
+}
+
+.commit-reason {
+  font-size: 10px;
+  align-self: center;
+}
+
+.commit-amend-flag {
+  align-self: center;
+  padding: 0 5px;
+  border: 1px solid rgba(224, 175, 104, 0.35);
+  border-radius: 999px;
+  color: var(--amber);
+  font-size: 9.5px;
 }
 
 .panel-scroll {
@@ -1343,8 +1811,10 @@ code,
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border-soft);
+  flex: 0 0 auto;
+  padding: 8px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
 }
 
 .commit-message,

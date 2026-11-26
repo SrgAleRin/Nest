@@ -17,7 +17,7 @@ import { CommandPalette } from './components/CommandPalette';
 import { GearIcon } from './components/Icons';
 import { NewTaskDialog, type NewTaskSubmission } from './components/NewTaskDialog';
 import { startFailureMessage, taskToSelect, type StartFailure } from './newTask';
-import { RightPanel, type RightTab } from './components/RightPanel';
+import { RIGHT_SECTIONS, RightPanel, type RightTab } from './components/RightPanel';
 import { SettingsDialog } from './components/SettingsDialog';
 import { Sidebar } from './components/Sidebar';
 import { TerminalPane } from './components/TerminalPane';
@@ -47,6 +47,8 @@ import {
   startOperation,
   type TaskOperations,
 } from './state/taskOperations';
+import { RIGHT_PANEL_RAIL_WIDTH, useRightPanelLayout } from './rightPanelLayout';
+import { changedPathCount } from './sourceControl';
 import { resolveShortcut } from './shortcuts';
 import { eventSessionData } from './state/terminalBus';
 import { sessionEndEffect, unreadTotal } from './notifications';
@@ -112,7 +114,10 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
   const [loadError, setLoadError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [rightTab, setRightTab] = useState<RightTab>('git');
+  // The right column has three top-level sections; `history`, `compare` and
+  // `diff` are views inside `Source Control`, not neighbouring tabs.
+  const [rightTab, setRightTab] = useState<RightTab>('source-control');
+  const rightLayout = useRightPanelLayout();
   const [unread, setUnread] = useState<Record<string, number>>({});
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [activateSessionId, setActivateSessionId] = useState<string | null>(null);
@@ -151,6 +156,9 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
   const gitBranch: BranchSnapshot | null =
     selectedTaskId && gitStatus ? branchSnapshot(selectedTaskId, gitStatus) : null;
   const currentBranch = branchLabel(selectedTask, gitBranch);
+  // The `Source Control` badge counts changed paths, not rows: a partially
+  // staged file is one path with two rows.
+  const changeCount = changedPathCount(gitStatus?.files ?? []);
   const selectedProject =
     projects.find((project) => project.id === selectedTask?.projectId) ?? null;
   const selectedSessions = useMemo(
@@ -1020,7 +1028,10 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
       detail: 'base, head and upstream',
       keywords: 'diff branches remote origin compare',
       kind: 'action',
-      run: () => setRightTab('compare'),
+      run: () => {
+        rightLayout.openPanel();
+        setRightTab('compare');
+      },
     });
     paletteCommands.push({
       id: 'git:history',
@@ -1028,7 +1039,10 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
       detail: currentBranch ?? selectedTask.branch,
       keywords: 'log commits past',
       kind: 'action',
-      run: () => setRightTab('history'),
+      run: () => {
+        rightLayout.openPanel();
+        setRightTab('history');
+      },
     });
   }
   if (selectedProject) {
@@ -1071,23 +1085,44 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
       },
     });
   }
+  for (const section of RIGHT_SECTIONS) {
+    paletteCommands.push({
+      id: `panel:${section.id}`,
+      title: `Show ${section.label} panel`,
+      detail: 'right column',
+      keywords: 'tab switch right column changes files sessions git',
+      kind: 'action',
+      run: () => {
+        rightLayout.openPanel();
+        setRightTab(section.id);
+      },
+    });
+  }
   for (const [tab, label] of [
-    ['git', 'Git'],
-    ['files', 'Files'],
     ['history', 'History'],
     ['compare', 'Compare'],
     ['diff', 'Diff'],
-    ['sessions', 'Sessions'],
   ] as Array<[RightTab, string]>) {
     paletteCommands.push({
       id: `panel:${tab}`,
       title: `Show ${label} panel`,
       detail: 'right column',
-      keywords: 'tab switch right column',
+      keywords: 'tab switch right column log commits patch',
       kind: 'action',
-      run: () => setRightTab(tab),
+      run: () => {
+        rightLayout.openPanel();
+        setRightTab(tab);
+      },
     });
   }
+  paletteCommands.push({
+    id: 'panel:toggle',
+    title: rightLayout.open ? 'Collapse right panel' : 'Expand right panel',
+    detail: 'right column',
+    keywords: 'hide show side panel layout',
+    kind: 'action',
+    run: () => rightLayout.toggle(),
+  });
   paletteCommands.push({
     id: 'app:palette',
     title: 'Command palette',
@@ -1157,7 +1192,16 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
         </div>
       </header>
 
-      <main className="columns">
+      <main
+        className={`columns ${rightLayout.narrow ? 'columns-narrow' : ''}`}
+        style={{
+          gridTemplateColumns: `270px minmax(0, 1fr) ${
+            rightLayout.open && !rightLayout.narrow
+              ? `${rightLayout.width}px`
+              : `${RIGHT_PANEL_RAIL_WIDTH}px`
+          }`,
+        }}
+      >
         <Sidebar
           projects={projects}
           tasks={tasks}
@@ -1222,6 +1266,14 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
           onResumeSession={(session) => void resumeSession(session)}
           onNewSession={restartSession}
           resumableHarnesses={resumableHarnesses}
+          changeCount={changeCount}
+          open={rightLayout.open}
+          drawer={rightLayout.drawer}
+          width={rightLayout.width}
+          onWidthChange={rightLayout.setWidth}
+          onClose={rightLayout.close}
+          onOpenPanel={rightLayout.openPanel}
+          onWiden={rightLayout.widen}
         />
       </main>
 
