@@ -3,6 +3,7 @@ import type { GitCompare, GitCompareFile, NestClient, Task } from '@nest/shared'
 import { EmptyState, ErrorState } from '@nest/ui';
 import { CommitRow } from './CommitList';
 import { FileTree } from './FileTree';
+import { applyCompareSeed, type CompareSelection } from '../comparePanel';
 import { panelPhase } from '../panelState';
 import { useGitSnapshot, useGitSnapshotStore } from '../state/GitSnapshotProvider';
 import { diffStatusLetter, diffStatusTone, errorMessage, shortHash } from '../utils';
@@ -27,10 +28,7 @@ interface ComparePanelProps {
   onOpenDiff?: (target: CompareDiffTarget) => void;
 }
 
-interface Selection {
-  base: string;
-  head: string;
-}
+type Selection = CompareSelection;
 
 /**
  * Branch-to-branch comparison. The branch list is the snapshot the rest of the
@@ -62,6 +60,10 @@ export function ComparePanel({
   // The effects below must not restart when the pickers change, so they read
   // the current pair from a ref and only refresh the data.
   const current = useRef<Selection>({ base: '', head: '' });
+  /** The user chose a side by hand: a later seed must not touch the pair. */
+  const touched = useRef(false);
+  /** Only the newest comparison may write its answer into the panel. */
+  const compareRequest = useRef(0);
 
   // Branches are a separate snapshot slice; a failure here never blanks the
   // comparison that is already on screen.
@@ -72,6 +74,7 @@ export function ComparePanel({
 
   const runCompare = useCallback(
     async (next: Selection) => {
+      const request = ++compareRequest.current;
       if (!task || !next.base) {
         setCompare(null);
         return;
@@ -84,24 +87,35 @@ export function ComparePanel({
           base: next.base,
           head: next.head || 'HEAD',
         });
+        // A pick or a refresh started a newer comparison meanwhile: this older
+        // answer must not replace the one the user is looking at.
+        if (request !== compareRequest.current) return;
         setCompare(result);
       } catch (compareError) {
+        if (request !== compareRequest.current) return;
         setCompare(null);
         setError(errorMessage(compareError));
       } finally {
-        setLoading(false);
+        if (request === compareRequest.current) setLoading(false);
       }
     },
     [client, task],
   );
 
-  // Seed the pair from the branch list once: upstream/default branch as the
-  // base, the current branch as the head. A user pick is never overwritten.
+  // Seed the pair from the branch list: upstream/default branch as the base,
+  // the current branch as the head. A pair the user picked by hand is never
+  // overwritten, and a seed that arrives late does not restart the comparison.
   useEffect(() => {
-    if (!branches || current.current.base) return;
-    const base = branches.baseRef || branches.local[0]?.name || '';
-    if (!base) return;
-    const next: Selection = { base, head: current.current.head || branches.current || 'HEAD' };
+    if (!branches) return;
+    const next = applyCompareSeed(
+      current.current,
+      {
+        base: branches.baseRef || branches.local[0]?.name || '',
+        head: branches.current || 'HEAD',
+      },
+      touched.current,
+    );
+    if (!next) return;
     current.current = next;
     setSelection(next);
     void runCompare(next);
@@ -125,6 +139,7 @@ export function ComparePanel({
   }, [refresh, refreshKey]);
 
   function pick(next: Partial<Selection>): void {
+    touched.current = true;
     const merged: Selection = { ...current.current, ...next };
     current.current = merged;
     setSelection(merged);
