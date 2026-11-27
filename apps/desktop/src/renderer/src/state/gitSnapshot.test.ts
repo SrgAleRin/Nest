@@ -158,7 +158,7 @@ describe('git snapshot store', () => {
     const { invoke, calls } = createInvoke(() => status('main', ['a.ts']));
     const snapshots = makeStore(invoke);
 
-    snapshots.setVisible('t1', true);
+    snapshots.retain('t1');
     await vi.advanceTimersByTimeAsync(0);
     expect(snapshots.getTask('t1')?.stale).toBe(false);
     expect(statusCalls(calls)).toHaveLength(1);
@@ -179,7 +179,7 @@ describe('git snapshot store', () => {
     const { invoke, calls } = createInvoke(() => status('main'));
     const snapshots = makeStore(invoke);
 
-    snapshots.setVisible('t1', true);
+    snapshots.retain('t1');
     await vi.advanceTimersByTimeAsync(0);
     expect(statusCalls(calls)).toHaveLength(1);
 
@@ -198,7 +198,7 @@ describe('git snapshot store', () => {
     );
     const snapshots = makeStore(invoke);
 
-    snapshots.setVisible('t1', true);
+    snapshots.retain('t1');
     await vi.advanceTimersByTimeAsync(0);
     await snapshots.requestBranches('t1');
     expect(snapshots.getTask('t1')?.branches.data?.current).toBe('main');
@@ -223,7 +223,7 @@ describe('git snapshot store', () => {
     );
     const snapshots = makeStore(invoke);
 
-    snapshots.setVisible('t1', true);
+    snapshots.retain('t1');
     await vi.advanceTimersByTimeAsync(0);
     await snapshots.requestBranches('t1');
     expect(statusCalls(calls)).toHaveLength(1);
@@ -246,7 +246,7 @@ describe('git snapshot store', () => {
     );
     const snapshots = makeStore(invoke);
 
-    snapshots.setVisible('t1', true);
+    snapshots.retain('t1');
     await vi.advanceTimersByTimeAsync(0);
     await snapshots.requestBranches('t1');
     expect(statusCalls(calls)).toHaveLength(1);
@@ -273,7 +273,7 @@ describe('git snapshot store', () => {
 
     // Only the status was ever read: nothing asked for the branch list, so a
     // watcher event must not start loading it on its own.
-    snapshots.setVisible('t1', true);
+    snapshots.retain('t1');
     await vi.advanceTimersByTimeAsync(0);
     snapshots.invalidate('t1');
     await vi.advanceTimersByTimeAsync(0);
@@ -291,14 +291,14 @@ describe('git snapshot store', () => {
     );
     const snapshots = makeStore(invoke);
 
-    snapshots.setVisible('t1', true);
+    snapshots.retain('t1');
     await vi.advanceTimersByTimeAsync(0);
     await snapshots.requestBranches('t1');
     expect(statusCalls(calls)).toHaveLength(1);
     expect(branchCalls(calls)).toHaveLength(1);
 
     // The panel is off screen: no slice is refetched, the branches included.
-    snapshots.setVisible('t1', false);
+    snapshots.release('t1');
     current = 'external-branch';
     snapshots.invalidate('t1');
     await vi.advanceTimersByTimeAsync(0);
@@ -307,7 +307,7 @@ describe('git snapshot store', () => {
     expect(snapshots.getTask('t1')?.branches.data?.current).toBe('main');
 
     // Reading the task again catches up on both slices.
-    snapshots.setVisible('t1', true);
+    snapshots.retain('t1');
     await vi.advanceTimersByTimeAsync(0);
     expect(statusCalls(calls)).toHaveLength(2);
     expect(branchCalls(calls)).toHaveLength(2);
@@ -368,7 +368,7 @@ describe('git snapshot store', () => {
     });
     const snapshots = makeStore(invoke);
 
-    snapshots.setVisible('t1', true);
+    snapshots.retain('t1');
     await vi.advanceTimersByTimeAsync(0);
     expect(snapshots.getTask('t1')?.status.data?.files).toHaveLength(1);
 
@@ -477,13 +477,13 @@ describe('git snapshot store', () => {
     const { invoke, calls } = createInvoke(() => status('main', ['a.ts']));
     const snapshots = makeStore(invoke);
 
-    snapshots.setVisible('a', true);
+    snapshots.retain('a');
     await vi.advanceTimersByTimeAsync(0);
     expect(statusCalls(calls)).toHaveLength(1);
 
     // The user switched to task B: a watcher event for A is remembered, not
     // fetched, and A's last snapshot stays readable as stale.
-    snapshots.setVisible('a', false);
+    snapshots.release('a');
     snapshots.invalidate('a');
     await vi.advanceTimersByTimeAsync(0);
     expect(statusCalls(calls)).toHaveLength(1);
@@ -491,7 +491,7 @@ describe('git snapshot store', () => {
     expect(snapshots.getTask('a')?.status.data?.branch).toBe('main');
 
     // Reading A again catches up on the missed reload.
-    snapshots.setVisible('a', true);
+    snapshots.retain('a');
     await vi.advanceTimersByTimeAsync(0);
     expect(statusCalls(calls)).toHaveLength(2);
     expect(snapshots.getTask('a')?.stale).toBe(false);
@@ -507,8 +507,85 @@ describe('git snapshot store', () => {
     expect(statusCalls(calls)).toHaveLength(0);
     expect(snapshots.getTask('a')).toBeNull();
 
-    snapshots.setVisible('a', true);
+    snapshots.retain('a');
     await vi.advanceTimersByTimeAsync(0);
     expect(statusCalls(calls)).toHaveLength(1);
+  });
+
+  it('keeps reloading while another holder of the same task is mounted', async () => {
+    vi.useFakeTimers();
+    const { invoke, calls } = createInvoke(() => status('main', ['a.ts']));
+    const snapshots = makeStore(invoke);
+
+    // The shell and the panel both read the same task.
+    snapshots.retain('t1');
+    snapshots.retain('t1');
+    await vi.advanceTimersByTimeAsync(0);
+    // The second holder joins the task; it does not read it again.
+    expect(statusCalls(calls)).toHaveLength(1);
+
+    // Collapsing the panel releases one holder, the shell keeps watching.
+    snapshots.release('t1');
+    snapshots.invalidate('t1');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(statusCalls(calls)).toHaveLength(2);
+    expect(snapshots.getTask('t1')?.stale).toBe(false);
+  });
+
+  it('defers reloads only once the last holder released the task', async () => {
+    vi.useFakeTimers();
+    const { invoke, calls } = createInvoke(() => status('main', ['a.ts']));
+    const snapshots = makeStore(invoke);
+
+    snapshots.retain('t1');
+    await vi.advanceTimersByTimeAsync(0);
+    snapshots.retain('t1');
+    expect(statusCalls(calls)).toHaveLength(1);
+
+    // A balanced pair of releases leaves the task on screen.
+    snapshots.release('t1');
+    snapshots.release('t1');
+    snapshots.invalidate('t1');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(statusCalls(calls)).toHaveLength(1);
+    expect(snapshots.getTask('t1')?.stale).toBe(true);
+
+    // Reading the task again catches up on the coalesced reload.
+    snapshots.retain('t1');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(statusCalls(calls)).toHaveLength(2);
+
+    // An unbalanced release of a task nobody holds is harmless.
+    snapshots.release('gone');
+    expect(statusCalls(calls)).toHaveLength(2);
+  });
+
+  it('retries the branch slice after its first read failed', async () => {
+    vi.useFakeTimers();
+    let failing = true;
+    let current = 'main';
+    const { invoke, calls } = createInvoke((method) => {
+      if (method !== 'git.branches') return status(current);
+      if (failing) throw new Error('branches down');
+      return branches(current);
+    });
+    const snapshots = makeStore(invoke);
+
+    snapshots.retain('t1');
+    await vi.advanceTimersByTimeAsync(0);
+    await snapshots.requestBranches('t1');
+    expect(snapshots.getTask('t1')?.branches.data).toBeNull();
+    expect(snapshots.getTask('t1')?.branches.error).toBe('branches down');
+
+    // The list was asked for and failed: the next invalidation retries it
+    // instead of leaving the head on an error until the panel is remounted.
+    failing = false;
+    current = 'external-branch';
+    snapshots.invalidate('t1');
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(branchCalls(calls)).toHaveLength(2);
+    expect(snapshots.getTask('t1')?.branches.error).toBeNull();
+    expect(snapshots.getTask('t1')?.branches.data?.current).toBe('external-branch');
   });
 });

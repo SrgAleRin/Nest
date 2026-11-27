@@ -94,10 +94,17 @@ export interface GitSnapshotStore {
   /** Deleting a task's state: its snapshot, its memory and any pending reload. */
   forgetTask(taskId: string): void;
   /**
-   * `false` while a panel is not on screen. An invalidation for a hidden task
-   * only marks it stale; `true` reads it again (and loads it the first time).
+   * Marks one on-screen holder of the task. Several components read the same
+   * task (the shell's badge and the panel); the task is visible while any of
+   * them is mounted, so the first `retain` reads it and catches up on a reload
+   * it missed, and the later ones only raise the count.
    */
-  setVisible(taskId: string, visible: boolean): void;
+  retain(taskId: string): void;
+  /**
+   * Drops one holder. An invalidation for a task nobody holds only marks it
+   * stale; the read that shows it again refetches it.
+   */
+  release(taskId: string): void;
   requestStatus(taskId: string): Promise<void>;
   requestBranches(taskId: string): Promise<void>;
   requestLog(taskId: string, limit?: number): Promise<void>;
@@ -136,12 +143,20 @@ function emptySnapshot(taskId: string): GitSnapshot {
  * invalidation loses to the newer snapshot. Branches and the log are separate
  * slices: their failures never touch the status and the status never blanks
  * them.
+ *
+ * Visibility is counted rather than flagged: the header badge and the `Source
+ * Control` panel watch the same task, so closing the panel must not freeze the
+ * refreshes the shell still needs.
  */
 export function createGitSnapshotStore(deps: GitSnapshotDeps): GitSnapshotStore {
   let state: GitSnapshotMap = {};
   const listeners = new Set<() => void>();
-  /** Tasks currently on screen; only these refetch on invalidation. */
-  const visible = new Set<string>();
+  /** Tasks on screen and how many holders each has; only these refetch. */
+  const visible = new Map<string, number>();
+
+  function isVisible(taskId: string): boolean {
+    return (visible.get(taskId) ?? 0) > 0;
+  }
   /** Invalidations that arrived while the task was hidden, coalesced. */
   const pendingReload = new Set<string>();
   /** The same burst, for the branch list: it has its own slice and its own read. */
@@ -283,14 +298,17 @@ export function createGitSnapshotStore(deps: GitSnapshotDeps): GitSnapshotStore 
 
   /**
    * Reads again the slices an invalidation found in use: the status always, and
-   * the branch list only when it was already loaded — an external
-   * `git checkout -b` moves the branch the head names, and the status alone
-   * never carries the branch list. A task whose branches were never loaded must
-   * not start loading them because a watcher event happened.
+   * the branch list when it was ever asked for — an external `git checkout -b`
+   * moves the branch the head names, and the status alone never carries the
+   * branch list. A first read that failed counts as asked for, so the list is
+   * retried instead of staying broken until the panel is remounted. A task
+   * whose branches were never loaded must not start loading them because a
+   * watcher event happened.
    */
   function reloadSlices(taskId: string, slices: { status: boolean; branches: boolean }): void {
     if (slices.status) void requestStatus(taskId);
-    if (slices.branches && entryOf(taskId)?.branches.data != null) {
+    const branches = entryOf(taskId)?.branches;
+    if (slices.branches && (branches?.data != null || branches?.error != null)) {
       void requestBranches(taskId);
     }
   }
@@ -308,7 +326,7 @@ export function createGitSnapshotStore(deps: GitSnapshotDeps): GitSnapshotStore 
     pendingReload.clear();
     pendingBranches.clear();
     for (const taskId of new Set([...statuses, ...branchLists])) {
-      if (!visible.has(taskId)) {
+      if (!isVisible(taskId)) {
         // Hidden panels do not refetch; the read that shows the task reloads it.
         pendingReload.add(taskId);
         pendingBranches.add(taskId);
@@ -370,12 +388,12 @@ export function createGitSnapshotStore(deps: GitSnapshotDeps): GitSnapshotStore 
       state = next;
       emit();
     },
-    setVisible(taskId, isVisible) {
-      if (!isVisible) {
-        visible.delete(taskId);
-        return;
-      }
-      visible.add(taskId);
+    retain(taskId) {
+      const holders = visible.get(taskId) ?? 0;
+      visible.set(taskId, holders + 1);
+      // A second holder must not start a second read: the task is already on
+      // screen, so it is loaded and caught up.
+      if (holders > 0) return;
       // Reading a task loads it, and a reload missed while it was hidden
       // happens now instead of while the panel was off screen. Revision 0
       // means no status was ever requested for it.
@@ -385,6 +403,16 @@ export function createGitSnapshotStore(deps: GitSnapshotDeps): GitSnapshotStore 
         status: missed || currentRevision(taskId) === 0,
         branches: missedBranches,
       });
+    },
+    release(taskId) {
+      const holders = visible.get(taskId) ?? 0;
+      if (holders <= 0) return;
+      if (holders > 1) {
+        visible.set(taskId, holders - 1);
+        return;
+      }
+      // The last holder is gone: invalidations are deferred, unchanged.
+      visible.delete(taskId);
     },
     requestStatus,
     requestBranches,
