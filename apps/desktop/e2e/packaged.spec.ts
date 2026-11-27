@@ -3,8 +3,8 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import os from 'node:os';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { _electron as electron } from 'playwright';
-import { startHarness } from './helpers';
+import { _electron as electron, type ElectronApplication } from 'playwright';
+import { pinWideWindow, startHarness } from './helpers';
 
 /**
  * Smoke test for the packaged application (pnpm dist output). It proves that
@@ -22,6 +22,7 @@ const fakeHarnessResource = path.join(resourcesDir, 'fake-harness.mjs');
 
 let tempRoot = '';
 let repoPath = '';
+let app: ElectronApplication | null = null;
 
 function git(args: string[], cwd: string): void {
   execFileSync('git', args, { cwd, stdio: 'ignore', windowsHide: true });
@@ -40,7 +41,8 @@ test.beforeAll(() => {
   );
 });
 
-test.afterAll(() => {
+test.afterAll(async () => {
+  await app?.close().catch(() => {});
   if (tempRoot) rmSync(tempRoot, { recursive: true, force: true });
 });
 
@@ -53,7 +55,7 @@ test('the packaged app starts, runs a PTY and keeps its database', async () => {
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
 
-  const app = await electron.launch({
+  app = await electron.launch({
     executablePath: packagedExe,
     env: {
       ...env,
@@ -67,8 +69,10 @@ test('the packaged app starts, runs a PTY and keeps its database', async () => {
     },
   });
 
+  // The runner's desktop is 1024 wide, so a window created there is clamped to
+  // it and the right panel would be a closed drawer instead of a column.
+  await pinWideWindow(app);
   const page = await app.firstWindow();
-  await page.waitForSelector('.app', { timeout: 60_000 });
 
   const info = await page.evaluate(async () => {
     const result = await window.nest!.invoke('app.info', {});
@@ -111,4 +115,5 @@ test('the packaged app starts, runs a PTY and keeps its database', async () => {
     .toBe(true);
 
   await app.close();
+  app = null;
 });
