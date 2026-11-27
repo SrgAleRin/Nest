@@ -9,6 +9,7 @@ import type {
   GitBranch,
   GitCommitDetail,
   GitCompare,
+  GitCompareDiff,
   GitDiff,
   GitFile,
   GitLog,
@@ -50,6 +51,26 @@ export interface DiffRequest {
   /** Restrict the diff to one workspace-relative path. */
   path?: string;
 }
+
+export interface LogRequest {
+  ref?: string;
+  /** Which history to walk; a `ref` wins over the scope. */
+  scope?: 'head' | 'branches' | 'all';
+  /** Case-insensitive substring of the message, author or hash prefix. */
+  search?: string;
+  limit?: number;
+  skip?: number;
+}
+
+export interface CompareDiffRequest {
+  base: string;
+  head?: string;
+  /** Restrict the patch to one path of the comparison. */
+  path?: string;
+}
+
+/** Which side of a change `discard` drops. */
+export type DiscardSide = 'staged' | 'unstaged' | 'both';
 
 export interface PushOptions {
   /** Lease-guarded force push; only the current branch is rewritten. */
@@ -277,10 +298,7 @@ export class GitService {
   }
 
   /** Commits reachable from `ref` (newest first), one page at a time. */
-  async log(
-    taskId: string,
-    options: { ref?: string; limit?: number; skip?: number } = {},
-  ): Promise<GitLog> {
+  async log(taskId: string, options: LogRequest = {}): Promise<GitLog> {
     const task = this.tasks.get(taskId);
     const cwd = task.workspacePath;
     const limit = Math.min(Math.max(options.limit ?? DEFAULT_LOG_LIMIT, 1), MAX_LOG_LIMIT);
@@ -288,6 +306,13 @@ export class GitService {
 
     // An unborn repository has no HEAD to walk; the panel shows an empty state.
     if (!(await hasHead(cwd))) return { commits: [], hasMore: false };
+
+    if (options.scope && options.scope !== 'head') {
+      throw new NestError('not_implemented', 'Walking every branch is not implemented yet');
+    }
+    if (options.search) {
+      throw new NestError('not_implemented', 'Searching the log is not implemented yet');
+    }
 
     const ref = options.ref ? assertRef(options.ref, 'ref') : 'HEAD';
     if (options.ref) await assertRevision(cwd, ref);
@@ -348,6 +373,15 @@ export class GitService {
         });
 
     return { commit, files: parseUnifiedDiff(stdout) };
+  }
+
+  /**
+   * Patch between two revisions (three-dot: from their merge base), used to
+   * read a branch that is not checked out here without touching the worktree.
+   */
+  async compareDiff(taskId: string, _request: CompareDiffRequest): Promise<GitCompareDiff> {
+    this.tasks.get(taskId);
+    throw new NestError('not_implemented', 'Comparing two revisions is not implemented yet');
   }
 
   async branches(taskId: string): Promise<GitBranches> {
@@ -543,7 +577,13 @@ export class GitService {
    * to HEAD; untracked files are deleted. The paths must currently be reported
    * as changed, so a stale click cannot wipe an unrelated file.
    */
-  async discard(taskId: string, paths: string[]): Promise<GitStatus> {
+  async discard(taskId: string, paths: string[], side: DiscardSide = 'both'): Promise<GitStatus> {
+    if (side === 'unstaged') {
+      throw new NestError(
+        'not_implemented',
+        'Discarding only the worktree side is not implemented yet',
+      );
+    }
     const task = this.tasks.get(taskId);
     const cwd = task.workspacePath;
     const status = await readStatus(cwd);
@@ -785,6 +825,12 @@ async function readStatus(cwd: string): Promise<GitStatus> {
       ...file,
       additions: stat?.additions ?? null,
       deletions: stat?.deletions ?? null,
+      // Per-side counters are filled by the numstat split; until then every
+      // row shows the `HEAD → worktree` sum on both sides.
+      stagedAdditions: stat?.additions ?? null,
+      stagedDeletions: stat?.deletions ?? null,
+      unstagedAdditions: stat?.additions ?? null,
+      unstagedDeletions: stat?.deletions ?? null,
     };
   });
 

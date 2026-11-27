@@ -21,7 +21,7 @@ function task(overrides: Partial<Task> = {}): Task {
 }
 
 function status(branch: string): GitStatus {
-  return { branch, upstream: null, ahead: 0, behind: 0, files: [] };
+  return { branch, upstream: null, ahead: 0, behind: 0, unborn: false, files: [] };
 }
 
 describe('header and status bar branch', () => {

@@ -19,6 +19,7 @@ function status(overrides: Partial<GitStatus> = {}): GitStatus {
     upstream: 'origin/feature/login',
     ahead: 0,
     behind: 0,
+    unborn: false,
     files: [],
     ...overrides,
   };

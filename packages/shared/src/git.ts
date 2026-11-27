@@ -29,6 +29,16 @@ export const GitFileSchema = z.object({
   /** Lines added/deleted against HEAD; null for binary or unreadable files. */
   additions: z.number().int().nonnegative().nullable(),
   deletions: z.number().int().nonnegative().nullable(),
+  /**
+   * Lines added/deleted of the index side (HEAD → index). A partially staged
+   * file reports its own counters per side, so the `Staged` and `Unstaged`
+   * sections never show the sum of both. Null for binary or untracked files.
+   */
+  stagedAdditions: z.number().int().nonnegative().nullable(),
+  stagedDeletions: z.number().int().nonnegative().nullable(),
+  /** Lines added/deleted of the worktree side (index → worktree). */
+  unstagedAdditions: z.number().int().nonnegative().nullable(),
+  unstagedDeletions: z.number().int().nonnegative().nullable(),
 });
 export type GitFile = z.infer<typeof GitFileSchema>;
 
@@ -37,6 +47,12 @@ export const GitStatusSchema = z.object({
   upstream: z.string().nullable(),
   ahead: z.number().int().nonnegative(),
   behind: z.number().int().nonnegative(),
+  /**
+   * The branch has no commit yet, so `HEAD` cannot be resolved and nothing can
+   * be restored from it. Taken from `git status --branch` itself, so a panel
+   * never has to infer it from a branch list that may still be loading.
+   */
+  unborn: z.boolean(),
   files: z.array(GitFileSchema),
 });
 export type GitStatus = z.infer<typeof GitStatusSchema>;
@@ -157,6 +173,12 @@ export const GitBranchSchema = z.object({
   tip: z.string(),
   subject: z.string(),
   committedAt: z.string(),
+  /**
+   * Workspace path that already has this branch checked out, when it is another
+   * worktree of the same repository; null for a branch nobody holds. Git forbids
+   * a second checkout of the same branch, so the UI must show it as taken.
+   */
+  worktreePath: z.string().nullable(),
 });
 export type GitBranch = z.infer<typeof GitBranchSchema>;
 
@@ -190,6 +212,16 @@ export const GitCompareFileSchema = z.object({
   deletions: z.number().int().nonnegative().nullable(),
 });
 export type GitCompareFile = z.infer<typeof GitCompareFileSchema>;
+
+/** Patch of one file (or of the whole tree) between two revisions. */
+export const GitCompareDiffSchema = z.object({
+  base: z.string(),
+  head: z.string(),
+  /** Common ancestor the comparison starts from; null without one. */
+  mergeBase: z.string().nullable(),
+  files: z.array(DiffFileSchema),
+});
+export type GitCompareDiff = z.infer<typeof GitCompareDiffSchema>;
 
 export const GitCompareSchema = z.object({
   base: z.string(),

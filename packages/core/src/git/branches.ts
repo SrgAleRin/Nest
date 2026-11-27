@@ -71,6 +71,7 @@ export function parseBranches(raw: string): BranchRecord[] {
       tip,
       subject,
       committedAt,
+      worktreePath: null,
     });
   }
 

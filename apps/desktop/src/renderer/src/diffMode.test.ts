@@ -38,6 +38,10 @@ function gitFile(patch: Partial<GitFile> = {}): GitFile {
     untracked: false,
     additions: 1,
     deletions: 0,
+    stagedAdditions: 0,
+    stagedDeletions: 0,
+    unstagedAdditions: 1,
+    unstagedDeletions: 0,
     ...patch,
   };
 }

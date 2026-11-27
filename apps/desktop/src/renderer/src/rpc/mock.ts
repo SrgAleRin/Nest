@@ -257,6 +257,7 @@ export function createMockClient(): NestClient {
     upstream: 'origin/main',
     ahead: 1,
     behind: 0,
+    unborn: false,
     files: [
       {
         path: 'src/App.tsx',
@@ -270,6 +271,10 @@ export function createMockClient(): NestClient {
         untracked: false,
         additions: 12,
         deletions: 4,
+        stagedAdditions: 0,
+        stagedDeletions: 0,
+        unstagedAdditions: 12,
+        unstagedDeletions: 4,
       },
       {
         path: 'src/terminal/bus.ts',
@@ -283,6 +288,10 @@ export function createMockClient(): NestClient {
         untracked: false,
         additions: 48,
         deletions: 0,
+        stagedAdditions: 48,
+        stagedDeletions: 0,
+        unstagedAdditions: 0,
+        unstagedDeletions: 0,
       },
       {
         path: 'docs/notes.md',
@@ -296,6 +305,10 @@ export function createMockClient(): NestClient {
         untracked: true,
         additions: 9,
         deletions: 0,
+        stagedAdditions: 9,
+        stagedDeletions: 0,
+        unstagedAdditions: 0,
+        unstagedDeletions: 0,
       },
     ],
   };
@@ -450,6 +463,7 @@ export function createMockClient(): NestClient {
         tip: commits[0]!.hash,
         subject: commits[0]!.subject,
         committedAt: commits[0]!.committedAt,
+        worktreePath: null,
       },
       {
         name: 'nest/terminal-reconnect',
@@ -462,6 +476,7 @@ export function createMockClient(): NestClient {
         tip: commits[1]!.hash,
         subject: commits[1]!.subject,
         committedAt: commits[1]!.committedAt,
+        worktreePath: null,
       },
     ],
     remote: [
@@ -476,6 +491,7 @@ export function createMockClient(): NestClient {
         tip: commits[0]!.hash,
         subject: commits[0]!.subject,
         committedAt: commits[0]!.committedAt,
+        worktreePath: null,
       },
     ],
   };
@@ -834,6 +850,17 @@ export function createMockClient(): NestClient {
           })),
         };
       }
+      case 'git.compareDiff': {
+        const base = String(params.base);
+        const head = params.head ? String(params.head) : 'HEAD';
+        const path = params.path ? String(params.path) : null;
+        return {
+          base,
+          head,
+          mergeBase: commits[1]!.hash,
+          files: path ? diff.files.filter((file) => file.path === path) : diff.files,
+        };
+      }
       case 'git.fetch':
         return { output: 'Fetched origin (mock)' };
       case 'git.pull':
@@ -852,6 +879,7 @@ export function createMockClient(): NestClient {
             tip: commits[0]!.hash,
             subject: 'Created in the mock client',
             committedAt: new Date().toISOString(),
+            worktreePath: null,
           });
         }
         status.branch = branch;

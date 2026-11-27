@@ -111,13 +111,17 @@ export function registerIpc(context: IpcContext): void {
 
     'git.push': async ({ taskId, force, publish }) => core.git.push(taskId, { force, publish }),
 
-    'git.log': async ({ taskId, ref, limit, skip }) => core.git.log(taskId, { ref, limit, skip }),
+    'git.log': async ({ taskId, ref, scope, search, limit, skip }) =>
+      core.git.log(taskId, { ref, scope, search, limit, skip }),
 
     'git.commitDetail': async ({ taskId, hash }) => core.git.commitDetail(taskId, hash),
 
     'git.branches': async ({ taskId }) => core.git.branches(taskId),
 
     'git.compare': async ({ taskId, base, head }) => core.git.compare(taskId, base, head),
+
+    'git.compareDiff': ({ taskId, base, head, path }) =>
+      core.git.compareDiff(taskId, { base, head, path }),
 
     'git.fetch': async ({ taskId }) => core.git.fetch(taskId),
 
@@ -126,11 +130,11 @@ export function registerIpc(context: IpcContext): void {
     'git.checkout': async ({ taskId, branch, create, from }) =>
       core.git.checkout(taskId, branch, { create, from }),
 
-    'git.discard': async ({ taskId, paths }) => core.git.discard(taskId, paths),
+    'git.discard': async ({ taskId, paths, side }) => core.git.discard(taskId, paths, side),
 
-    'files.list': ({ taskId }) => core.files.list(taskId),
+    'files.list': ({ taskId, ref }) => core.files.list(taskId, ref),
 
-    'files.read': ({ taskId, path }) => core.files.read(taskId, path),
+    'files.read': ({ taskId, path, ref }) => core.files.read(taskId, path, ref),
 
     'comments.list': ({ taskId, mode }) => core.comments.list(taskId, { mode }),
 

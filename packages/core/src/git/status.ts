@@ -23,6 +23,8 @@ export interface ParsedStatus {
   upstream: string | null;
   ahead: number;
   behind: number;
+  /** The branch has no commit yet; `HEAD` does not resolve. */
+  unborn: boolean;
   files: StatusFile[];
 }
 
@@ -40,6 +42,7 @@ export function parseStatus(raw: string): ParsedStatus {
   let upstream: string | null = null;
   let ahead = 0;
   let behind = 0;
+  let unborn = false;
   const files: StatusFile[] = [];
 
   for (let index = 0; index < tokens.length; index += 1) {
@@ -49,6 +52,7 @@ export function parseStatus(raw: string): ParsedStatus {
     if (token.startsWith('## ')) {
       const header = token.slice(3);
       if (header.startsWith('No commits yet on ')) {
+        unborn = true;
         branch = header.slice('No commits yet on '.length);
       } else if (header.startsWith('HEAD (no branch)')) {
         branch = 'HEAD';
@@ -97,5 +101,5 @@ export function parseStatus(raw: string): ParsedStatus {
     });
   }
 
-  return { branch, upstream, ahead, behind, files };
+  return { branch, upstream, ahead, behind, unborn, files };
 }

@@ -20,7 +20,10 @@ export class FilesService {
    * not ignored. `git ls-files` already applies `.gitignore`, so a build
    * output directory never reaches the panel.
    */
-  async list(taskId: string): Promise<WorkspaceFiles> {
+  async list(taskId: string, ref?: string): Promise<WorkspaceFiles> {
+    if (ref) {
+      throw new NestError('not_implemented', 'Listing the files of a revision is not implemented');
+    }
     const task = this.tasks.get(taskId);
     const { stdout } = await git(
       task.workspacePath,
@@ -40,7 +43,10 @@ export class FilesService {
   }
 
   /** UTF-8 preview of one workspace file; binary files return an empty text. */
-  async read(taskId: string, filePath: string): Promise<FileContent> {
+  async read(taskId: string, filePath: string, ref?: string): Promise<FileContent> {
+    if (ref) {
+      throw new NestError('not_implemented', 'Reading a file of a revision is not implemented');
+    }
     const task = this.tasks.get(taskId);
     const root = path.resolve(task.workspacePath);
     const target = path.resolve(root, filePath);

@@ -20,12 +20,23 @@ function file(path: string, overrides: Partial<GitFile> = {}): GitFile {
     untracked: false,
     additions: 1,
     deletions: 1,
+    stagedAdditions: 0,
+    stagedDeletions: 0,
+    unstagedAdditions: 1,
+    unstagedDeletions: 1,
     ...overrides,
   };
 }
 
 function status(branch: string, paths: string[] = []): GitStatus {
-  return { branch, upstream: null, ahead: 0, behind: 0, files: paths.map((path) => file(path)) };
+  return {
+    branch,
+    upstream: null,
+    ahead: 0,
+    behind: 0,
+    unborn: false,
+    files: paths.map((path) => file(path)),
+  };
 }
 
 function branches(current: string): GitBranches {
