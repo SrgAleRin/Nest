@@ -839,7 +839,7 @@ export function Sidebar(props: SidebarProps) {
         aria-expanded={false}
         onClick={onOpenPanel}
       >
-        <PanelLeftOpenIcon size={14} />
+        <PanelLeftOpenIcon size={15} />
       </button>
       <button
         type="button"
@@ -848,7 +848,7 @@ export function Sidebar(props: SidebarProps) {
         aria-label="New task"
         onClick={newTaskDefault}
       >
-        <PlusIcon size={14} />
+        <PlusIcon size={15} />
       </button>
       {railWorking > 0 || railIdle > 0 || railUnread > 0 ? (
         <span
@@ -872,7 +872,7 @@ export function Sidebar(props: SidebarProps) {
           onOpenPanel();
         }}
       >
-        <ArchiveIcon size={14} />
+        <ArchiveIcon size={15} />
       </button>
     </aside>
   );
@@ -1006,7 +1006,7 @@ export function Sidebar(props: SidebarProps) {
 
           <footer className="sidebar-foot">
             <button type="button" className="sidebar-foot-btn" onClick={props.onAddProject}>
-              <PlusIcon size={12} /> Add project
+              <PlusIcon size={14} /> Add project
             </button>
             <button
               type="button"
@@ -1014,7 +1014,7 @@ export function Sidebar(props: SidebarProps) {
               title="Archived workspaces"
               onClick={() => onSetArchiveOpen(true)}
             >
-              <ArchiveIcon size={12} />{' '}
+              <ArchiveIcon size={14} />{' '}
               {archivedTasks.length > 0 ? `Archived · ${archivedTasks.length}` : 'Archived'}
             </button>
             {hiddenProjects.length > 0 ? (
@@ -1026,7 +1026,7 @@ export function Sidebar(props: SidebarProps) {
                   title="Projects hidden from the sidebar"
                   onClick={() => setHiddenMenuOpen((previous) => !previous)}
                 >
-                  <EyeIcon size={12} /> Hidden · {hiddenProjects.length}
+                  <EyeIcon size={14} /> Hidden · {hiddenProjects.length}
                 </button>
                 {hiddenMenuOpen ? (
                   <div

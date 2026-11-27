@@ -282,7 +282,7 @@ function ChangeRowView({
               title={side === 'staged' ? 'Unstage this file' : 'Stage this file'}
               onClick={() => (side === 'staged' ? onUnstage([row.path]) : onStage([row.path]))}
             >
-              {side === 'staged' ? <CheckIcon size={12} /> : <PlusIcon size={12} />}
+              {side === 'staged' ? <CheckIcon size={14} /> : <PlusIcon size={14} />}
             </button>
             <button
               type="button"
@@ -297,7 +297,7 @@ function ChangeRowView({
               }
               onClick={() => onDiscard(row)}
             >
-              <TrashIcon size={12} />
+              <TrashIcon size={14} />
             </button>
           </>
         )}

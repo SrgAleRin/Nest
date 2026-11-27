@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
@@ -300,6 +300,59 @@ function TerminalView({
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
 
+  /**
+   * The preferences the live `Terminal` currently carries. A change that
+   * arrives while the view is hidden is parked here until the terminal is
+   * measured on screen: xterm caches glyph widths the moment a font option is
+   * assigned, and a `display: none` host reports every width as zero.
+   */
+  const terminalRef = useRef(terminal);
+  terminalRef.current = terminal;
+  const appliedTerminalRef = useRef<TerminalPreferences | null>(null);
+
+  /** A hidden layer has no box, so it must not be measured or painted. */
+  const hostMeasurable = (): boolean => {
+    const host = hostRef.current;
+    return Boolean(host && host.clientWidth > 0 && host.clientHeight > 0);
+  };
+
+  const applyTerminalOptions = useCallback((term: Terminal, prefs: TerminalPreferences): void => {
+    term.options.fontFamily = prefs.fontFamily;
+    term.options.fontSize = prefs.fontSize;
+    // xterm throws on lineHeight < 1 and would abort the assignments below.
+    term.options.lineHeight = Math.max(1, prefs.lineHeight);
+    term.options.scrollback = prefs.scrollback;
+    term.options.cursorStyle = prefs.cursorStyle;
+    term.options.cursorBlink = prefs.cursorBlink;
+    term.options.theme = TERMINAL_THEMES[prefs.theme];
+    appliedTerminalRef.current = prefs;
+    applyFitRef.current();
+    term.refresh(0, Math.max(0, term.rows - 1));
+  }, []);
+
+  /**
+   * A local font can finish loading after xterm measured its fallback glyphs,
+   * which leaves every cell at the wrong width. Re-fit and repaint once, and
+   * only while the terminal is really on screen. Returns a cancel function.
+   */
+  const remeasureAfterFonts = useCallback((): (() => void) => {
+    let disposed = false;
+    const refresh = (): void => {
+      if (disposed) return;
+      const term = termRef.current;
+      if (!term || !hostMeasurable()) return;
+      applyFitRef.current();
+      term.refresh(0, Math.max(0, term.rows - 1));
+    };
+    const frame = requestAnimationFrame(refresh);
+    const fonts = typeof document === 'undefined' ? undefined : document.fonts;
+    if (fonts) void fonts.ready.then(refresh).catch(() => {});
+    return () => {
+      disposed = true;
+      cancelAnimationFrame(frame);
+    };
+  }, []);
+
   const [findOpen, setFindOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [findResults, setFindResults] = useState({ index: -1, count: 0 });
@@ -345,24 +398,33 @@ function TerminalView({
     const host = hostRef.current;
     if (!host) return;
 
+    // Mount-time snapshot: the effects below compare against it to know which
+    // preferences the live Terminal already carries.
+    const initialPrefs = terminalRef.current;
+
     const term = new Terminal({
-      cursorBlink: terminal.cursorBlink,
-      cursorStyle: terminal.cursorStyle,
-      fontFamily: terminal.fontFamily,
-      fontSize: terminal.fontSize,
-      lineHeight: terminal.lineHeight,
-      scrollback: terminal.scrollback,
+      cursorBlink: initialPrefs.cursorBlink,
+      cursorStyle: initialPrefs.cursorStyle,
+      fontFamily: initialPrefs.fontFamily,
+      fontSize: initialPrefs.fontSize,
+      // A line height under 1 throws inside xterm and aborts the constructor.
+      lineHeight: Math.max(1, initialPrefs.lineHeight),
+      scrollback: initialPrefs.scrollback,
+      // Fallback-heavy stacks draw some glyphs wider than their cell; let xterm
+      // squeeze them instead of clipping or overlapping.
+      rescaleOverlappingGlyphs: true,
       // SearchAddon highlights matches through the decorations API, which xterm
       // still exposes behind allowProposedApi. xterm is pinned, so the surface
       // cannot drift between releases.
       allowProposedApi: true,
-      theme: TERMINAL_THEMES[terminal.theme],
+      theme: TERMINAL_THEMES[initialPrefs.theme],
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(host);
     termRef.current = term;
     fitRef.current = fit;
+    appliedTerminalRef.current = initialPrefs;
 
     const search = new SearchAddon();
     term.loadAddon(search);
@@ -516,32 +578,44 @@ function TerminalView({
       fitRef.current = null;
       searchRef.current = null;
       applyFitRef.current = () => {};
+      appliedTerminalRef.current = null;
       lastSizeRef.current = null;
     };
   }, [client, session.id]);
 
   // Coming back to the terminals (a session tab, `Ctrl+\`` or closing a tool
   // tab) re-fits the visible xterm: it was hidden while the layer was, so its
-  // real size was never measured. Focus stays off a hidden layer.
+  // real size was never measured. Focus stays off a hidden layer. Preferences
+  // that arrived while it was hidden are applied here, with the host visible.
   useEffect(() => {
     if (!active || !visible) return;
-    termRef.current?.focus();
+    const term = termRef.current;
+    term?.focus();
+    const pending = terminalRef.current;
+    if (term && appliedTerminalRef.current !== pending && hostMeasurable()) {
+      applyTerminalOptions(term, pending);
+    }
     applyFitRef.current();
-  }, [active, visible]);
+  }, [active, visible, applyTerminalOptions]);
 
-  // Settings save updates an already-open terminal without remounting it.
+  // Settings save updates an already-open terminal without remounting it. This
+  // only runs while the host is on screen: assigning font options to a hidden
+  // terminal makes xterm cache zero-width glyphs. Pending values wait for the
+  // reactivation effect above.
   useEffect(() => {
     const term = termRef.current;
-    if (!term) return;
-    term.options.fontFamily = terminal.fontFamily;
-    term.options.fontSize = terminal.fontSize;
-    term.options.lineHeight = terminal.lineHeight;
-    term.options.scrollback = terminal.scrollback;
-    term.options.cursorStyle = terminal.cursorStyle;
-    term.options.cursorBlink = terminal.cursorBlink;
-    term.options.theme = TERMINAL_THEMES[terminal.theme];
-    applyFitRef.current();
-  }, [terminal]);
+    if (!term || !active || !visible) return;
+    if (appliedTerminalRef.current === terminal) return;
+    if (!hostMeasurable()) return;
+    applyTerminalOptions(term, terminal);
+  }, [terminal, active, visible, applyTerminalOptions]);
+
+  // Re-measure once the font stack has loaded: a freshly installed family is
+  // used a tick after xterm first measured its fallback glyphs.
+  useEffect(() => {
+    if (!active || !visible) return;
+    return remeasureAfterFonts();
+  }, [active, visible, terminal.fontFamily, remeasureAfterFonts]);
 
   const previousStatusRef = useRef(session.status);
   useEffect(() => {
@@ -558,7 +632,12 @@ function TerminalView({
   }, [session.status]);
 
   return (
-    <div className={`terminal-view ${active ? 'active' : ''}`}>
+    <div
+      className={`terminal-view ${active ? 'active' : ''}`}
+      // The host is inset, so the padding around it must follow the terminal
+      // palette instead of the app background.
+      style={{ backgroundColor: TERMINAL_THEMES[terminal.theme].background }}
+    >
       {findOpen ? (
         <div className="terminal-find">
           <input

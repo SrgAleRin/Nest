@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AppSettings } from '@nest/shared';
+import { normalizeTerminalFontFamily } from '@nest/shared';
 import { afterAll, describe, expect, it } from 'vitest';
 import { migrate, openDatabase } from '../src/db/database.js';
 import { HarnessRegistry } from '../src/harness/registry.js';
@@ -59,8 +60,9 @@ describe('settings service', () => {
       settings.update({ harnessArgs: { claude: '  --model opus  ', codex: '   ' } }).harnessArgs,
     ).toEqual({ claude: '--model opus' });
     expect(settings.update({ shellCommand: '  pwsh  ' }).shellCommand).toBe('pwsh');
-    expect(settings.update({ terminal: { ...DEFAULT_SETTINGS.terminal, fontSize: 16 } }).terminal)
-      .toMatchObject({ fontSize: 16, theme: 'nest' });
+    expect(
+      settings.update({ terminal: { ...DEFAULT_SETTINGS.terminal, fontSize: 16 } }).terminal,
+    ).toMatchObject({ fontSize: 16, theme: 'nest' });
     db.close();
   });
 
@@ -150,10 +152,90 @@ describe('settings service', () => {
     db.close();
   });
 
+  it('clamps the line height and normalizes the font family', () => {
+    const { db, settings } = openSettings('terminal.db');
+
+    const updated = settings.update({
+      terminal: { ...DEFAULT_SETTINGS.terminal, lineHeight: 1.6, fontFamily: '3270 Nerd Font' },
+    }).terminal;
+    expect(updated.lineHeight).toBe(1.6);
+    expect(updated.fontFamily).toBe("'3270 Nerd Font'");
+    db.close();
+  });
+
+  it('upgrades a legacy row whose line height xterm would reject', () => {
+    const { db, settings } = openSettings('legacy-terminal.db');
+    db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run(
+      'app',
+      JSON.stringify({
+        disabledHarnesses: ['fake'],
+        customCommand: 'agent',
+        terminal: { ...DEFAULT_SETTINGS.terminal, lineHeight: 0.9, fontFamily: 'Fira Code' },
+      }),
+    );
+
+    // The rest of the row survives: only the rejected field is repaired.
+    const loaded = settings.get();
+    expect(loaded.disabledHarnesses).toEqual(['fake']);
+    expect(loaded.customCommand).toBe('agent');
+    expect(loaded.terminal.lineHeight).toBe(1);
+    expect(loaded.terminal.fontFamily).toBe("'Fira Code'");
+    db.close();
+  });
+
+  it('keeps an unset or empty font family usable', () => {
+    const { db, settings } = openSettings('empty-font.db');
+    db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run(
+      'app',
+      JSON.stringify({
+        disabledHarnesses: [],
+        customCommand: 'agent',
+        terminal: { ...DEFAULT_SETTINGS.terminal, fontFamily: '  ' },
+      }),
+    );
+
+    const loaded = settings.get();
+    expect(loaded.customCommand).toBe('agent');
+    expect(loaded.terminal.fontFamily).toBe(DEFAULT_SETTINGS.terminal.fontFamily);
+    db.close();
+  });
+
   it('rejects unknown harness ids', () => {
     const { db, settings } = openSettings('invalid.db');
     expect(() => settings.update({ disabledHarnesses: ['nope' as 'claude'] })).toThrow();
     db.close();
+  });
+});
+
+describe('terminal font family normalization', () => {
+  it('quotes multi-word and punctuation-bearing family names', () => {
+    expect(normalizeTerminalFontFamily('3270 Nerd Font')).toBe("'3270 Nerd Font'");
+    expect(normalizeTerminalFontFamily('Terminus (TTF)')).toBe("'Terminus (TTF)'");
+    expect(normalizeTerminalFontFamily('Fira Code')).toBe("'Fira Code'");
+    expect(normalizeTerminalFontFamily('  Cascadia Code  ')).toBe("'Cascadia Code'");
+  });
+
+  it('keeps generic families and already quoted names as they are', () => {
+    expect(normalizeTerminalFontFamily('monospace')).toBe('monospace');
+    expect(normalizeTerminalFontFamily("'Cascadia Code'")).toBe("'Cascadia Code'");
+    // Double quotes are valid CSS too, so they are left alone.
+    expect(normalizeTerminalFontFamily('"JetBrains Mono", monospace')).toBe(
+      '"JetBrains Mono", monospace',
+    );
+    expect(normalizeTerminalFontFamily('Consolas, ui-monospace, sans-serif')).toBe(
+      'Consolas, ui-monospace, sans-serif',
+    );
+  });
+
+  it('strips characters xterm would choke on and drops empty entries', () => {
+    expect(normalizeTerminalFontFamily("'Cascadia Code';{}")).toBe("'Cascadia Code'");
+    expect(normalizeTerminalFontFamily('Consolas,,  , monospace')).toBe('Consolas, monospace');
+    expect(normalizeTerminalFontFamily("''")).toBe(DEFAULT_SETTINGS.terminal.fontFamily);
+  });
+
+  it('falls back to the default list when nothing usable is left', () => {
+    expect(normalizeTerminalFontFamily('')).toBe(DEFAULT_SETTINGS.terminal.fontFamily);
+    expect(normalizeTerminalFontFamily(' ;{} ')).toBe(DEFAULT_SETTINGS.terminal.fontFamily);
   });
 });
 
@@ -179,9 +261,9 @@ describe('settings-aware harness registry', () => {
     delete process.env.NEST_FAKE_SESSION_DIR;
 
     try {
-      expect(registry.list({ includeDisabled: true }).some((profile) => profile.id === 'fake')).toBe(
-        false,
-      );
+      expect(
+        registry.list({ includeDisabled: true }).some((profile) => profile.id === 'fake'),
+      ).toBe(false);
       expect(registry.get('fake', { allowDisabled: true }).id).toBe('fake');
     } finally {
       if (enabled === undefined) delete process.env.NEST_ENABLE_FAKE_HARNESS;

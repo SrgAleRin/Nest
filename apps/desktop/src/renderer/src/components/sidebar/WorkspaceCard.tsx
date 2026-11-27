@@ -344,7 +344,7 @@ export function WorkspaceCard({
                 setWorkflowPickerOpen((open) => !open);
               }}
             >
-              <WorkflowStatusIcon status={task.workflowStatus} size={11} />
+              <WorkflowStatusIcon status={task.workflowStatus} size={14} />
             </button>
             {workflowPickerOpen ? (
               <div
@@ -365,9 +365,9 @@ export function WorkspaceCard({
                       onSetWorkflowStatus(task, status);
                     }}
                   >
-                    <WorkflowStatusIcon status={status} size={11} />
+                    <WorkflowStatusIcon status={status} size={13} />
                     <span>{WORKFLOW_STATUS_LABELS[status]}</span>
-                    {status === task.workflowStatus ? <CheckIcon size={11} /> : null}
+                    {status === task.workflowStatus ? <CheckIcon size={13} /> : null}
                   </button>
                 ))}
               </div>
@@ -387,7 +387,7 @@ export function WorkspaceCard({
               setHarnessPickerOpen((open) => !open);
             }}
           >
-            <PlusIcon size={11} />
+            <PlusIcon size={14} />
           </button>
           <button
             type="button"
@@ -400,7 +400,7 @@ export function WorkspaceCard({
               onOpenContextMenu(item, { x: rect.left, y: rect.bottom });
             }}
           >
-            <MoreHorizontalIcon size={12} />
+            <MoreHorizontalIcon size={14} />
           </button>
           {harnessPickerOpen ? (
             <div
@@ -422,7 +422,7 @@ export function WorkspaceCard({
                       onStartSession(task.id, harness.id);
                     }}
                   >
-                    <TerminalIcon size={11} />
+                    <TerminalIcon size={13} />
                     <span>{harness.label}</span>
                   </button>
                 ))
@@ -471,7 +471,7 @@ export function WorkspaceCard({
                     setLiveSessionsOpen((open) => !open);
                   }}
                 >
-                  <ChevronIcon size={10} />
+                  <ChevronIcon size={13} />
                 </button>
               ) : null}
             </span>
@@ -488,7 +488,7 @@ export function WorkspaceCard({
                 onEditNotes(task.id);
               }}
             >
-              <FileTextIcon size={10} />
+              <FileTextIcon size={12} />
             </button>
           ) : null}
         </div>

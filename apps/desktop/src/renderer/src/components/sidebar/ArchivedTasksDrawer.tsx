@@ -96,7 +96,7 @@ export function ArchivedTasksDrawer({
       </header>
 
       <div className="archived-search">
-        <SearchIcon size={12} />
+        <SearchIcon size={13} />
         <input
           ref={searchRef}
           type="search"
@@ -144,7 +144,7 @@ export function ArchivedTasksDrawer({
                     title="Restore this workspace"
                     onClick={() => onRestore(task)}
                   >
-                    <RestoreIcon size={11} /> Restore
+                    <RestoreIcon size={13} /> Restore
                   </button>
                   <button
                     type="button"
@@ -153,7 +153,7 @@ export function ArchivedTasksDrawer({
                     title="Delete the worktree of this archived workspace"
                     onClick={() => onDelete(task)}
                   >
-                    <TrashIcon size={11} /> Delete worktree…
+                    <TrashIcon size={13} /> Delete worktree…
                   </button>
                 </div>
               </article>

@@ -1,6 +1,10 @@
 import path from 'node:path';
 import type { AppSettings, AppSettingsPatch } from '@nest/shared';
-import { AppSettingsSchema, DEFAULT_TERMINAL_PREFERENCES } from '@nest/shared';
+import {
+  AppSettingsSchema,
+  DEFAULT_TERMINAL_PREFERENCES,
+  normalizeTerminalFontFamily,
+} from '@nest/shared';
 import type { Db } from '../db/database.js';
 
 const SETTINGS_KEY = 'app';
@@ -50,7 +54,10 @@ export class SettingsService {
       return cloneDefaults();
     }
 
-    const result = AppSettingsSchema.safeParse(parsed);
+    // Rows written by older builds can keep a line height the strict schema now
+    // rejects (xterm throws below 1) or an empty font family. Repair just those
+    // fields so the rest of the row survives instead of falling back to defaults.
+    const result = AppSettingsSchema.safeParse(upgradeLegacyTerminal(parsed));
     return result.success ? normalize(result.data) : cloneDefaults();
   }
 
@@ -78,6 +85,28 @@ function cloneDefaults(): AppSettings {
   };
 }
 
+/**
+ * Pre-clamps terminal values a legacy row may hold, keeping
+ * `TerminalPreferencesSchema` strict for RPC input while old rows still load.
+ */
+function upgradeLegacyTerminal(parsed: unknown): unknown {
+  if (!parsed || typeof parsed !== 'object') return parsed;
+  const row = parsed as Record<string, unknown>;
+  const terminal = row.terminal;
+  if (!terminal || typeof terminal !== 'object') return parsed;
+
+  const next: Record<string, unknown> = { ...(terminal as Record<string, unknown>) };
+  const lineHeight = next.lineHeight;
+  if (typeof lineHeight === 'number' && Number.isFinite(lineHeight) && lineHeight < 1) {
+    next.lineHeight = 1;
+  }
+  if (typeof next.fontFamily === 'string' && next.fontFamily.trim() === '') {
+    next.fontFamily = DEFAULT_TERMINAL_PREFERENCES.fontFamily;
+  }
+
+  return { ...row, terminal: next };
+}
+
 function normalize(settings: AppSettings): AppSettings {
   return {
     customCommand: settings.customCommand.trim(),
@@ -90,7 +119,8 @@ function normalize(settings: AppSettings): AppSettings {
     shellCommand: settings.shellCommand.trim(),
     terminal: {
       ...settings.terminal,
-      fontFamily: settings.terminal.fontFamily.trim(),
+      fontFamily: normalizeTerminalFontFamily(settings.terminal.fontFamily),
+      lineHeight: Math.min(2, Math.max(1, settings.terminal.lineHeight)),
     },
     worktreeRoot: settings.worktreeRoot.trim(),
     copyEnvFiles: settings.copyEnvFiles,

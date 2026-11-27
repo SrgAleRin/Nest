@@ -54,7 +54,7 @@ export function SessionsPanel({
           >
             <div className="session-card-head">
               <span className={`dot dot-${session.status}`} />
-              <TerminalIcon size={12} />
+              <TerminalIcon size={14} />
               <span className="session-card-title">{session.title}</span>
               {unread[session.id] ? (
                 <span className="unread-badge" title="Finished while you were away">
@@ -94,7 +94,7 @@ export function SessionsPanel({
               </button>
               {live ? (
                 <button className="mini-btn danger" onClick={() => onStop(session.id)}>
-                  <StopIcon size={11} />
+                  <StopIcon size={13} />
                   Stop
                 </button>
               ) : (

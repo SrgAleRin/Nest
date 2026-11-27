@@ -145,7 +145,7 @@ export function GroupHeaderRow({
             title="New task"
             onClick={() => onNewTask?.(project.id)}
           >
-            <PlusIcon size={11} />
+            <PlusIcon size={14} />
           </button>
           <button
             type="button"
@@ -157,7 +157,7 @@ export function GroupHeaderRow({
               onOpenProjectMenu?.(project, { x: rect.left, y: rect.bottom });
             }}
           >
-            <MoreHorizontalIcon size={12} />
+            <MoreHorizontalIcon size={14} />
           </button>
         </span>
       ) : null}

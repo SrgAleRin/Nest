@@ -99,8 +99,31 @@ export type TerminalTheme = z.infer<typeof TerminalThemeSchema>;
 export const TerminalCursorStyleSchema = z.enum(['block', 'underline', 'bar']);
 export type TerminalCursorStyle = z.infer<typeof TerminalCursorStyleSchema>;
 
+/**
+ * CSS generic families are keywords: quoting them would make xterm hand the
+ * name to the font matcher instead of the platform default.
+ */
+const CSS_GENERIC_FAMILIES = new Set([
+  'monospace',
+  'sans-serif',
+  'serif',
+  'system-ui',
+  'ui-monospace',
+  'cursive',
+  'fantasy',
+  'emoji',
+  'math',
+  'fangsong',
+]);
+
+/** Letters, `-` and `_` only; anything else needs quoting to be a CSS family. */
+const BARE_FONT_FAMILY = /^[A-Za-z_-]+$/;
+
 export const DEFAULT_TERMINAL_PREFERENCES = {
-  fontFamily: "'Cascadia Code', 'JetBrains Mono', Consolas, monospace",
+  // Cascadia and JetBrains Mono render normal glyphs; the Nerd Font and symbol
+  // fallbacks cover Powerline/Nerd/TUI glyphs so they are not drawn as tofu.
+  fontFamily:
+    "'Cascadia Code', 'JetBrains Mono', 'CaskaydiaCove Nerd Font', 'CaskaydiaMono Nerd Font', 'Cascadia Code NF', 'Cascadia Mono NF', 'JetBrainsMono Nerd Font', 'JetBrainsMono NFM', 'FiraCode Nerd Font', 'MesloLGS Nerd Font', Consolas, 'Segoe UI Symbol', monospace",
   fontSize: 13,
   lineHeight: 1.25,
   scrollback: 10000,
@@ -112,7 +135,8 @@ export const DEFAULT_TERMINAL_PREFERENCES = {
 export const TerminalPreferencesSchema = z.object({
   fontFamily: z.string().trim().min(1).max(300).default(DEFAULT_TERMINAL_PREFERENCES.fontFamily),
   fontSize: z.number().int().min(8).max(32).default(DEFAULT_TERMINAL_PREFERENCES.fontSize),
-  lineHeight: z.number().min(0.8).max(2).default(DEFAULT_TERMINAL_PREFERENCES.lineHeight),
+  // xterm throws `lineHeight cannot be less than 1`, so the schema stops it here.
+  lineHeight: z.number().min(1).max(2).default(DEFAULT_TERMINAL_PREFERENCES.lineHeight),
   scrollback: z
     .number()
     .int()
@@ -124,6 +148,69 @@ export const TerminalPreferencesSchema = z.object({
   theme: TerminalThemeSchema.default(DEFAULT_TERMINAL_PREFERENCES.theme),
 });
 export type TerminalPreferences = z.infer<typeof TerminalPreferencesSchema>;
+
+/**
+ * Turns whatever the user typed into a CSS `font-family` list xterm accepts.
+ *
+ * A hand-written value is often `3270 Nerd Font` or `Terminus (TTF)`: unquoted,
+ * CSS reads that as several families and the font never resolves. So every
+ * multi-word or punctuation-bearing name is wrapped in single quotes, while
+ * generic keywords stay bare and already valid lists are kept as they were.
+ */
+export function normalizeTerminalFontFamily(raw: string): string {
+  const tokens = splitFontFamilies(raw.replace(/[;{}]/g, '').trim());
+  const normalized = tokens.flatMap((token) => {
+    const family = normalizeFontFamilyToken(token);
+    return family ? [family] : [];
+  });
+  return normalized.length > 0 ? normalized.join(', ') : DEFAULT_TERMINAL_PREFERENCES.fontFamily;
+}
+
+/** Splits on commas that sit outside single or double quotes. */
+function splitFontFamilies(value: string): string[] {
+  const parts: string[] = [];
+  let current = '';
+  let openQuote: string | null = null;
+
+  for (const char of value) {
+    if (openQuote) {
+      current += char;
+      if (char === openQuote) openQuote = null;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      openQuote = char;
+      current += char;
+      continue;
+    }
+    if (char === ',') {
+      parts.push(current);
+      current = '';
+      continue;
+    }
+    current += char;
+  }
+  parts.push(current);
+
+  return parts.map((part) => part.trim()).filter((part) => part.length > 0);
+}
+
+/** Returns the token as CSS, or null when nothing usable is left in it. */
+function normalizeFontFamilyToken(token: string): string | null {
+  const value = token.trim();
+  if (!value) return null;
+
+  const first = value[0];
+  if ((first === "'" || first === '"') && value.endsWith(first) && value.length > 1) {
+    const inner = value.slice(1, -1).trim();
+    return inner ? `${first}${inner}${first}` : null;
+  }
+
+  if (CSS_GENERIC_FAMILIES.has(value.toLowerCase())) return value;
+  if (BARE_FONT_FAMILY.test(value)) return value;
+
+  return `'${value.replace(/'/g, "\\'")}'`;
+}
 
 export const AppSettingsSchema = z.object({
   /** Harness ids hidden from the start pickers; existing sessions still resume. */

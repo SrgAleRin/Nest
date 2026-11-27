@@ -131,12 +131,22 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
         }
       }
 
+      const normalizedTerminal: TerminalPreferences = {
+        ...terminal,
+        // An empty stack would leave xterm without any family to fall back to.
+        fontFamily: terminal.fontFamily.trim()
+          ? terminal.fontFamily
+          : DEFAULT_TERMINAL_PREFERENCES.fontFamily,
+        // xterm rejects a line height under 1 outright.
+        lineHeight: Math.min(2, Math.max(1, terminal.lineHeight)),
+      };
+
       const settings = await client.invoke('settings.update', {
         disabledHarnesses: [...disabled] as HarnessId[],
         customCommand: customCommand.trim(),
         harnessArgs: args,
         shellCommand: shellCommand.trim(),
-        terminal,
+        terminal: normalizedTerminal,
         worktreeRoot: worktreeRoot.trim(),
         copyEnvFiles,
         updateFeedUrl: updateFeedUrl.trim(),
@@ -172,7 +182,9 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
     updateStatus?.state === 'downloading' ||
     updateStatus?.state === 'downloaded';
   const canCheck =
-    Boolean(updatesEnabled && updateStatus?.enabled && updateStatus.feedUrl) && !busy && !updateBusy;
+    Boolean(updatesEnabled && updateStatus?.enabled && updateStatus.feedUrl) &&
+    !busy &&
+    !updateBusy;
 
   return (
     <div className="modal-overlay" onMouseDown={onClose}>
@@ -224,9 +236,19 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
                   value={terminal.fontFamily}
                   onChange={(event) => setTerminalValue('fontFamily', event.target.value)}
                   placeholder={DEFAULT_TERMINAL_PREFERENCES.fontFamily}
+                  list="terminal-font-presets"
                   maxLength={300}
                   spellCheck={false}
                 />
+                <datalist id="terminal-font-presets">
+                  <option value={DEFAULT_TERMINAL_PREFERENCES.fontFamily} />
+                  <option value="'Cascadia Code', Consolas, monospace" />
+                  <option value="'JetBrains Mono', Consolas, monospace" />
+                  <option value="'Fira Code', Consolas, monospace" />
+                  <option value="'CaskaydiaCove Nerd Font', 'Cascadia Code', monospace" />
+                  <option value="'JetBrainsMono Nerd Font', 'JetBrains Mono', monospace" />
+                  <option value="'FiraCode Nerd Font', 'Fira Code', monospace" />
+                </datalist>
                 <small className="field-hint">
                   A CSS font stack. Install the font on this machine; missing families fall back to
                   the next one in the list.
@@ -243,7 +265,7 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
                 <NumberField
                   label="Line height"
                   value={terminal.lineHeight}
-                  min={0.8}
+                  min={1}
                   max={2}
                   step={0.05}
                   onChange={(value) => setTerminalValue('lineHeight', value)}
@@ -264,10 +286,7 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
                     className="settings-select"
                     value={terminal.theme}
                     onChange={(event) =>
-                      setTerminalValue(
-                        'theme',
-                        event.target.value as TerminalPreferences['theme'],
-                      )
+                      setTerminalValue('theme', event.target.value as TerminalPreferences['theme'])
                     }
                   >
                     <option value="nest">Nest dark</option>
@@ -313,8 +332,8 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
                   spellCheck={false}
                 />
                 <small className="field-hint">
-                  Used by the Terminal profile. Leave empty to auto-detect. Extra terminal
-                  arguments belong in the Terminal row below.
+                  Used by the Terminal profile. Leave empty to auto-detect. Extra terminal arguments
+                  belong in the Terminal row below.
                 </small>
               </label>
             </div>
@@ -333,7 +352,8 @@ export function SettingsDialog({ client, onClose, onSaved }: SettingsDialogProps
                   spellCheck={false}
                 />
                 <small className="field-hint">
-                  New worktrees are created here. Empty uses <code>{info?.defaultWorktreesRoot ?? 'the default worktree folder'}</code>.
+                  New worktrees are created here. Empty uses{' '}
+                  <code>{info?.defaultWorktreesRoot ?? 'the default worktree folder'}</code>.
                   Existing worktrees keep their paths; nothing is moved. An unusable folder is
                   reported when a task is created.
                 </small>
@@ -590,7 +610,15 @@ function NumberField({
         min={min}
         max={max}
         step={step}
-        onChange={(event) => setText(event.target.value)}
+        onChange={(event) => {
+          // A valid in-range value applies immediately so the terminal preview
+          // follows the field; clamping still happens on blur and Enter.
+          const next = event.target.value;
+          setText(next);
+          if (next.trim() === '') return;
+          const parsed = Number(next);
+          if (Number.isFinite(parsed) && parsed >= min && parsed <= max) onChange(parsed);
+        }}
         onBlur={commit}
         onKeyDown={(event) => {
           if (event.key === 'Enter') commit();

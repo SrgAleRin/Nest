@@ -14,11 +14,7 @@ import { NestError } from '../errors.js';
 import { HarnessDiscovery, type DiscoveryResult } from '../harness/discovery.js';
 import { buildPaste } from '../harness/paste.js';
 import { HarnessRegistry } from '../harness/registry.js';
-import {
-  stopSessionsAndWait,
-  type SessionStopper,
-  type StopSessionsOptions,
-} from './lifecycle.js';
+import { stopSessionsAndWait, type SessionStopper, type StopSessionsOptions } from './lifecycle.js';
 import { toSession, type SessionRow } from './rows.js';
 import type { TaskService } from './tasks.js';
 
@@ -360,6 +356,11 @@ export class SessionService {
       if (value !== undefined) env[key] = value;
     }
     env.TERM = 'xterm-256color';
+    // UTF-8 and truecolour everywhere; only filled in when the shell profile
+    // has no opinion, so a user override still wins.
+    if (!env.COLORTERM) env.COLORTERM = 'truecolor';
+    if (!env.PYTHONUTF8) env.PYTHONUTF8 = '1';
+    if (!env.PYTHONIOENCODING) env.PYTHONIOENCODING = 'utf-8';
     env.NEST = '1';
     env.NEST_TASK_ID = input.taskId;
     env.NEST_SESSION_ID = input.sessionId;
@@ -1003,6 +1004,23 @@ function quote(value: string): string {
   return `"${value.replace(/"/g, '""')}"`;
 }
 
+/**
+ * Windows ConPTY inherits the OEM/ANSI codepage, so Cyrillic names and
+ * box-drawing output reach the renderer mangled. `chcp 65001` switches the
+ * console to UTF-8 before the harness starts; the `&` keeps the chain going
+ * regardless, and `%NEST_LAUNCH%` carries a command line that is already quoted
+ * so node-pty does not re-quote paths that contain spaces.
+ */
+export function buildWindowsConptyLaunch(
+  command: string,
+  args: string[],
+): { commandLine: string; cmdArgs: string[] } {
+  return {
+    commandLine: [command, ...args].map(quote).join(' '),
+    cmdArgs: ['/d', '/s', '/c', 'chcp 65001 >nul & %NEST_LAUNCH%'],
+  };
+}
+
 function spawnHarness(
   command: string,
   args: string[],
@@ -1016,8 +1034,8 @@ function spawnHarness(
     // cmd.exe is required so that .cmd shims (npm-installed harnesses) resolve.
     // Passing the command line through an environment variable avoids node-pty
     // re-quoting arguments that already contain quotes (paths with spaces).
-    const commandLine = [command, ...args].map(quote).join(' ');
-    return pty.spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', '%NEST_LAUNCH%'], {
+    const { commandLine, cmdArgs } = buildWindowsConptyLaunch(command, args);
+    return pty.spawn(process.env.ComSpec || 'cmd.exe', cmdArgs, {
       name: 'xterm-256color',
       cols,
       rows,

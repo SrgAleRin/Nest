@@ -86,7 +86,7 @@ export function SidebarToolbar({
         aria-label="Collapse sidebar"
         onClick={onCollapse}
       >
-        <PanelLeftCloseIcon size={14} />
+        <PanelLeftCloseIcon size={16} />
       </button>
 
       <div className="sidebar-search">
@@ -134,7 +134,7 @@ export function SidebarToolbar({
             setOptionsOpen((open) => !open);
           }}
         >
-          <SlidersIcon size={13} />
+          <SlidersIcon size={15} />
           {activeFilters > 0 ? (
             <span className="sidebar-filter-badge">
               {activeFilters > 9 ? '9+' : String(activeFilters)}
@@ -159,7 +159,7 @@ export function SidebarToolbar({
           aria-label="New task"
           onClick={onNewTaskDefault}
         >
-          <PlusIcon size={13} />
+          <PlusIcon size={14} />
         </button>
         <button
           type="button"
