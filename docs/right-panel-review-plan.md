@@ -5,9 +5,10 @@
 
 **Статус на текущий момент:** этапы 1–5 (§5) реализованы. Это значит: расширенный контракт `packages/shared`/`rpc.ts`, по-сторонние счётчики `git status` с side-aware `discard` и очередью мутаций в core, `git.log` с `scope`/`search`, `worktreePath` у ветки, `git.compareDiff`, `files.list/read` с `ref`; модель вкладок центра (`state/centerTabs.ts`), ref-count в `gitSnapshot`, `gitGraph.ts`; `CenterPane` с `Diff` и `Git Graph` в центре, патч и история больше не живут в правой панели; переработанная правая панель (`FilesPanel` с выбором ревизии, кликабельный `Compare`, кнопка `Graph`, сброс `Amend`, `BranchSwitcher`, компактные строки) и обновлённые E2E-тесты (этап 5).
 
+На Git старше 2.23 список веток читается форматом без `%(worktreepath)` (повтор запроса при отказе): `worktreePath` остаётся `null`, бейдж `worktree` просто не показывается, отдельного `git worktree list` нет.
+
 Осознанно отложено и в этот раунд не входило:
 
-- fallback для `%(worktreepath)` при Git < 2.23: на старом Git `worktreePath` остаётся `null`, бейдж `worktree` не показывается, запасного `git worktree list` нет;
 - split (side-by-side) diff и word-level подсветка через `@pierre/diffs` из §4 — не входили в этот раунд; §4 остаётся сравнением вариантов, а не отчётом о реализации.
 
 Соблюдать правила репозитория из `AGENTS.md`:
