@@ -86,7 +86,9 @@ export function openCompareDiff(
 /**
  * Opens the graph, or switches the open one to another scope, ref or commit.
  * Without a focus a graph that is already open keeps what it shows, and a fresh
- * one starts on `All branches`.
+ * one starts on `All branches`. The key decides, not its value: `commitHash:
+ * null` is the `Back` control asking for an empty detail pane, while a focus
+ * without the key has no opinion and keeps the selection.
  */
 export function openGraph(state: TaskCenterState, focus: GraphFocus = {}): TaskCenterState {
   const scope = resolvedScope(state, focus);
@@ -96,7 +98,8 @@ export function openGraph(state: TaskCenterState, focus: GraphFocus = {}): TaskC
     graphOpen: true,
     graphScope: scope.graphScope,
     graphRef: scope.graphRef,
-    selectedCommitHash: focus.commitHash ?? state.selectedCommitHash,
+    selectedCommitHash:
+      'commitHash' in focus ? (focus.commitHash ?? null) : state.selectedCommitHash,
   };
   return sameCenterState(state, next) ? state : next;
 }

@@ -72,7 +72,30 @@ describe('center tabs', () => {
       // A later focus without a commit keeps the selection; only closing the
       // tab drops it.
       expect(openGraph(focused, { scope: 'head' }).selectedCommitHash).toBe('abc123');
-      expect(openGraph(focused, { commitHash: null }).selectedCommitHash).toBe('abc123');
+    });
+
+    /**
+     * `Back` in the detail pane is `commitHash: null`, not the absence of a
+     * commit: the key says the user wants an empty pane, and a focus without
+     * the key stays out of the way.
+     */
+    it('clears a selected commit when the focus asks for none', () => {
+      const focused = openGraph(EMPTY_CENTER_STATE, { commitHash: 'abc123' });
+
+      const cleared = openGraph(focused, { commitHash: null });
+      expect(cleared.selectedCommitHash).toBeNull();
+      expect(cleared.graphOpen).toBe(true);
+      expect(cleared.active).toBe('graph');
+      // The commit is still the one the list needs nothing from: only the
+      // detail pane went away, and the input is untouched.
+      expect(focused.selectedCommitHash).toBe('abc123');
+
+      expect(openGraph(focused, {}).selectedCommitHash).toBe('abc123');
+      expect(openGraph(focused, { ref: 'main' }).selectedCommitHash).toBe('abc123');
+      expect(openGraph(focused, { scope: 'branches' }).selectedCommitHash).toBe('abc123');
+
+      // Re-selecting after a clear works like the first selection.
+      expect(openGraph(cleared, { commitHash: 'def456' }).selectedCommitHash).toBe('def456');
     });
 
     it('falls back to the terminal when the active tab closes', () => {
