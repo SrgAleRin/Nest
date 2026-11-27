@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { GitFile } from '@nest/shared';
 import {
+  canDiscardRow,
   changedPathCount,
   countPaths,
   discardConfirmation,
@@ -28,6 +29,10 @@ function file(overrides: Partial<GitFile> = {}): GitFile {
     untracked: false,
     additions: 1,
     deletions: 0,
+    stagedAdditions: 0,
+    stagedDeletions: 0,
+    unstagedAdditions: 1,
+    unstagedDeletions: 0,
     ...overrides,
   };
 }
@@ -131,6 +136,59 @@ describe('section projection', () => {
     expect(sideLetter(file({ indexStatus: 'M', worktreeStatus: ' ' }), 'unstaged')).toBe('·');
     expect(sideLetter(file({ indexStatus: 'M', worktreeStatus: 'M' }), 'staged')).toBe('M');
   });
+
+  it('takes the counters of each row from its own side', () => {
+    const sections = projectChanges([
+      file({
+        path: 'src/login.ts',
+        indexStatus: 'M',
+        worktreeStatus: 'M',
+        staged: true,
+        unstaged: true,
+        additions: 11,
+        deletions: 0,
+        stagedAdditions: 10,
+        stagedDeletions: 0,
+        unstagedAdditions: 1,
+        unstagedDeletions: 0,
+      }),
+    ]);
+    expect([sections.staged[0]?.additions, sections.staged[0]?.deletions]).toEqual([10, 0]);
+    expect([sections.unstaged[0]?.additions, sections.unstaged[0]?.deletions]).toEqual([1, 0]);
+  });
+
+  it('keeps a null side null instead of inventing counters', () => {
+    const sections = projectChanges([
+      file({
+        path: 'image.png',
+        indexStatus: 'M',
+        staged: true,
+        stagedAdditions: null,
+        stagedDeletions: null,
+        unstagedAdditions: null,
+        unstagedDeletions: null,
+      }),
+    ]);
+    expect(sections.staged[0]?.additions).toBeNull();
+    expect(sections.staged[0]?.deletions).toBeNull();
+  });
+
+  it('gives an untracked row the worktree counters', () => {
+    const sections = projectChanges([
+      file({
+        path: 'notes.md',
+        indexStatus: '?',
+        worktreeStatus: '?',
+        untracked: true,
+        unstaged: true,
+        stagedAdditions: null,
+        stagedDeletions: null,
+        unstagedAdditions: 4,
+        unstagedDeletions: 2,
+      }),
+    ]);
+    expect([sections.untracked[0]?.additions, sections.untracked[0]?.deletions]).toEqual([4, 2]);
+  });
 });
 
 describe('filter', () => {
@@ -198,12 +256,46 @@ describe('row helpers', () => {
     const message = discardWarning(row!, { hasHead: true });
     expect(message).toContain('git restore --source=HEAD --staged --worktree');
     expect(message).toContain('staged and the unstaged');
-    expect(discardWarning(row!, { hasHead: false })).toContain('no HEAD to restore from');
+    expect(discardWarning(row!, { hasHead: false })).toContain(
+      'Unstage the file first; there is no HEAD commit to restore from',
+    );
 
     const [untracked] = projectChanges([
       file({ path: 'notes.md', indexStatus: '?', worktreeStatus: '?', untracked: true }),
     ]).untracked;
     expect(discardWarning(untracked!, { hasHead: true })).toContain('deletes the untracked file');
+  });
+
+  it('names the smaller scope of the unstaged side of a partially staged file', () => {
+    const [row] = projectChanges([partiallyStaged]).unstaged;
+    const message = discardWarning(row!, { hasHead: true, hasStagedSide: true });
+    expect(message).toContain('git restore --worktree');
+    expect(message).toContain('staged part of this path stays staged');
+    expect(message).not.toContain('drops the staged and the unstaged');
+  });
+});
+
+describe('discard permission', () => {
+  const tracked = (): ReturnType<typeof projectChanges>['staged'][number] =>
+    projectChanges([partiallyStaged]).staged[0]!;
+  const untracked = (): ReturnType<typeof projectChanges>['untracked'][number] =>
+    projectChanges([
+      file({ path: 'notes.md', indexStatus: '?', worktreeStatus: '?', untracked: true }),
+    ]).untracked[0]!;
+
+  it('refuses a tracked row on an unborn branch with the unstage hint', () => {
+    expect(canDiscardRow(tracked(), { hasHead: false })).toEqual({
+      allowed: false,
+      reason: 'Unstage the file first; there is no HEAD commit to restore from',
+    });
+    expect(canDiscardRow(tracked(), { hasHead: true })).toEqual({ allowed: true, reason: null });
+  });
+
+  it('allows an untracked file even on an unborn branch', () => {
+    expect(canDiscardRow(untracked(), { hasHead: false })).toEqual({
+      allowed: true,
+      reason: null,
+    });
   });
 });
 
@@ -243,11 +335,31 @@ describe('discard confirmation', () => {
     expect(request.body.join(' ')).toContain('deletes the untracked file from disk');
   });
 
-  it('says the discard fails without a HEAD', () => {
+  it('says a tracked row cannot be discarded without a HEAD', () => {
     const [row] = projectChanges([partiallyStaged]).staged;
     const request = discardConfirmation(row!, { hasHead: false });
-    expect(request.body.join(' ')).toContain('no HEAD to restore from');
-    expect(request.body.join(' ')).toContain('fails');
+    expect(request.body.join(' ')).toContain(
+      'Unstage the file first; there is no HEAD commit to restore from',
+    );
+    // The old text claimed the action would fail; it never offers that run.
+    expect(request.body.join(' ')).not.toContain('fails and nothing on disk changes');
+  });
+
+  it('deletes an untracked file on an unborn branch instead of promising a failure', () => {
+    const [row] = projectChanges([
+      file({ path: 'notes.md', indexStatus: '?', worktreeStatus: '?', untracked: true }),
+    ]).untracked;
+    const request = discardConfirmation(row!, { hasHead: false });
+    expect(request.title).toBe('Delete notes.md');
+    expect(request.acceptLabel).toBe('Delete file');
+    expect(request.body.join(' ')).toContain('deletes the untracked file from disk');
+  });
+
+  it('keeps the staged part when the unstaged side of a partial file is discarded', () => {
+    const [row] = projectChanges([partiallyStaged]).unstaged;
+    const request = discardConfirmation(row!, { hasHead: true, hasStagedSide: true });
+    expect(request.body.join(' ')).toContain('git restore --worktree');
+    expect(request.body.join(' ')).toContain('stays staged');
   });
 });
 

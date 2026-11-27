@@ -5,7 +5,13 @@ import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { _electron as electron, type ElectronApplication } from 'playwright';
 import type { NestBridge } from '@nest/shared';
-import { annotateEnvironment, pinWideWindow, startHarness, waitForRemoteOutcome } from './helpers';
+import {
+  annotateEnvironment,
+  centerTab,
+  pinWideWindow,
+  startHarness,
+  waitForRemoteOutcome,
+} from './helpers';
 
 declare global {
   interface Window {
@@ -173,17 +179,21 @@ test('task workflow: UI creation, staged review, note, commit, first push, resta
   writeFileSync(path.join(createdTask.workspacePath, 'notes.md'), 'one\nTWO\nthree\n', 'utf8');
   writeFileSync(path.join(createdTask.workspacePath, 'added.md'), '# added\n', 'utf8');
 
-  // The change list is the entry point: one click on a row opens its patch.
+  // The change list is the entry point: one click on a row opens its patch in
+  // the center, while the list stays in the right panel on its own section.
   const notesRow = page.locator(
     '[data-testid="change-row"][data-path="notes.md"][data-side="unstaged"]',
   );
   await expect(notesRow).toBeVisible({ timeout: 30_000 });
   await notesRow.locator('.change-open').click();
-  await expect(page.locator('.diff-target-bar')).toHaveText('notes.md · unstaged side');
-  await expect(page.locator('.diff-file-head .diff-path')).toHaveText('notes.md');
+  await expect(centerTab(page, 'diff')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.diff-target-label')).toHaveText('notes.md · unstaged side');
+  await expect(page.locator('.center .diff-file-head .diff-path')).toHaveText('notes.md');
+  await expect(page.locator('#right-tab-source-control')).toHaveAttribute('aria-selected', 'true');
+  await expect(notesRow).toBeVisible();
 
-  // Stage the untracked file from the list, without leaving the panel.
-  await page.locator('#right-tab-source-control').click();
+  // Stage the untracked file from the list, without leaving the panel: the row
+  // is reachable while the patch is open, so there is no tab round trip.
   const addedRow = page.locator('[data-testid="change-row"][data-path="added.md"]');
   await addedRow.getByRole('button', { name: 'Stage', exact: true }).click();
   await expect(
@@ -194,8 +204,8 @@ test('task workflow: UI creation, staged review, note, commit, first push, resta
 
   // --- save a note and send it to the harness ------------------------------
   await notesRow.locator('.change-open').click();
-  await expect(page.locator('.diff-target-bar')).toHaveText('notes.md · unstaged side');
-  await expect(page.locator('.diff-file-head .diff-path')).toHaveText('notes.md', {
+  await expect(page.locator('.diff-target-label')).toHaveText('notes.md · unstaged side');
+  await expect(page.locator('.center .diff-file-head .diff-path')).toHaveText('notes.md', {
     timeout: 30_000,
   });
   const changedLine = page.locator('.diff-line.diff-add, .diff-line.diff-del').first();
@@ -214,13 +224,19 @@ test('task workflow: UI creation, staged review, note, commit, first push, resta
   const sendButton = page.locator('.comment-thread button[title^="Send to"]').first();
   await expect(sendButton).toBeVisible();
   await sendButton.click();
+  // The note goes to the PTY wherever the center is showing, but the terminal is
+  // a hidden layer under the patch: its session tab brings it back and its
+  // output is read there. `Escape` would close the tool instead.
+  await page.locator('.terminal-tab').first().click();
+  await expect(page.locator('[data-testid="center-terminal-layer"]')).toHaveClass(/is-active/);
   await expect(page.locator('.terminal-view.active .xterm-rows')).toContainText(
     'please fix this line',
     { timeout: 30_000 },
   );
 
   // --- commit and publish to the local bare remote ------------------------
-  await page.locator('#right-tab-source-control').click();
+  // The panel never left `Source Control`, so the commit box is already here.
+  await expect(page.locator('#right-tab-source-control')).toHaveAttribute('aria-selected', 'true');
   await page.locator('.commit-message').fill('audit workflow change');
   await page.locator('.commit-submit').click();
   await expect(page.locator('.toast').first()).toContainText('Committed', { timeout: 30_000 });

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { _electron as electron, type ElectronApplication } from 'playwright';
 import type { NestBridge } from '@nest/shared';
-import { pinWideWindow } from './helpers';
+import { centerTab, pinWideWindow } from './helpers';
 
 declare global {
   interface Window {
@@ -107,15 +107,33 @@ test('navigates tasks, actions and starts a harness from the palette', async () 
     );
     await expect(page.locator('[data-testid="source-control-panel"]')).toBeVisible();
 
-    // A comparison is a sub-view of the section, and it names itself.
+    // A comparison opens `Diff` in the center; the panel keeps its own section,
+    // so the change list stays next to the patch instead of being replaced by it.
     await page.keyboard.press('Control+Shift+P');
     await page.locator('.palette-search input').fill('show diff');
     await page.keyboard.press('Enter');
-    await expect(page.locator('.right-subhead-title')).toHaveText('Diff');
+    await expect(centerTab(page, 'diff')).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('[data-testid="center-diff-layer"]')).toBeVisible();
+    await expect(page.locator('.right-subhead-title')).toHaveCount(0);
     await expect(page.locator('#right-tab-source-control')).toHaveAttribute(
       'aria-selected',
       'true',
     );
+    await expect(page.locator('[data-testid="source-control-panel"]')).toBeVisible();
+
+    // The graph is a center tab too, and the palette reaches it by name.
+    await page.keyboard.press('Control+Shift+P');
+    await page.locator('.palette-search input').fill('git graph');
+    await page.keyboard.press('Enter');
+    await expect(centerTab(page, 'graph')).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('[data-testid="center-graph-layer"]')).toBeVisible();
+
+    // Escape closes the active tool tab and hands the center back to the
+    // terminal; the other tab keeps its open state.
+    await page.keyboard.press('Escape');
+    await expect(centerTab(page, 'graph')).toHaveCount(0);
+    await expect(page.locator('[data-testid="center-terminal-layer"]')).toHaveClass(/is-active/);
+    await expect(centerTab(page, 'diff')).toBeVisible();
 
     // Actions run after the palette closes.
     await page.keyboard.press('Control+Shift+P');
@@ -130,11 +148,14 @@ test('navigates tasks, actions and starts a harness from the palette', async () 
     await page.keyboard.press('Escape');
     await expect(page.locator('.settings-modal')).toHaveCount(0);
 
-    // Start a harness from the palette, then open it again from the terminal.
+    // Start a harness from the palette, then return to the terminal it starts in.
     await page.keyboard.press('Control+Shift+P');
     await page.locator('.palette-search input').fill('start fake');
     await page.keyboard.press('Enter');
     await expect(page.locator('.terminal-tab')).toHaveCount(1, { timeout: 30_000 });
+    // The tool tab stays open, so the session tab is what brings the terminal back.
+    await page.locator('.terminal-tab').first().click();
+    await expect(page.locator('[data-testid="center-terminal-layer"]')).toHaveClass(/is-active/);
 
     await page.locator('.terminal-view.active .xterm-helper-textarea').focus();
     await page.keyboard.press('Control+Shift+P');

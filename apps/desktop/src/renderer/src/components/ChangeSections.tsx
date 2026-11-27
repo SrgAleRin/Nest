@@ -5,10 +5,11 @@ import type {
   ChangeSide,
   ConflictRow,
 } from '../sourceControl';
-import { rowTone } from '../sourceControl';
+import { canDiscardRow, rowTone } from '../sourceControl';
 import type { GitFileView, GitSelection } from '../state/gitSnapshot';
 import { basename } from '../utils';
 import { FileTree } from './FileTree';
+import { CheckIcon, PlusIcon, TrashIcon } from './Icons';
 
 type AnyRow = ChangeRow | ConflictRow;
 
@@ -20,6 +21,10 @@ interface ChangeSectionsProps {
   busy: boolean;
   /** The snapshot is stale: a discard reads the status again before it runs. */
   stale: boolean;
+  /** `HEAD` exists: a tracked row cannot be discarded without it. */
+  hasHead: boolean;
+  /** Paths that also have a staged side, so an unstaged row of one is partial. */
+  stagedPaths: ReadonlySet<string>;
   onOpen: (path: string, mode: ChangeSide) => void;
   onStage: (paths: string[]) => void;
   onUnstage: (paths: string[]) => void;
@@ -39,6 +44,8 @@ export function ChangeList({
   selection,
   busy,
   stale,
+  hasHead,
+  stagedPaths,
   onOpen,
   onStage,
   onUnstage,
@@ -48,15 +55,19 @@ export function ChangeList({
   const listRef = useRef<HTMLDivElement | null>(null);
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    // Escape only belongs to the list while it has a selection; otherwise it
+    // must reach the drawer, which closes on it.
     if (event.key === 'Escape') {
+      if (selection === null) return;
       event.preventDefault();
       onClearSelection();
       return;
     }
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
-    const buttons = [
-      ...(listRef.current?.querySelectorAll<HTMLButtonElement>('.change-open') ?? []),
-    ];
+    // In `Tree` mode a directory row is a real stop of the same walk, so the
+    // arrows visit collapsed and expanded groups too.
+    const selector = view === 'tree' ? '.change-open, .tree-dir' : '.change-open';
+    const buttons = [...(listRef.current?.querySelectorAll<HTMLButtonElement>(selector) ?? [])];
     if (buttons.length === 0) return;
     event.preventDefault();
     const active = document.activeElement;
@@ -141,6 +152,8 @@ export function ChangeList({
       view={view}
       busy={busy}
       stale={stale}
+      hasHead={hasHead}
+      stagedPaths={stagedPaths}
       selected={
         selection !== null &&
         selection.path === row.path &&
@@ -201,6 +214,8 @@ function ChangeRowView({
   view,
   busy,
   stale,
+  hasHead,
+  stagedPaths,
   selected,
   onOpen,
   onStage,
@@ -212,6 +227,8 @@ function ChangeRowView({
   view: GitFileView;
   busy: boolean;
   stale: boolean;
+  hasHead: boolean;
+  stagedPaths: ReadonlySet<string>;
   selected: boolean;
   onOpen: (path: string, mode: ChangeSide) => void;
   onStage: (paths: string[]) => void;
@@ -223,6 +240,10 @@ function ChangeRowView({
   const name = view === 'tree' ? basename(row.path) : row.path;
   const label = row.oldPath ? `${basename(row.oldPath)} → ${name}` : name;
   const title = row.oldPath ? `${row.oldPath} → ${row.path}` : row.path;
+  const permission = canDiscardRow(row, {
+    hasHead,
+    hasStagedSide: stagedPaths.has(row.path),
+  });
 
   return (
     <div
@@ -255,25 +276,28 @@ function ChangeRowView({
           <>
             <button
               type="button"
-              className="mini-btn"
+              className="icon-btn tiny row-action"
               disabled={busy}
+              aria-label={side === 'staged' ? 'Unstage' : 'Stage'}
               title={side === 'staged' ? 'Unstage this file' : 'Stage this file'}
               onClick={() => (side === 'staged' ? onUnstage([row.path]) : onStage([row.path]))}
             >
-              {side === 'staged' ? 'Unstage' : 'Stage'}
+              {side === 'staged' ? <CheckIcon size={12} /> : <PlusIcon size={12} />}
             </button>
             <button
               type="button"
-              className="mini-btn danger git-discard"
-              disabled={busy}
+              className="icon-btn tiny row-action danger git-discard"
+              disabled={busy || !permission.allowed}
+              aria-label="Discard"
               title={
-                stale
+                permission.reason ??
+                (stale
                   ? 'Discard this path: the snapshot is stale, so the git status is read again first and the discard stops if the path changed'
-                  : 'Discard this path (restores it from HEAD, deletes untracked files)'
+                  : 'Discard this path (restores it from HEAD, deletes untracked files)')
               }
               onClick={() => onDiscard(row)}
             >
-              Discard
+              <TrashIcon size={12} />
             </button>
           </>
         )}

@@ -25,10 +25,10 @@ export function useGitSnapshotStore(): GitSnapshotStore {
 }
 
 /**
- * The task's git snapshot, and the task's own view of it: mounting marks the
- * task visible (so it loads, and catches up on an invalidation it missed while
- * hidden), unmounting marks it hidden (so a `git:changed` for it no longer
- * refetches).
+ * The task's git snapshot, and the task's own claim on it: mounting retains the
+ * task (the first holder loads it and catches up on an invalidation it missed
+ * while nobody watched), unmounting releases one holder, so a `git:changed` for
+ * a task the shell still watches keeps refetching it.
  */
 export function useGitSnapshotFor(
   store: GitSnapshotStore,
@@ -39,8 +39,8 @@ export function useGitSnapshotFor(
   );
   useEffect(() => {
     if (!taskId) return;
-    store.setVisible(taskId, true);
-    return () => store.setVisible(taskId, false);
+    store.retain(taskId);
+    return () => store.release(taskId);
   }, [store, taskId]);
   return snapshot;
 }

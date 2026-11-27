@@ -43,6 +43,12 @@ interface NewTaskDialogProps {
   /** Hides the dialog; a running creation keeps going. */
   onClose: () => void;
   onRetryStart: () => void;
+  /**
+   * Branch to start from, e.g. from `New task from <branch>` in the inspector.
+   * It seeds the base-ref field once, when the dialog opens, and is then an
+   * ordinary editable value: nothing else changes.
+   */
+  initialBaseRef?: string | null;
 }
 
 export function NewTaskDialog({
@@ -54,6 +60,7 @@ export function NewTaskDialog({
   step,
   error,
   retryStart,
+  initialBaseRef = null,
   onCreate,
   onCancel,
   onClose,
@@ -61,8 +68,9 @@ export function NewTaskDialog({
 }: NewTaskDialogProps) {
   const [location, setLocation] = useState<NewTaskLocation>('worktree');
   const [title, setTitle] = useState('');
-  const [baseRef, setBaseRef] = useState('');
+  const [baseRef, setBaseRef] = useState(initialBaseRef ?? '');
   const [setupScript, setSetupScript] = useState(project.setupScript ?? '');
+  const seededBase = useRef(false);
   const [harnessId, setHarnessId] = useState(() => defaultHarnessId(harnesses, newSessionDefault));
   const [preview, setPreview] = useState<TaskPreview | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -71,6 +79,14 @@ export function NewTaskDialog({
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
+
+  // The base ref can arrive with the dialog (a branch was inspected first) or
+  // right after it mounts; seed it once and never overwrite the user's edit.
+  useEffect(() => {
+    if (seededBase.current) return;
+    seededBase.current = true;
+    if (initialBaseRef) setBaseRef(initialBaseRef);
+  }, [initialBaseRef]);
 
   // A profile can disappear (settings changed) while the dialog is open.
   useEffect(() => {
@@ -285,8 +301,8 @@ export function NewTaskDialog({
               />
               <small className="field-hint">
                 Runs in the new worktree after it is created and is remembered for this project.
-                <code>.env</code> and <code>.env.local</code> are copied only when “Copy .env
-                files” is enabled in Settings.
+                <code>.env</code> and <code>.env.local</code> are copied only when “Copy .env files”
+                is enabled in Settings.
               </small>
             </label>
           </>

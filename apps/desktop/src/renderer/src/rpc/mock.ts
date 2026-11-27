@@ -257,6 +257,7 @@ export function createMockClient(): NestClient {
     upstream: 'origin/main',
     ahead: 1,
     behind: 0,
+    unborn: false,
     files: [
       {
         path: 'src/App.tsx',
@@ -270,6 +271,10 @@ export function createMockClient(): NestClient {
         untracked: false,
         additions: 12,
         deletions: 4,
+        stagedAdditions: null,
+        stagedDeletions: null,
+        unstagedAdditions: 12,
+        unstagedDeletions: 4,
       },
       {
         path: 'src/terminal/bus.ts',
@@ -283,6 +288,10 @@ export function createMockClient(): NestClient {
         untracked: false,
         additions: 48,
         deletions: 0,
+        stagedAdditions: 48,
+        stagedDeletions: 0,
+        unstagedAdditions: null,
+        unstagedDeletions: null,
       },
       {
         path: 'docs/notes.md',
@@ -296,6 +305,10 @@ export function createMockClient(): NestClient {
         untracked: true,
         additions: 9,
         deletions: 0,
+        stagedAdditions: null,
+        stagedDeletions: null,
+        unstagedAdditions: 9,
+        unstagedDeletions: 0,
       },
     ],
   };
@@ -424,7 +437,49 @@ export function createMockClient(): NestClient {
       body: '',
       refs: [],
     },
+    // Only the `nest/worktree-pool` branch reaches this one, so `scope: 'head'`
+    // hides it while `branches` and `all` show it.
+    {
+      hash: 'e5f6a7b8c9d00112233445566778899aabbccddee',
+      parents: ['a1b2c3d4e5f60718293a4b5c6d7e8f9012345678'],
+      authorName: 'Riley Chen',
+      authorEmail: 'riley@example.com',
+      authoredAt: '2026-11-21T10:15:00.000Z',
+      committedAt: '2026-11-21T10:15:00.000Z',
+      subject: 'feat: worktree pool',
+      body: 'Keeps a spare checkout ready for the next task.',
+      refs: ['nest/worktree-pool'],
+    },
+    // Reachable from `origin/release` only: `branches` skips it, `all` shows it.
+    {
+      hash: 'd4c3b2a1908f7e6d5c4b3a29180f7e6d5c4b3a29',
+      parents: ['f1e2d3c4b5a6978877665544332211ffeeddccbb'],
+      authorName: 'Riley Chen',
+      authorEmail: 'riley@example.com',
+      authoredAt: '2026-11-22T08:05:00.000Z',
+      committedAt: '2026-11-22T08:05:00.000Z',
+      subject: 'chore: release notes',
+      body: '',
+      refs: ['origin/release'],
+    },
   ];
+
+  const commitByHash = new Map(commits.map((commit) => [commit.hash, commit]));
+
+  /** Everything the given roots reach, the way `git log <roots>` walks it. */
+  const reachableFrom = (roots: readonly GitCommit[]): Set<string> => {
+    const seen = new Set<string>();
+    const queue = [...roots];
+    for (let commit = queue.pop(); commit; commit = queue.pop()) {
+      if (seen.has(commit.hash)) continue;
+      seen.add(commit.hash);
+      for (const parent of commit.parents) {
+        const next = commitByHash.get(parent);
+        if (next) queue.push(next);
+      }
+    }
+    return seen;
+  };
 
   const branches: GitBranches = {
     current: status.branch,
@@ -450,6 +505,7 @@ export function createMockClient(): NestClient {
         tip: commits[0]!.hash,
         subject: commits[0]!.subject,
         committedAt: commits[0]!.committedAt,
+        worktreePath: null,
       },
       {
         name: 'nest/terminal-reconnect',
@@ -462,6 +518,7 @@ export function createMockClient(): NestClient {
         tip: commits[1]!.hash,
         subject: commits[1]!.subject,
         committedAt: commits[1]!.committedAt,
+        worktreePath: null,
       },
     ],
     remote: [
@@ -476,6 +533,7 @@ export function createMockClient(): NestClient {
         tip: commits[0]!.hash,
         subject: commits[0]!.subject,
         committedAt: commits[0]!.committedAt,
+        worktreePath: null,
       },
     ],
   };
@@ -788,8 +846,43 @@ export function createMockClient(): NestClient {
         return { descriptor, files: diff.files.filter((file) => file.staged === staged) };
       }
       case 'git.stage':
-      case 'git.unstage':
+      case 'git.unstage': {
+        // The mock keeps one side per path: staging folds the counts into the
+        // index, unstaging puts them back into the worktree.
+        const paths = new Set((params.paths as string[] | undefined) ?? []);
+        const staging = method === 'git.stage';
+        status.files = status.files.map((file) => {
+          if (!paths.has(file.path)) return file;
+          const additions = file.additions ?? 0;
+          const deletions = file.deletions ?? 0;
+          return staging
+            ? {
+                ...file,
+                indexStatus: file.untracked ? 'A' : 'M',
+                worktreeStatus: ' ',
+                staged: true,
+                unstaged: false,
+                untracked: false,
+                stagedAdditions: additions,
+                stagedDeletions: deletions,
+                unstagedAdditions: null,
+                unstagedDeletions: null,
+              }
+            : {
+                ...file,
+                indexStatus: ' ',
+                worktreeStatus: 'M',
+                staged: false,
+                unstaged: true,
+                untracked: false,
+                stagedAdditions: null,
+                stagedDeletions: null,
+                unstagedAdditions: additions,
+                unstagedDeletions: deletions,
+              };
+        });
         return status;
+      }
       case 'git.commit': {
         status.files = status.files.filter((file) => !file.staged);
         emit({ type: 'git:changed', taskId: String(params.taskId) });
@@ -800,11 +893,50 @@ export function createMockClient(): NestClient {
       case 'git.log': {
         const limit = Number(params.limit ?? 50);
         const skip = Number(params.skip ?? 0);
-        const ref = params.ref ? String(params.ref) : 'HEAD';
-        const list = ref === 'HEAD' || ref === 'main' ? commits : commits.slice(1);
+        const ref = params.ref ? String(params.ref) : null;
+        const scope: 'head' | 'branches' | 'all' =
+          params.scope === 'all' || params.scope === 'branches' ? params.scope : 'head';
+        const search = params.search ? String(params.search).toLowerCase().trim() : '';
+
+        // The fixture refs mirror a real repository, so each scope reaches a
+        // different slice of the same list; an explicit ref wins over the scope.
+        const rootsForRef = (value: string): GitCommit[] => {
+          const decorated = commits.filter((commit) =>
+            commit.refs.some(
+              (entry) =>
+                entry === value ||
+                entry.replace(/^HEAD -> /, '') === value ||
+                entry.replace(/^tag: /, '') === value,
+            ),
+          );
+          if (decorated.length > 0) return decorated;
+          return value === 'HEAD' || value === 'main' ? [commits[0]!] : commits.slice(1);
+        };
+        const rootsForScope = (value: 'head' | 'branches' | 'all'): GitCommit[] => {
+          if (value === 'all') return commits.filter((commit) => commit.refs.length > 0);
+          if (value === 'branches') {
+            return commits.filter((commit) =>
+              commit.refs.some((entry) => !entry.startsWith('origin/')),
+            );
+          }
+          return [commits[0]!];
+        };
+
+        const walked = reachableFrom(ref ? rootsForRef(ref) : rootsForScope(scope));
+        const list = commits.filter((commit) => walked.has(commit.hash));
+        const matched = search
+          ? list.filter(
+              (commit) =>
+                commit.hash.toLowerCase().startsWith(search) ||
+                commit.subject.toLowerCase().includes(search) ||
+                commit.body.toLowerCase().includes(search) ||
+                commit.authorName.toLowerCase().includes(search) ||
+                commit.authorEmail.toLowerCase().includes(search),
+            )
+          : list;
         return {
-          commits: list.slice(skip, skip + limit),
-          hasMore: list.length > skip + limit,
+          commits: matched.slice(skip, skip + limit),
+          hasMore: matched.length > skip + limit,
         };
       }
       case 'git.commitDetail': {
@@ -834,6 +966,17 @@ export function createMockClient(): NestClient {
           })),
         };
       }
+      case 'git.compareDiff': {
+        const base = String(params.base);
+        const head = params.head ? String(params.head) : 'HEAD';
+        const path = params.path ? String(params.path) : null;
+        return {
+          base,
+          head,
+          mergeBase: commits[1]!.hash,
+          files: path ? diff.files.filter((file) => file.path === path) : diff.files,
+        };
+      }
       case 'git.fetch':
         return { output: 'Fetched origin (mock)' };
       case 'git.pull':
@@ -852,6 +995,7 @@ export function createMockClient(): NestClient {
             tip: commits[0]!.hash,
             subject: 'Created in the mock client',
             committedAt: new Date().toISOString(),
+            worktreePath: null,
           });
         }
         status.branch = branch;
@@ -861,11 +1005,31 @@ export function createMockClient(): NestClient {
       }
       case 'git.discard': {
         const paths = new Set((params.paths as string[] | undefined) ?? []);
-        status.files = status.files.filter((file) => !paths.has(file.path));
+        const side = (params.side as 'staged' | 'unstaged' | 'both' | undefined) ?? 'both';
+        status.files = status.files.flatMap((file) => {
+          if (!paths.has(file.path)) return [file];
+          // `unstaged` restores the worktree from the index, so a staged part of
+          // the same file stays in the list with its worktree counters cleared.
+          if (side === 'unstaged' && file.staged) {
+            return [
+              {
+                ...file,
+                worktreeStatus: ' ',
+                unstaged: false,
+                additions: file.stagedAdditions,
+                deletions: file.stagedDeletions,
+                unstagedAdditions: null,
+                unstagedDeletions: null,
+              },
+            ];
+          }
+          return [];
+        });
         emit({ type: 'git:changed', taskId: String(params.taskId) });
         return status;
       }
       case 'files.list':
+        // The preview has one tree, so a `ref` reads the same fixture files.
         return { files: mockFiles, truncated: false };
       case 'files.read': {
         const path = String(params.path ?? '');

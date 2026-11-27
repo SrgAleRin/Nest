@@ -7,6 +7,7 @@ import { ConfirmAction } from './ConfirmAction';
 import { SourceControlHeader } from './SourceControlHeader';
 import { SourceControlSkeleton } from './PanelSkeletons';
 import {
+  canDiscardRow,
   discardConfirmation,
   filterSections,
   projectChanges,
@@ -44,12 +45,25 @@ interface SourceControlPanelProps {
   onNotify: (level: 'info' | 'warn' | 'error', message: string) => void;
   /** Opens the stored selection as a patch, without resizing the panel. */
   onOpenPatch: () => void;
-  /** The explicit `Open diff`: opens the patch and widens the panel. */
+  /** Opens or activates the center `Diff` tab; never resizes the panel. */
   onOpenDiff: () => void;
+  /**
+   * Opens or activates the center `Graph` tab with every branch. Optional so
+   * this panel still typechecks and runs without the center workbench.
+   */
+  onOpenGraph?: () => void;
+  /**
+   * Opens one branch read-only in the center graph, without switching. Optional
+   * like `onOpenGraph`: without it `Inspect` only opens the graph.
+   */
+  onInspectBranch?: (ref: string) => void;
   onOpenHistory: () => void;
   onOpenCompare: () => void;
-  /** A row the list should focus after coming back from a patch. */
-  initialFocus: GitSelection | null;
+  /**
+   * A row the list should focus after coming back from a patch. Optional now
+   * that the list stays on screen next to the patch in the center.
+   */
+  initialFocus?: GitSelection | null;
 }
 
 /** One action a failed operation offers inline; nothing here runs by itself. */
@@ -78,14 +92,15 @@ interface PanelNote {
 export function SourceControlPanel({
   client,
   task,
-  refreshKey,
   onChanged,
   onNotify,
   onOpenPatch,
   onOpenDiff,
+  onOpenGraph,
+  onInspectBranch,
   onOpenHistory,
   onOpenCompare,
-  initialFocus,
+  initialFocus = null,
 }: SourceControlPanelProps) {
   const taskId = task?.id ?? null;
   const store = useGitSnapshotStore();
@@ -116,16 +131,6 @@ export function SourceControlPanel({
     void store.requestBranches(taskId);
   }, [branches, branchesError, branchesLoading, store, taskId]);
 
-  // The watcher and the panel's own mutations both land as `git:changed`; the
-  // version keeps a manual refresh (palette) reloading this task. The first
-  // render is skipped: mounting already loads the task through the snapshot.
-  const seenRefresh = useRef(refreshKey);
-  useEffect(() => {
-    if (seenRefresh.current === refreshKey) return;
-    seenRefresh.current = refreshKey;
-    if (taskId) void store.requestStatus(taskId);
-  }, [refreshKey, store, taskId]);
-
   // Back from a patch: the row that was open takes the focus again if it still
   // has a change on that side. The list may still be loading, so the focus is
   // retried once the status lands, and only once.
@@ -145,8 +150,16 @@ export function SourceControlPanel({
     () => planSync({ status, branches, branchesError, branchesLoading }),
     [branches, branchesError, branchesLoading, status],
   );
-  const hasHead = branches ? !branches.unborn : null;
+  // `unborn` comes from the status itself, so a branch list that is still
+  // loading (or failed) can never make an empty repository look like it has HEAD.
+  const hasHead = status ? !status.unborn : null;
   const stageable = useMemo(() => stageablePaths(status?.files ?? []), [status]);
+  /** Paths that also have a staged side; the unstaged row of such a file is partial. */
+  const stagedPaths = useMemo(() => new Set(sections.staged.map((row) => row.path)), [sections]);
+  const openGraph = onOpenGraph ?? (() => undefined);
+  // `Inspect` needs a surface that can show a branch; without the center it is
+  // not offered rather than shown as a dead action.
+  const inspectBranch = onInspectBranch ?? (onOpenGraph ? () => onOpenGraph() : undefined);
 
   const run = useCallback(
     async (action: () => Promise<void>) => {
@@ -367,20 +380,41 @@ export function SourceControlPanel({
           return;
         }
       }
-      await run(() => store.discard(taskId, [row.path]).then(() => undefined));
+      // The worktree row of a partially staged file restores only the worktree
+      // from the index; every other discard drops the path entirely.
+      const unstagedHalf = 'side' in row && row.side === 'unstaged' && stagedPaths.has(row.path);
+      await run(async () => {
+        if (!unstagedHalf) {
+          await store.discard(taskId, [row.path]);
+          return;
+        }
+        await store.discard(taskId, [row.path], 'unstaged');
+      });
     },
-    [run, stale, store, taskId],
+    [run, stale, stagedPaths, store, taskId],
   );
 
   const discard = useCallback(
     (row: ChangeRow | ConflictRow) => {
       if (!taskId) return;
+      const hasStagedSide = 'side' in row && row.side === 'unstaged' && stagedPaths.has(row.path);
+      const options = { hasHead: hasHead === true, hasStagedSide };
+      const permission = canDiscardRow(row, options);
+      if (!permission.allowed) {
+        // The row action is disabled, but a stale render could still get here.
+        setNote({
+          tone: 'warn',
+          text: permission.reason ?? 'This discard is not possible.',
+          actions: [],
+        });
+        return;
+      }
       setConfirm({
-        request: discardConfirmation(row, { hasHead: hasHead !== false }),
+        request: discardConfirmation(row, options),
         accept: () => void performDiscard(row),
       });
     },
-    [hasHead, performDiscard, taskId],
+    [hasHead, performDiscard, stagedPaths, taskId],
   );
 
   const commit = useCallback(() => {
@@ -391,23 +425,67 @@ export function SourceControlPanel({
     void run(async () => {
       const result = await store.commit(taskId, { message, amend: amending });
       // Only a successful commit clears the draft of this task; a failure
-      // keeps it, and no other task's draft is touched.
-      store.updateMemory(taskId, { draft: '' });
+      // keeps it, and no other task's draft is touched. `Amend` is one-shot:
+      // leaving it on would let the next commit silently rewrite this one.
+      store.updateMemory(taskId, { draft: '', amend: false });
       onNotify('info', `${amending ? 'Amended' : 'Committed'} ${result.hash} — ${result.summary}`);
       await store.requestBranches(taskId);
     });
   }, [memory.amend, memory.draft, onNotify, run, store, taskId]);
 
+  /**
+   * A switch that a dirty worktree refuses stays on screen as a panel note:
+   * a toast would disappear before the user can read why the branch is still
+   * the old one.
+   */
   const switchBranch = useCallback(
     (branch: string) => {
       if (!taskId || branch === status?.branch) return;
-      void run(async () => {
-        const next = await store.checkout(taskId, { branch });
-        onNotify('info', `Switched to ${next.branch}`);
-        await store.requestBranches(taskId);
-      });
+      setBusy(true);
+      setNote(null);
+      setFailure(null);
+      void (async () => {
+        try {
+          const next = await store.checkout(taskId, { branch });
+          onChanged();
+          onNotify('info', `Switched to ${next.branch}`);
+          await store.requestBranches(taskId);
+        } catch (error) {
+          setNote({
+            tone: 'error',
+            text: `Could not switch to ${branch}: ${errorMessage(error)}`,
+            actions: [],
+          });
+        } finally {
+          setBusy(false);
+        }
+      })();
     },
-    [onNotify, run, status?.branch, store, taskId],
+    [onChanged, onNotify, status?.branch, store, taskId],
+  );
+
+  /**
+   * Enabling `Amend last commit` on a blank draft loads the message of `HEAD`
+   * from the log slice, so the user edits the real message instead of an empty
+   * box. The draft is only filled while the draft is still blank and `Amend`
+   * is still on: a slow answer cannot overwrite typing that started meanwhile.
+   */
+  const toggleAmend = useCallback(
+    (value: boolean) => {
+      if (!taskId) return;
+      store.updateMemory(taskId, { amend: value });
+      if (!value || store.getMemory(taskId).draft.trim() !== '') return;
+      void (async () => {
+        await store.requestLog(taskId, 1);
+        const last = store.getTask(taskId)?.log.data?.commits[0];
+        if (!last) return;
+        const memoryNow = store.getMemory(taskId);
+        if (!memoryNow.amend || memoryNow.draft.trim() !== '') return;
+        const message = [last.subject.trim(), last.body.trim()].filter(Boolean).join('\n\n');
+        store.updateMemory(taskId, { draft: message });
+      })();
+    },
+    [store, taskId],
   );
 
   const createBranch = useCallback(
@@ -463,13 +541,14 @@ export function SourceControlPanel({
         busy={busy}
         pendingSync={pendingSync}
         stale={stale}
-        hasSelection={memory.selection !== null}
         onSync={(kind) => void runSync(kind)}
         onRefresh={() => {
           void store.requestStatus(task.id);
           void store.requestBranches(task.id);
         }}
         onOpenDiff={onOpenDiff}
+        onOpenGraph={openGraph}
+        onInspectBranch={inspectBranch}
         onOpenHistory={onOpenHistory}
         onOpenCompare={onOpenCompare}
         onSwitchBranch={switchBranch}
@@ -569,15 +648,22 @@ export function SourceControlPanel({
           <button
             type="button"
             className="mini-btn"
-            disabled={memory.selection === null}
             title={
               memory.selection === null
-                ? 'Select a changed file first'
+                ? 'Open the worktree diff of this task'
                 : 'Open the patch of the selected file'
             }
             onClick={onOpenDiff}
           >
             Open diff
+          </button>
+          <button
+            type="button"
+            className="mini-btn"
+            title="Open the Git graph of all branches in the center"
+            onClick={openGraph}
+          >
+            Graph
           </button>
         </div>
       </div>
@@ -590,6 +676,8 @@ export function SourceControlPanel({
           selection={memory.selection}
           busy={busy}
           stale={stale}
+          hasHead={hasHead === true}
+          stagedPaths={stagedPaths}
           onOpen={openSelection}
           onStage={stage}
           onUnstage={unstage}
@@ -607,7 +695,7 @@ export function SourceControlPanel({
         busy={busy}
         plan={plan}
         onDraft={(value) => taskId && store.updateMemory(taskId, { draft: value })}
-        onAmend={(value) => taskId && store.updateMemory(taskId, { amend: value })}
+        onAmend={toggleAmend}
         onCommit={commit}
         onSync={(kind) => void runSync(kind)}
       />

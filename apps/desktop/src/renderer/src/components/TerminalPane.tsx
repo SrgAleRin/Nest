@@ -14,9 +14,8 @@ import {
   type TerminalTheme,
 } from '@nest/shared';
 import { Button, EmptyState } from '@nest/ui';
-import { ChevronIcon, CloseIcon, PlayIcon, PlusIcon, TerminalIcon } from './Icons';
+import { PlayIcon, TerminalIcon } from './Icons';
 import { onSessionData } from '../state/terminalBus';
-import { hasOverflow, revealTab, scrollTabsBy } from '../tabScroll';
 import { errorMessage, resumeActionLabel, resumeShortLabel, resumeTone } from '../utils';
 
 const SEARCH_DECORATIONS = {
@@ -92,16 +91,19 @@ interface TerminalPaneProps {
   hasProjects: boolean;
   sessions: Session[];
   selectedSessionId: string | null;
-  unread: Record<string, number>;
   harnesses: HarnessProfile[];
   /** Every known profile is switched off in Settings. */
   allHarnessesDisabled: boolean;
   /** Fonts, cursor and colours for the xterm instances. */
   terminal: TerminalPreferences;
   busy: boolean;
-  onSelectSession: (sessionId: string) => void;
+  /**
+   * The terminal surface is on screen. The layer itself is never unmounted: it
+   * is hidden with CSS, so a hidden terminal must not measure itself and the
+   * visible one re-fits when it comes back.
+   */
+  visible: boolean;
   onStart: (harnessId: string) => void;
-  onCloseSession: (session: Session) => void;
   /** Harness started by the plus button without opening the picker, or `ask`. */
   newSessionDefault: string;
   onResume: (session: Session) => void;
@@ -114,38 +116,9 @@ interface TerminalPaneProps {
 }
 
 export function TerminalPane(props: TerminalPaneProps) {
-  const { task, sessions, selectedSessionId } = props;
+  const { task, sessions, selectedSessionId, visible } = props;
   const activeSession = sessions.find((session) => session.id === selectedSessionId) ?? null;
   const [mounted, setMounted] = useState<string[]>([]);
-  const tabListRef = useRef<HTMLDivElement>(null);
-
-  // The strip hides its scrollbar, so a tab that overflows on the right (a
-  // freshly opened one especially) would stay half cut off and its close
-  // button unreachable. Keep the selected tab in view instead.
-  useEffect(() => {
-    const list = tabListRef.current;
-    if (!list || !selectedSessionId) return;
-    const tab = list.querySelector<HTMLElement>(
-      `[data-session-id="${CSS.escape(selectedSessionId)}"]`,
-    );
-    if (!tab) return;
-    // `offsetLeft` is measured from the offset parent, not the strip, so the
-    // tab's content offset comes from the two client rects instead.
-    const listRect = list.getBoundingClientRect();
-    const tabRect = tab.getBoundingClientRect();
-    const scrollLeft = revealTab(
-      {
-        scrollLeft: list.scrollLeft,
-        scrollWidth: list.scrollWidth,
-        clientWidth: list.clientWidth,
-      },
-      {
-        left: tabRect.left - listRect.left + list.scrollLeft,
-        width: tabRect.width,
-      },
-    );
-    if (scrollLeft !== list.scrollLeft) list.scrollLeft = scrollLeft;
-  }, [selectedSessionId, sessions]);
 
   useEffect(() => {
     if (!selectedSessionId) return;
@@ -166,271 +139,53 @@ export function TerminalPane(props: TerminalPaneProps) {
   const mountedSessions = sessions.filter((session) => mounted.includes(session.id));
 
   return (
-    <section className="center">
-      <div className="terminal-tabs">
-        <div
-          className="terminal-tab-list"
-          ref={tabListRef}
-          // A vertical wheel is the only gesture most users try, and a
-          // horizontal box ignores it; translate it instead of hiding the
-          // overflow behind an invisible scrollbar.
-          onWheel={(event) => {
-            const list = event.currentTarget;
-            const metrics = {
-              scrollLeft: list.scrollLeft,
-              scrollWidth: list.scrollWidth,
-              clientWidth: list.clientWidth,
-            };
-            if (!hasOverflow(metrics)) return;
-            const next = scrollTabsBy(metrics, event.deltaY || event.deltaX);
-            if (next === list.scrollLeft) return;
-            list.scrollLeft = next;
-            event.preventDefault();
-          }}
-        >
-          {sessions.map((session) => (
-            <div
-              key={session.id}
-              role="tab"
-              aria-selected={session.id === selectedSessionId}
-              tabIndex={0}
-              data-session-id={session.id}
-              className={`terminal-tab ${session.id === selectedSessionId ? 'selected' : ''}`}
-              onClick={() => props.onSelectSession(session.id)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                  event.preventDefault();
-                  props.onSelectSession(session.id);
-                }
-              }}
-              onAuxClick={(event) => {
-                if (event.button === 1) {
-                  event.preventDefault();
-                  props.onCloseSession(session);
-                }
-              }}
-              title={`${session.harnessId} · ${session.status}`}
-            >
-              <span className={`dot dot-${session.status}`} />
-              <span className="terminal-tab-title">{session.title}</span>
-              {props.unread[session.id] ? (
-                <span className="unread-badge" title="Finished while you were away">
-                  {props.unread[session.id]}
-                </span>
-              ) : null}
-              {session.status === 'failed' ? <span className="tab-exit">!</span> : null}
-              <button
-                type="button"
-                className="terminal-tab-close"
-                aria-label={`Close ${session.title}`}
-                title="Close tab (stops the session)"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  props.onCloseSession(session);
-                }}
-              >
-                <CloseIcon size={10} />
-              </button>
-            </div>
-          ))}
-          {sessions.length === 0 ? <span className="terminal-tab-muted">no sessions</span> : null}
-        </div>
-
-        <div className="terminal-actions">
-          <NewTabControl
-            harnesses={props.harnesses}
-            busy={props.busy}
-            disabled={!task}
-            defaultId={props.newSessionDefault}
-            onStart={props.onStart}
-            onOpenSettings={props.onOpenSettings}
-          />
-        </div>
-      </div>
-
-      <div className="terminal-body">
-        {!task ? (
-          <EmptyState title={props.hasProjects ? 'No task selected' : 'Add your first repository'}>
-            {props.hasProjects ? (
-              'Pick a project or task in the left column to open a workspace.'
-            ) : (
-              <>
-                Nest creates isolated worktrees for every task.
-                <br />
-                <Button
-                  variant="primary"
-                  size="sm"
-                  className="empty-state-action"
-                  onClick={props.onAddProject}
-                >
-                  Add project
-                </Button>
-              </>
-            )}
-          </EmptyState>
-        ) : null}
-
-        {task && sessions.length === 0 ? (
-          <StartScreen
-            harnesses={props.harnesses}
-            busy={props.busy}
-            allDisabled={props.allHarnessesDisabled}
-            onStart={props.onStart}
-            onOpenSettings={props.onOpenSettings}
-          />
-        ) : null}
-
-        {mountedSessions.map((session) => (
-          <TerminalView
-            key={session.id}
-            client={props.client}
-            session={session}
-            terminal={props.terminal}
-            active={session.id === activeSession?.id}
-            canResume={props.resumableHarnesses.has(session.harnessId)}
-            onResume={props.onResume}
-            onNewSession={props.onNewSession}
-            onError={props.onError}
-            onOpenPalette={props.onOpenPalette}
-          />
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function NewTabControl({
-  harnesses,
-  busy,
-  disabled,
-  defaultId,
-  onStart,
-  onOpenSettings,
-}: {
-  harnesses: HarnessProfile[];
-  busy: boolean;
-  disabled: boolean;
-  defaultId: string;
-  onStart: (harnessId: string) => void;
-  onOpenSettings: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false);
-    };
-    window.addEventListener('mousedown', onPointerDown);
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      window.removeEventListener('mousedown', onPointerDown);
-      window.removeEventListener('keydown', onKeyDown);
-    };
-  }, [open]);
-
-  // Terminal first, agents after it; the registry order is kept otherwise.
-  const ordered = [...harnesses].sort((left, right) => {
-    if (left.id === 'shell') return -1;
-    if (right.id === 'shell') return 1;
-    return 0;
-  });
-  const terminal = ordered.find((harness) => harness.id === 'shell') ?? null;
-  const agents = ordered.filter((harness) => harness.id !== 'shell');
-  const defaultHarness = harnesses.find((harness) => harness.id === defaultId) ?? null;
-
-  const start = (harnessId: string) => {
-    setOpen(false);
-    onStart(harnessId);
-  };
-
-  const startDefault = () => {
-    if (defaultId !== 'ask' && defaultHarness?.available) start(defaultHarness.id);
-    else setOpen((current) => !current);
-  };
-
-  const renderItem = (harness: HarnessProfile) => (
-    <button
-      key={harness.id}
-      type="button"
-      role="menuitem"
-      className="new-tab-item"
-      data-harness-id={harness.id}
-      disabled={busy || !harness.available}
-      onClick={() => start(harness.id)}
-      title={harness.available ? harness.description : `${harness.command} was not found on PATH`}
-    >
-      <span className="new-tab-item-icon">
-        <TerminalIcon size={13} />
-      </span>
-      <span className="new-tab-item-text">
-        <strong>{harness.label}</strong>
-        <em>{harness.available ? harness.description : 'Not found on PATH'}</em>
-      </span>
-      {!harness.available ? <span className="new-tab-item-badge">not found</span> : null}
-    </button>
-  );
-
-  return (
-    <div className="terminal-new" ref={rootRef}>
-      <button
-        type="button"
-        className="terminal-new-main"
-        disabled={disabled || busy}
-        onClick={startDefault}
-        title={
-          defaultId === 'ask'
-            ? 'New tab'
-            : `New ${defaultHarness?.label ?? 'session'} (right arrow for other profiles)`
-        }
-        aria-label="New tab"
-      >
-        <PlusIcon size={14} />
-      </button>
-      <button
-        type="button"
-        className="terminal-new-caret"
-        disabled={disabled || busy}
-        onClick={() => setOpen((current) => !current)}
-        title="Choose what to open"
-        aria-label="Choose what to open"
-        aria-expanded={open}
-      >
-        <ChevronIcon size={10} />
-      </button>
-
-      {open ? (
-        <div className="new-tab-menu" role="menu" aria-label="New tab">
-          <div className="new-tab-heading">Terminal</div>
-          {terminal ? renderItem(terminal) : null}
-          <div className="new-tab-heading">Agents</div>
-          {agents.length > 0 ? (
-            agents.map(renderItem)
+    <div className="terminal-body">
+      {!task ? (
+        <EmptyState title={props.hasProjects ? 'No task selected' : 'Add your first repository'}>
+          {props.hasProjects ? (
+            'Pick a project or task in the left column to open a workspace.'
           ) : (
-            <div className="new-tab-empty">No agent profiles are enabled.</div>
+            <>
+              Nest creates isolated worktrees for every task.
+              <br />
+              <Button
+                variant="primary"
+                size="sm"
+                className="empty-state-action"
+                onClick={props.onAddProject}
+              >
+                Add project
+              </Button>
+            </>
           )}
-          <div className="new-tab-foot">
-            <span>
-              Default:{' '}
-              {defaultId === 'ask' ? 'ask every time' : (defaultHarness?.label ?? defaultId)}
-            </span>
-            <button
-              type="button"
-              className="link-btn"
-              onClick={() => {
-                setOpen(false);
-                onOpenSettings();
-              }}
-            >
-              Change
-            </button>
-          </div>
-        </div>
+        </EmptyState>
       ) : null}
+
+      {task && sessions.length === 0 ? (
+        <StartScreen
+          harnesses={props.harnesses}
+          busy={props.busy}
+          allDisabled={props.allHarnessesDisabled}
+          onStart={props.onStart}
+          onOpenSettings={props.onOpenSettings}
+        />
+      ) : null}
+
+      {mountedSessions.map((session) => (
+        <TerminalView
+          key={session.id}
+          client={props.client}
+          session={session}
+          terminal={props.terminal}
+          active={session.id === activeSession?.id}
+          visible={visible}
+          canResume={props.resumableHarnesses.has(session.harnessId)}
+          onResume={props.onResume}
+          onNewSession={props.onNewSession}
+          onError={props.onError}
+          onOpenPalette={props.onOpenPalette}
+        />
+      ))}
     </div>
   );
 }
@@ -506,6 +261,7 @@ function TerminalView({
   session,
   terminal,
   active,
+  visible,
   canResume,
   onError,
   onResume,
@@ -515,7 +271,10 @@ function TerminalView({
   client: NestClient;
   session: Session;
   terminal: TerminalPreferences;
+  /** The selected session of the task. */
   active: boolean;
+  /** The terminal surface is the one on screen; a hidden layer never fits. */
+  visible: boolean;
   canResume: boolean;
   onError: (message: string) => void;
   onResume: (session: Session) => void;
@@ -536,6 +295,10 @@ function TerminalView({
   onErrorRef.current = onError;
   const onOpenPaletteRef = useRef(onOpenPalette);
   onOpenPaletteRef.current = onOpenPalette;
+
+  /** The layer is on screen; the fit below skips a hidden terminal. */
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
 
   const [findOpen, setFindOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -713,6 +476,9 @@ function TerminalView({
     };
 
     const applyFit = () => {
+      // A hidden layer has no box: fitting it would ask xterm for a size of
+      // zero columns and the PTY would be told 0x0.
+      if (!visibleRef.current || host.clientWidth <= 0 || host.clientHeight <= 0) return;
       try {
         fit.fit();
         sendResize(term.cols, term.rows);
@@ -754,11 +520,14 @@ function TerminalView({
     };
   }, [client, session.id]);
 
+  // Coming back to the terminals (a session tab, `Ctrl+\`` or closing a tool
+  // tab) re-fits the visible xterm: it was hidden while the layer was, so its
+  // real size was never measured. Focus stays off a hidden layer.
   useEffect(() => {
-    if (!active) return;
+    if (!active || !visible) return;
     termRef.current?.focus();
     applyFitRef.current();
-  }, [active]);
+  }, [active, visible]);
 
   // Settings save updates an already-open terminal without remounting it.
   useEffect(() => {

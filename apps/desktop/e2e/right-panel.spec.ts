@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
@@ -7,8 +7,10 @@ import type { NestBridge } from '@nest/shared';
 import {
   addProject,
   annotateEnvironment,
+  centerTab,
   changeRow,
   commit,
+  confirmAction,
   git,
   gitOrNull,
   launchNest,
@@ -146,14 +148,9 @@ function untrackedRow(page: Page, filePath: string): Locator {
 
 async function openPatch(page: Page, filePath: string, side: 'staged' | 'unstaged'): Promise<void> {
   await changeRow(page, filePath, side).locator('.change-open').click();
-  await expect(page.locator('.diff-target-bar')).toContainText(`${filePath} · ${side} side`, {
+  await expect(page.locator('.diff-target-label')).toHaveText(`${filePath} · ${side} side`, {
     timeout: 30_000,
   });
-}
-
-async function backToList(page: Page): Promise<void> {
-  await page.locator('.diff-back-btn').click();
-  await expect(page.locator('[data-testid="change-count"]')).toBeVisible();
 }
 
 function panelWidth(page: Page): Promise<number> {
@@ -225,52 +222,198 @@ test('keeps both sides of a partially staged file and commits only the index', a
   }
 });
 
-test('opens one row as a patch, returns to the list and widens with Open diff', async () => {
+test('opens the patch in the center while the list stays, and switches files in one click', async () => {
   const fixture = await openFixture({ prepare: seedPartialStaging });
   const { page } = fixture;
   try {
-    // A terminal of its own: `Open diff` keeps its column instead of replacing
-    // it, and a session-less window has no terminal column to keep.
+    // A terminal of its own: the center hosts both the sessions and the tools, and
+    // a session-less window has no terminal layer to keep alive.
     await startHarness(page, 'fake');
     await expect(page.locator('.terminal-view.active .xterm-rows')).toContainText('FakeHarness', {
       timeout: 30_000,
     });
     expect(await panelWidth(page)).toBeLessThan(600);
 
-    // One click on the unstaged row is enough: no second search in another tab.
+    // One click on the unstaged row opens its patch in the center, and the change
+    // list, the commit box and the column width all stay where they were.
     await openPatch(page, 'mixed.txt', 'unstaged');
+    await expect(centerTab(page, 'diff')).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('[data-testid="center-diff-layer"]')).toBeVisible();
+    await expect(page.locator('[data-testid="source-control-panel"]')).toBeVisible();
+    await expect(page.locator('[data-testid="change-count"]')).toBeVisible();
+    await expect(page.locator('[data-testid="commit-box"]')).toBeInViewport();
     await expect(page.locator('.diff-modes [role="tab"][aria-selected="true"]')).toHaveText(
       /Unstaged/,
     );
-    // The request is filtered to that file: the patch holds one header and the
-    // unstaged edit only, not the staged `LINE03` line.
-    await expect(page.locator('.diff-file-head .diff-path')).toHaveCount(1);
-    await expect(page.locator('.diff-file-head .diff-path')).toHaveText('mixed.txt');
-    await expect(page.locator('.diff-line.diff-add .diff-text', { hasText: 'LINE35' })).toHaveCount(
-      1,
-    );
-    await expect(page.locator('.diff-text', { hasText: 'LINE03' })).toHaveCount(0);
-    // Opening a row does not resize the column: that is `Open diff`.
-    expect(await panelWidth(page)).toBeLessThan(600);
+    // The request is filtered to that file: one header and the unstaged edit only,
+    // not the staged `LINE03` line.
+    await expect(page.locator('.center .diff-file-head .diff-path')).toHaveCount(1);
+    await expect(page.locator('.center .diff-file-head .diff-path')).toHaveText('mixed.txt');
+    await expect(
+      page.locator('.center .diff-line.diff-add .diff-text', { hasText: 'LINE35' }),
+    ).toHaveCount(1);
+    await expect(page.locator('.center .diff-text', { hasText: 'LINE03' })).toHaveCount(0);
+    // The patch never widens the column: that was the old `Open diff` behaviour.
+    const width = await panelWidth(page);
+    expect(width).toBeLessThan(600);
 
-    // Back to the list: the row that was open keeps the selection and takes the
-    // focus again, so `Open diff` has a target without another click.
-    await backToList(page);
-    const unstagedRow = changeRow(page, 'mixed.txt', 'unstaged');
-    await expect(unstagedRow.locator('.change-open')).toBeFocused();
-    await expect(unstagedRow).toHaveAttribute('data-selected', 'true');
+    // A second file is one click away: the list never leaves the screen.
+    await changeRow(page, 'second.txt', 'unstaged').locator('.change-open').click();
+    await expect(page.locator('.diff-target-label')).toHaveText('second.txt · unstaged side', {
+      timeout: 30_000,
+    });
+    await expect(page.locator('.center .diff-file-head .diff-path')).toHaveText('second.txt');
+    await expect(page.locator('[data-testid="change-count"]')).toBeVisible();
+    expect(await panelWidth(page)).toBe(width);
 
-    // Opening the other side and returning through the tab keeps the choice too.
+    // The other side of the same file is one click too, and keeps the selection.
     await openPatch(page, 'mixed.txt', 'staged');
-    await page.locator('#right-tab-source-control').click();
     await expect(changeRow(page, 'mixed.txt', 'staged')).toHaveAttribute('data-selected', 'true');
-    const openDiff = page.getByRole('button', { name: 'Open diff' });
-    await expect(openDiff).toBeEnabled();
-    await openDiff.click();
-    await expect(page.locator('.diff-target-bar')).toHaveText('mixed.txt · staged side');
-    await expect.poll(() => panelWidth(page), { timeout: 10_000 }).toBeGreaterThanOrEqual(620);
-    // The terminal keeps its column instead of being replaced by the patch.
-    await expect(page.locator('.terminal-view').first()).toBeVisible();
+    await expect(page.locator('.center .diff-line.diff-add .diff-text', { hasText: 'LINE03' }))
+      .toHaveCount(1);
+
+    // `Show all files` drops the filter without closing the tab: the whole patch
+    // of the current comparison is shown, so the mode still decides the files.
+    await page.locator('[data-testid="diff-show-all"]').click();
+    await expect(page.locator('.diff-target-bar')).toHaveCount(0);
+    await expect(
+      page.locator('.center .diff-file-head .diff-path', { hasText: 'mixed.txt' }),
+    ).toHaveCount(1);
+    await expect(
+      page.locator('.center .diff-file-head .diff-path', { hasText: 'second.txt' }),
+    ).toHaveCount(0);
+    // `Both` then shows the staged and the unstaged file in one patch.
+    await page.locator('.diff-modes [role="tab"]', { hasText: 'Both' }).click();
+    await expect(
+      page.locator('.center .diff-file-head .diff-path', { hasText: 'second.txt' }),
+    ).toHaveCount(1);
+    await expect(centerTab(page, 'diff')).toHaveAttribute('aria-selected', 'true');
+    // The terminal kept its layer and the column kept its width all along.
+    await expect(page.locator('.center .terminal-view')).toHaveCount(1);
+    expect(await panelWidth(page)).toBe(width);
+  } finally {
+    await closeFixture(fixture);
+  }
+});
+
+test('resets Amend after a commit and prefills it with the last message', async () => {
+  const fixture = await openFixture({
+    prepare: (repo) => writeFileSync(path.join(repo, 'second.txt'), 'alpha\nBETA\n', 'utf8'),
+  });
+  const { page, repo } = fixture;
+  try {
+    await expect(changeRow(page, 'second.txt', 'unstaged')).toBeVisible({ timeout: 30_000 });
+    await changeRow(page, 'second.txt', 'unstaged')
+      .getByRole('button', { name: 'Stage', exact: true })
+      .click();
+    await expect(page.locator('[data-testid="commit-scope"]')).toHaveText('1 staged');
+
+    // `Amend` on a blank draft loads the message of `HEAD`, so the user edits the
+    // real message instead of an empty box.
+    const menu = await openCommitMenu(page);
+    await menu.getByRole('menuitem', { name: /Amend last commit/ }).click();
+    await expect(page.locator('.commit-message')).toHaveValue('init', { timeout: 30_000 });
+    await expect(page.locator('.commit-amend-flag')).toHaveText('Amend');
+
+    await page.locator('.commit-message').fill('amended init');
+    await page.locator('.commit-submit').click();
+    await expect(page.locator('.toast').first()).toContainText('Amended', { timeout: 30_000 });
+    expect(git(['log', '--format=%s'], repo)).toBe('amended init');
+
+    // `Amend` is one-shot: the flag is gone, so the next commit creates a commit
+    // instead of silently rewriting the one just amended.
+    await expect(page.locator('.commit-amend-flag')).toHaveCount(0);
+    await expect(page.locator('.commit-submit')).toHaveText('Commit');
+    const again = await openCommitMenu(page);
+    await expect(again.getByRole('menuitem', { name: /Amend last commit/ })).toHaveAttribute(
+      'aria-checked',
+      'false',
+    );
+    await page.keyboard.press('Escape');
+    await expect(again).toHaveCount(0);
+
+    writeFileSync(path.join(repo, 'README.md'), '# panel again\n', 'utf8');
+    await expect(changeRow(page, 'README.md', 'unstaged')).toBeVisible({ timeout: 30_000 });
+    await changeRow(page, 'README.md', 'unstaged')
+      .getByRole('button', { name: 'Stage', exact: true })
+      .click();
+    await page.locator('.commit-message').fill('follow up');
+    await page.locator('.commit-submit').click();
+    await expect(page.locator('.toast').first()).toContainText('Committed', { timeout: 30_000 });
+    expect(git(['log', '--format=%s'], repo).split('\n')).toEqual(['follow up', 'amended init']);
+  } finally {
+    await closeFixture(fixture);
+  }
+});
+
+test('discards only the worktree side of a partially staged file', async () => {
+  const fixture = await openFixture({ prepare: seedPartialStaging });
+  const { page, repo } = fixture;
+  try {
+    const unstaged = changeRow(page, 'mixed.txt', 'unstaged');
+    await expect(unstaged).toBeVisible({ timeout: 30_000 });
+    const index = git(['ls-files', '--stage'], repo);
+
+    // The confirmation names the side it will drop, not the whole path.
+    await unstaged.getByRole('button', { name: 'Discard', exact: true }).click();
+    const confirm = await confirmAction(page);
+    await expect(confirm).toContainText('Discard unstaged changes of mixed.txt');
+    await expect(confirm).toContainText('staged part of this path stays staged');
+    await page.locator('[data-testid="confirm-accept"]').click();
+
+    // Git is the witness: the index is untouched and the worktree is back to it.
+    await expect
+      .poll(() => gitOrNull(['diff', '--name-only', '--', 'mixed.txt'], repo), {
+        timeout: 30_000,
+      })
+      .toBe('');
+    expect(git(['ls-files', '--stage'], repo)).toBe(index);
+    expect(git(['diff', '--cached', '--name-only'], repo)).toBe('mixed.txt');
+    // `core.autocrlf` is on in this environment's git config, so the restore
+    // writes CRLF where the fixture wrote LF. The bytes are compared as lines:
+    // git's own `diff` above is what proves the worktree matches the index.
+    expect(readFileSync(path.join(repo, 'mixed.txt'), 'utf8').replace(/\r\n/g, '\n')).toBe(
+      mixedBody({ line03: 'LINE03' }),
+    );
+
+    // The UI agrees: the staged row stays, the unstaged row is gone.
+    await expect(
+      section(page, 'staged').locator('[data-testid="change-row"][data-path="mixed.txt"]'),
+    ).toBeVisible();
+    await expect(changeRow(page, 'mixed.txt', 'unstaged')).toHaveCount(0, { timeout: 30_000 });
+    // The badge counts paths, not rows: mixed.txt still has its staged side.
+    await expect(page.locator('[data-testid="change-count"]')).toHaveText('All changes · 3');
+  } finally {
+    await closeFixture(fixture);
+  }
+});
+
+test('keeps the collapsed rail change badge current while the panel is closed', async () => {
+  const fixture = await openFixture();
+  const { page, repo } = fixture;
+  try {
+    await expect(page.locator('[data-testid="source-control-panel"]')).toBeVisible({
+      timeout: 30_000,
+    });
+    expect(git(['status', '--porcelain'], repo)).toBe('');
+
+    // Collapsing unmounts `Source Control`, but the shell still watches the task:
+    // the snapshot must keep refreshing, or the rail freezes on the old count.
+    await page.locator('.right-collapse').click();
+    await expect(page.locator('.right-rail')).toBeVisible();
+    await expect(page.locator('.rail-label')).toHaveText('Source Control · 0');
+
+    writeFileSync(path.join(repo, 'second.txt'), 'alpha\nBETA\n', 'utf8');
+    await expect(page.locator('.rail-label')).toHaveText('Source Control · 1', { timeout: 30_000 });
+    writeFileSync(path.join(repo, 'fresh.txt'), 'new\n', 'utf8');
+    await expect(page.locator('.rail-label')).toHaveText('Source Control · 2', { timeout: 30_000 });
+
+    // Opening the panel again shows the same numbers the rail was reporting.
+    await page.locator('.rail-toggle').click();
+    await expect(page.locator('[data-testid="change-count"]')).toHaveText('All changes · 2', {
+      timeout: 30_000,
+    });
+    await expect(page.locator('[data-testid="right-tab-count-source-control"]')).toHaveText('2');
   } finally {
     await closeFixture(fixture);
   }
@@ -386,8 +529,10 @@ test('keeps the draft and the selection of each task across A → B → A', asyn
     await page.locator('.commit-message').fill('draft of task A');
     await openPatch(page, 'second.txt', 'unstaged');
 
-    // The tab is a window preference, not a task one: B opens on the same view.
+    // The center is per task too: B starts on its terminal, and A comes back
+    // with its `Diff` tab, its selection and its draft.
     await select('Task B');
+    await expect(page.locator('[data-testid="center-terminal-layer"]')).toHaveClass(/is-active/);
     await page.locator('#right-tab-source-control').click();
     await expect(page.locator('.commit-message')).toHaveValue('', { timeout: 30_000 });
     await expect(page.locator('[data-testid="changes-empty"]')).toBeVisible();
@@ -397,8 +542,8 @@ test('keeps the draft and the selection of each task across A → B → A', asyn
     writeFileSync(path.join(taskB.workspacePath, 'b-only.txt'), 'b\n', 'utf8');
     await expect(untrackedRow(page, 'b-only.txt')).toBeVisible({ timeout: 30_000 });
 
-    // Back to A: its draft, its list and its selected row are all still there,
-    // and `Open diff` still knows which file it would widen.
+    // Back to A: its draft, its list, its selected row and its open patch are all
+    // still there, so no second click is needed to read the file again.
     await select('Main checkout');
     await expect(page.locator('.commit-message')).toHaveValue('draft of task A', {
       timeout: 30_000,
@@ -407,8 +552,16 @@ test('keeps the draft and the selection of each task across A → B → A', asyn
       'data-selected',
       'true',
     );
+    await expect(centerTab(page, 'diff')).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('.diff-target-label')).toHaveText('second.txt · unstaged side');
+
+    // `Open diff` is the whole patch of the task: it drops the single-file
+    // filter without resizing the column.
     await page.getByRole('button', { name: 'Open diff' }).click();
-    await expect(page.locator('.diff-target-bar')).toHaveText('second.txt · unstaged side');
+    await expect(page.locator('.diff-target-bar')).toHaveCount(0);
+    await expect(
+      page.locator('.center .diff-file-head .diff-path', { hasText: 'second.txt' }),
+    ).toHaveCount(1);
 
     // B's draft was not overwritten by A's.
     await select('Task B');
@@ -786,8 +939,7 @@ test('puts a conflicted merge in its own section without a stage action', async 
     // Reading the conflict in the patch does not touch the index either.
     const indexBefore = git(['ls-files', '--stage'], repo);
     await row.locator('.change-open').click();
-    await expect(page.locator('.diff-target-bar')).toHaveText('conflict.txt · unstaged side');
-    await backToList(page);
+    await expect(page.locator('.diff-target-label')).toHaveText('conflict.txt · unstaged side');
     expect(git(['ls-files', '--stage'], repo)).toBe(indexBefore);
     expect(git(['status', '--porcelain'], repo)).toContain('UU conflict.txt');
   } finally {
@@ -851,7 +1003,6 @@ test('keeps a note written on the staged side outside the unstaged patch and sen
 
     // The unstaged patch does not draw the note inline: its line lives in the
     // index, so the note is reported outside this patch instead of dropped.
-    await backToList(page);
     await openPatch(page, 'mixed.txt', 'unstaged');
     await expect(page.locator('.comment-thread')).toHaveCount(0);
     const outside = page.locator('.outside-notes');
@@ -861,8 +1012,12 @@ test('keeps a note written on the staged side outside the unstaged patch and sen
     await expect(outside.locator('.outside-note')).toContainText('this side is staged');
     await expect(outside.locator('.outside-note .comment-anchor')).toHaveText('mixed.txt:3');
 
-    // Sending it puts the `file:line` text into the running harness.
+    // Sending it puts the `file:line` text into the running harness. The text
+    // goes to the PTY wherever the center is showing, so the terminal is opened
+    // to read it: a hidden layer draws nothing, exactly as the fit does not run
+    // for a 0×0 box.
     await outside.locator('.outside-note').getByRole('button', { name: 'Send' }).click();
+    await page.locator('.terminal-tab').first().click();
     await expect(page.locator('.terminal-view.active .xterm-rows')).toContainText('mixed.txt:3', {
       timeout: 30_000,
     });

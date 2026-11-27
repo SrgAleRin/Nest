@@ -15,6 +15,7 @@ import {
   DiffModeSchema,
   GitBranchesSchema,
   GitCommitDetailSchema,
+  GitCompareDiffSchema,
   GitCompareSchema,
   GitDiffSchema,
   GitLogSchema,
@@ -162,7 +163,15 @@ export const rpcMethods = {
       taskId: id,
       /** Start from this ref instead of HEAD. */
       ref: z.string().min(1).max(250).optional(),
-      limit: z.number().int().min(1).max(200).optional(),
+      /**
+       * Which history to walk: `head` is the current branch only, `branches`
+       * adds every local branch and tag, `all` adds the remote-tracking refs.
+       * A `ref` wins over the scope and is walked on its own.
+       */
+      scope: z.enum(['head', 'branches', 'all']).optional(),
+      /** Case-insensitive substring of the message, author or hash prefix. */
+      search: z.string().min(1).max(200).optional(),
+      limit: z.number().int().min(1).max(300).optional(),
       skip: z.number().int().min(0).max(100_000).optional(),
     }),
     result: GitLogSchema,
@@ -180,6 +189,16 @@ export const rpcMethods = {
     }),
     result: GitCompareSchema,
   },
+  'git.compareDiff': {
+    params: z.object({
+      taskId: id,
+      base: z.string().min(1).max(250),
+      head: z.string().min(1).max(250).optional(),
+      /** Restrict the patch to one path of the comparison. */
+      path: z.string().min(1).max(4096).optional(),
+    }),
+    result: GitCompareDiffSchema,
+  },
   'git.fetch': { params: z.object({ taskId: id }), result: z.object({ output: z.string() }) },
   'git.pull': { params: z.object({ taskId: id }), result: z.object({ output: z.string() }) },
   'git.checkout': {
@@ -194,13 +213,34 @@ export const rpcMethods = {
     result: GitStatusSchema,
   },
   'git.discard': {
-    params: z.object({ taskId: id, paths: z.array(z.string().min(1)).min(1) }),
+    params: z.object({
+      taskId: id,
+      paths: z.array(z.string().min(1)).min(1),
+      /**
+       * Which side to drop. `unstaged` restores the worktree from the index and
+       * keeps a staged part of the same file; `staged` and the default `both`
+       * drop the path entirely.
+       */
+      side: z.enum(['staged', 'unstaged', 'both']).optional(),
+    }),
     result: GitStatusSchema,
   },
 
-  'files.list': { params: z.object({ taskId: id }), result: WorkspaceFilesSchema },
+  'files.list': {
+    params: z.object({
+      taskId: id,
+      /** Read the tree of this revision instead of the working tree. */
+      ref: z.string().min(1).max(250).optional(),
+    }),
+    result: WorkspaceFilesSchema,
+  },
   'files.read': {
-    params: z.object({ taskId: id, path: z.string().min(1).max(4096) }),
+    params: z.object({
+      taskId: id,
+      path: z.string().min(1).max(4096),
+      /** Read the blob of this revision instead of the file on disk. */
+      ref: z.string().min(1).max(250).optional(),
+    }),
     result: FileContentSchema,
   },
 

@@ -2,7 +2,8 @@ import path from 'node:path';
 import { open, type FileHandle } from 'node:fs/promises';
 import type { FileContent, WorkspaceFile, WorkspaceFiles } from '@nest/shared';
 import { NestError } from '../errors.js';
-import { git } from '../git/exec.js';
+import { git, gitOrNull } from '../git/exec.js';
+import { assertRef } from '../git/refs.js';
 import type { TaskService } from './tasks.js';
 
 /** A huge workspace (generated code, vendored deps) should not freeze the panel. */
@@ -20,13 +21,20 @@ export class FilesService {
    * not ignored. `git ls-files` already applies `.gitignore`, so a build
    * output directory never reaches the panel.
    */
-  async list(taskId: string): Promise<WorkspaceFiles> {
+  async list(taskId: string, ref?: string): Promise<WorkspaceFiles> {
     const task = this.tasks.get(taskId);
-    const { stdout } = await git(
-      task.workspacePath,
-      ['ls-files', '-z', '--cached', '--others', '--exclude-standard'],
-      { timeout: LIST_TIMEOUT_MS },
-    );
+    // With a revision the tree comes from the object database, so a branch that
+    // is checked out elsewhere (or not at all) can be browsed without a checkout.
+    const revision = ref ? await assertRevision(task.workspacePath, ref) : null;
+    const { stdout } = revision
+      ? await git(task.workspacePath, ['ls-tree', '-r', '-z', '--name-only', revision, '--'], {
+          timeout: LIST_TIMEOUT_MS,
+        })
+      : await git(
+          task.workspacePath,
+          ['ls-files', '-z', '--cached', '--others', '--exclude-standard'],
+          { timeout: LIST_TIMEOUT_MS },
+        );
 
     const files: WorkspaceFile[] = [];
     for (const raw of stdout.split('\0')) {
@@ -40,8 +48,10 @@ export class FilesService {
   }
 
   /** UTF-8 preview of one workspace file; binary files return an empty text. */
-  async read(taskId: string, filePath: string): Promise<FileContent> {
+  async read(taskId: string, filePath: string, ref?: string): Promise<FileContent> {
     const task = this.tasks.get(taskId);
+    if (ref) return readRevisionFile(task.workspacePath, filePath, ref);
+
     const root = path.resolve(task.workspacePath);
     const target = path.resolve(root, filePath);
     if (
@@ -75,6 +85,61 @@ export class FilesService {
       await handle.close();
     }
   }
+}
+
+/**
+ * Path inside a revision: relative, no empty segment and no `..`, so the
+ * `<rev>:<path>` expression can never name an object outside the tree.
+ */
+function assertRevisionPath(filePath: string): string {
+  const normalized = filePath.replace(/\\/g, '/');
+  const invalid =
+    normalized.length === 0 ||
+    path.posix.isAbsolute(normalized) ||
+    path.win32.isAbsolute(normalized) ||
+    normalized.split('/').some((segment) => segment === '' || segment === '.' || segment === '..');
+  if (invalid) throw new NestError('invalid_path', `Invalid file path: ${filePath}`);
+  return normalized;
+}
+
+async function assertRevision(cwd: string, ref: string): Promise<string> {
+  const revision = assertRef(ref, 'revision');
+  if (!(await gitOrNull(cwd, ['rev-parse', '--verify', '-q', revision]))) {
+    throw new NestError('ref_missing', `Unknown revision: ${revision}`);
+  }
+  return revision;
+}
+
+/**
+ * A file of a revision, read from Git objects only: the worktree is never
+ * touched and the file does not have to exist on disk at all.
+ */
+async function readRevisionFile(cwd: string, filePath: string, ref: string): Promise<FileContent> {
+  const revision = await assertRevision(cwd, ref);
+  const target = `${revision}:${assertRevisionPath(filePath)}`;
+
+  // `cat-file -t` tells a missing path, a directory and a blob apart in one trip.
+  const type = await gitOrNull(cwd, ['cat-file', '-t', target]);
+  if (!type) throw new NestError('file_missing', `${filePath} was not found`);
+  if (type !== 'blob') throw new NestError('not_a_file', `${filePath} is not a file`);
+
+  const [{ stdout: sizeRaw }, { stdout }] = await Promise.all([
+    git(cwd, ['cat-file', '-s', target], { timeout: LIST_TIMEOUT_MS }),
+    git(cwd, ['show', target], { timeout: LIST_TIMEOUT_MS }),
+  ]);
+  const objectSize = Number(sizeRaw.trim());
+  const bytes = Buffer.from(stdout, 'utf8');
+  const preview = bytes.length > MAX_PREVIEW_BYTES ? bytes.subarray(0, MAX_PREVIEW_BYTES) : bytes;
+  const binary = preview.subarray(0, BINARY_CHECK_BYTES).includes(0);
+  const size = Number.isFinite(objectSize) ? objectSize : bytes.length;
+
+  return {
+    path: filePath,
+    size,
+    text: binary ? '' : preview.toString('utf8'),
+    binary,
+    truncated: size > preview.length,
+  };
 }
 
 async function openFile(target: string, filePath: string): Promise<FileHandle> {
