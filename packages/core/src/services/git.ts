@@ -40,7 +40,8 @@ const LOG_TIMEOUT_MS = 20_000;
 const REMOTE_TIMEOUT_MS = 60_000;
 const PULL_TIMEOUT_MS = 120_000;
 const DEFAULT_LOG_LIMIT = 50;
-const MAX_LOG_LIMIT = 200;
+/** The graph asks for a full page of every branch, so the cap matches the RPC contract. */
+const MAX_LOG_LIMIT = 300;
 /** `search` is applied in code, so the walk is capped to keep one page cheap. */
 const SEARCH_SCAN_LIMIT = 2000;
 const MAX_COMPARE_COMMITS = 100;
