@@ -72,3 +72,29 @@ pnpm format       # prettier --write
   is a per-project singleton and only goes away with its project.
 - Update `docs/architecture.md` only when a decision actually changes.
 - Avoid new dependencies; a native module needs an `asarUnpack` entry in the electron-builder config.
+
+## Orca orchestration & model policy
+
+Keep the expensive model for thinking; spend the cheap one on typing.
+
+- Coordinator: whatever agent and model the user opened this session with. It stays in place —
+  plan, decomposition, diff review and judging evidence happen here, on that model.
+- Workers: `--agent pi --model Kodik/deepseek/deepseek-v4.1-flash-1017`. Only well-specified,
+  mechanical steps: renames, file moves, boilerplate, running and reading a known test command,
+  applying a change the coordinator already decided.
+
+Rules:
+
+- Never pass `--model` or `--effort` for the coordinator's own agent, never relaunch this session,
+  never hand your own turn to another model, and never switch models mid-Run. The coordinator model
+  is the one the user chose to talk to, so different sessions may run it on different models.
+- Pass `--model` explicitly on every `orca orchestration worker-start`, always paired with the
+  `--agent` that model belongs to. Never rely on an agent's configured default, and never let a
+  worker pick or change its own model.
+- A worker model id must be valid for its agent (`pi` takes `provider/id`). When you switch the
+  worker agent, name that agent's own model id instead of reusing this one.
+- Anything that needs a decision rather than a lookup moves back to the coordinator model.
+- Specs are self-contained, because the worker is cheap: exact paths, exact change, the exact
+  command whose output proves the task is done, and whether a non-zero exit is a failure.
+- Omit `--effort` unless the chosen model reports thinking support; `--effort` requires `--model`.
+- Fan out up to ~4 workers at once, then start the rest as those report back.
