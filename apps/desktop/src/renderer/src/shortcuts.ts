@@ -3,9 +3,10 @@
  * `Ctrl+W`, `Ctrl+Tab`).
  *
  * The terminal keeps the keys a shell needs: while focus is inside a terminal,
- * `Ctrl+N` (history-next) and `Ctrl+W` (kill-word) are sent to the PTY instead
- * of being stolen. `Ctrl+Tab` and `Ctrl+`` are not shell bindings, so they work
- * everywhere, like `Ctrl+Shift+P`.
+ * `Ctrl+N` (history-next), `Ctrl+W` (kill-word) and `Ctrl+B` (readline `backward-char`,
+ * tmux prefix) are sent to the PTY instead of being stolen. `Ctrl+Tab`, `Ctrl+``
+ * and `Ctrl+Shift+B` are not shell bindings, so they work everywhere, like
+ * `Ctrl+Shift+P`.
  */
 
 export type Shortcut =
@@ -14,7 +15,8 @@ export type Shortcut =
   | 'close-tab'
   | 'next-tab'
   | 'previous-tab'
-  | 'focus-terminal';
+  | 'focus-terminal'
+  | 'toggle-left-panel';
 
 export interface ShortcutEvent {
   key: string;
@@ -30,10 +32,7 @@ export interface ShortcutContext {
 }
 
 /** The shortcut this key event triggers, or null when it belongs elsewhere. */
-export function resolveShortcut(
-  event: ShortcutEvent,
-  context: ShortcutContext,
-): Shortcut | null {
+export function resolveShortcut(event: ShortcutEvent, context: ShortcutContext): Shortcut | null {
   if (event.altKey) return null;
   if (!(event.ctrlKey || event.metaKey)) return null;
 
@@ -41,6 +40,8 @@ export function resolveShortcut(
   if (event.shiftKey) {
     if (key === 'p') return 'palette';
     if (key === 'tab') return 'previous-tab';
+    // `Ctrl+Shift+B` belongs to no shell, so the sidebar toggles even in a terminal.
+    if (key === 'b') return 'toggle-left-panel';
     return null;
   }
 
@@ -53,6 +54,8 @@ export function resolveShortcut(
       return context.terminalFocused ? null : 'new-task';
     case 'w':
       return context.terminalFocused ? null : 'close-tab';
+    case 'b':
+      return context.terminalFocused ? null : 'toggle-left-panel';
     default:
       return null;
   }

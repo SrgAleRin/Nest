@@ -22,6 +22,19 @@ describe('shortcuts', () => {
     expect(resolveShortcut(key({ key: 'w' }), inTerminal)).toBeNull();
   });
 
+  it('toggles the left panel on Ctrl+B, but leaves the shell its own binding', () => {
+    expect(resolveShortcut(key({ key: 'b' }), away)).toBe('toggle-left-panel');
+    // Readline `backward-char` and the tmux prefix must reach the PTY.
+    expect(resolveShortcut(key({ key: 'b' }), inTerminal)).toBeNull();
+  });
+
+  it('toggles the left panel on Ctrl+Shift+B from anywhere, including a terminal', () => {
+    expect(resolveShortcut(key({ key: 'B', shiftKey: true }), away)).toBe('toggle-left-panel');
+    expect(resolveShortcut(key({ key: 'B', shiftKey: true }), inTerminal)).toBe(
+      'toggle-left-panel',
+    );
+  });
+
   it('cycles tabs in both directions, from anywhere', () => {
     expect(resolveShortcut(key({ key: 'Tab' }), inTerminal)).toBe('next-tab');
     expect(resolveShortcut(key({ key: 'Tab', shiftKey: true }), inTerminal)).toBe('previous-tab');
