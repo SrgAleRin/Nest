@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeNumstat, parseNumstat } from '../src/git/numstat.js';
+import { mergeNumstat, parseNumstat, sumNumstat } from '../src/git/numstat.js';
 
 describe('parseNumstat', () => {
   it('parses additions and deletions per file', () => {
@@ -36,5 +36,31 @@ describe('mergeNumstat', () => {
     const target = parseNumstat('2\t1\ta.ts\0');
     mergeNumstat(target, parseNumstat('-\t-\ta.ts\0'));
     expect(target.get('a.ts')).toEqual({ additions: null, deletions: null });
+  });
+});
+
+describe('sumNumstat', () => {
+  it('adds the two sides into the aggregate counters', () => {
+    const total = sumNumstat({
+      staged: parseNumstat('10\t0\ta.ts\0'),
+      unstaged: parseNumstat('1\t0\ta.ts\0'),
+    });
+    expect(total.get('a.ts')).toEqual({ additions: 11, deletions: 0 });
+  });
+
+  it('keeps a file changed on one side only', () => {
+    const total = sumNumstat({
+      staged: parseNumstat('10\t0\ta.ts\0'),
+      unstaged: parseNumstat(''),
+    });
+    expect(total.get('a.ts')).toEqual({ additions: 10, deletions: 0 });
+  });
+
+  it('sums a staged addition reverted in the worktree to zero net lines', () => {
+    const total = sumNumstat({
+      staged: parseNumstat('10\t0\ta.ts\0'),
+      unstaged: parseNumstat('0\t10\ta.ts\0'),
+    });
+    expect(total.get('a.ts')).toEqual({ additions: 10, deletions: 10 });
   });
 });
