@@ -388,6 +388,49 @@ describe('git snapshot store', () => {
     expect(statusCalls(calls)).toHaveLength(2);
   });
 
+  it('sends the discarded side through the same mutation guard', async () => {
+    vi.useFakeTimers();
+    const first = status('main', ['src/login.ts']);
+    const late = deferred<GitStatus>();
+    const discard = deferred<GitStatus>();
+    let statusReads = 0;
+    const { invoke, calls } = createInvoke((method) => {
+      if (method === 'git.discard') return discard.promise;
+      statusReads += 1;
+      // The first read loads the task; the second one starts before the discard
+      // and answers with the pre-discard tree after it has already completed.
+      return statusReads === 1 ? first : late.promise;
+    });
+    const snapshots = makeStore(invoke);
+
+    snapshots.retain('t1');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(snapshots.getTask('t1')?.status.data?.files.map((entry) => entry.path)).toEqual([
+      'src/login.ts',
+    ]);
+
+    const slowRead = snapshots.requestStatus('t1');
+    const mutation = snapshots.discard('t1', ['src/login.ts'], 'unstaged');
+
+    discard.resolve(status('main'));
+    await mutation;
+    expect(snapshots.getTask('t1')?.status.data?.files).toEqual([]);
+
+    // The read that started before the discard lost to its answer.
+    late.resolve(status('main', ['src/login.ts']));
+    await slowRead;
+    expect(snapshots.getTask('t1')?.status.data?.files).toEqual([]);
+
+    // The side is part of the request, and the mutation read no extra status:
+    // its own answer is the one that landed.
+    expect(calls.find((call) => call.method === 'git.discard')?.params).toEqual({
+      taskId: 't1',
+      paths: ['src/login.ts'],
+      side: 'unstaged',
+    });
+    expect(statusCalls(calls)).toHaveLength(2);
+  });
+
   it('applies a mutation answer when nothing invalidated it', async () => {
     const answers: Record<string, unknown> = {
       'git.stage': status('main', ['a.ts']),
@@ -409,6 +452,11 @@ describe('git snapshot store', () => {
     expect(snapshots.getTask('t1')?.status.data?.files.map((entry) => entry.path)).toEqual([
       'b.ts',
     ]);
+    // An absent side keeps the request exactly as it was before sides existed.
+    expect(calls.find((call) => call.method === 'git.discard')?.params).toEqual({
+      taskId: 't1',
+      paths: ['b.ts'],
+    });
     await snapshots.checkout('t1', { branch: 'feature' });
     expect(snapshots.getTask('t1')?.status.data?.branch).toBe('feature');
 

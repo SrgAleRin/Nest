@@ -115,7 +115,12 @@ export interface GitSnapshotStore {
   invalidate(taskId: string): void;
   stage(taskId: string, paths: string[]): Promise<GitStatus>;
   unstage(taskId: string, paths: string[]): Promise<GitStatus>;
-  discard(taskId: string, paths: string[]): Promise<GitStatus>;
+  discard(
+    taskId: string,
+    paths: string[],
+    /** Which side to drop; omitted keeps the whole-path discard. */
+    side?: 'staged' | 'unstaged' | 'both',
+  ): Promise<GitStatus>;
   commit(taskId: string, params: GitCommitParams): Promise<{ hash: string; summary: string }>;
   checkout(taskId: string, params: GitCheckoutParams): Promise<GitStatus>;
   dispose(): void;
@@ -426,9 +431,11 @@ export function createGitSnapshotStore(deps: GitSnapshotDeps): GitSnapshotStore 
       const started = beginMutation(taskId);
       return mutated(taskId, started, () => deps.invoke('git.unstage', { taskId, paths }));
     },
-    discard(taskId, paths) {
+    discard(taskId, paths, side) {
       const started = beginMutation(taskId);
-      return mutated(taskId, started, () => deps.invoke('git.discard', { taskId, paths }));
+      return mutated(taskId, started, () =>
+        deps.invoke('git.discard', { taskId, paths, ...(side ? { side } : {}) }),
+      );
     },
     commit(taskId, params) {
       return requestAfterMutation(taskId, () =>
