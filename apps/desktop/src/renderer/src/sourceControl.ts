@@ -80,24 +80,46 @@ export function projectChanges(files: readonly GitFile[]): ChangeSections {
 
   for (const file of files) {
     paths.add(file.path);
-    const shared = {
-      path: file.path,
-      oldPath: file.oldPath,
-      copied: file.copied,
-      additions: file.additions,
-      deletions: file.deletions,
-    };
+    const shared = { path: file.path, oldPath: file.oldPath, copied: file.copied };
     if (file.conflict) {
-      conflicts.push({ ...shared, letter: conflictLetter(file) });
+      conflicts.push({
+        ...shared,
+        letter: conflictLetter(file),
+        // An unmerged entry has no side of its own, so the combined counters
+        // of the status are the only ones that describe it.
+        additions: file.additions,
+        deletions: file.deletions,
+      });
       continue;
     }
+    // Each side carries its own counters: a partially staged file shows the
+    // index numbers in `Staged` and the worktree numbers in `Unstaged`, never
+    // the sum of both. A null side stays null, which the row renders as `bin`.
     if (file.staged) {
-      staged.push({ ...shared, side: 'staged', letter: sideLetter(file, 'staged') });
+      staged.push({
+        ...shared,
+        side: 'staged',
+        letter: sideLetter(file, 'staged'),
+        additions: file.stagedAdditions,
+        deletions: file.stagedDeletions,
+      });
     }
     if (file.untracked) {
-      untracked.push({ ...shared, side: 'unstaged', letter: '?' });
+      untracked.push({
+        ...shared,
+        side: 'unstaged',
+        letter: '?',
+        additions: file.unstagedAdditions,
+        deletions: file.unstagedDeletions,
+      });
     } else if (file.unstaged) {
-      unstaged.push({ ...shared, side: 'unstaged', letter: sideLetter(file, 'unstaged') });
+      unstaged.push({
+        ...shared,
+        side: 'unstaged',
+        letter: sideLetter(file, 'unstaged'),
+        additions: file.unstagedAdditions,
+        deletions: file.unstagedDeletions,
+      });
     }
   }
 
@@ -202,32 +224,78 @@ export function isUntrackedRow(row: ChangeRow | ConflictRow): boolean {
   return row.letter === '?' || row.letter === '';
 }
 
+/** What `Discard` may do to a row, and why it may not. */
+export interface DiscardOptions {
+  /** The branch has a commit, so `HEAD` can be resolved. */
+  hasHead: boolean;
+  /** The same path also has a staged side (a partially staged file). */
+  hasStagedSide?: boolean;
+}
+
+export interface DiscardPermission {
+  allowed: boolean;
+  /** The inline reason a disabled `Discard` shows as its tooltip. */
+  reason: string | null;
+}
+
 /**
- * The confirmation of `Discard`. Core restores tracked paths from HEAD with
- * `git restore --source=HEAD --staged --worktree`, so it drops the staged and
- * the unstaged side of that path; untracked files are deleted instead. Without
- * HEAD the restore cannot run at all, so the text says the action fails.
+ * Whether `Discard` can run for this row. An untracked file is deleted even on
+ * a branch without commits; a tracked one needs `HEAD` to restore from, so an
+ * unborn branch refuses it and asks the user to unstage first.
+ */
+export function canDiscardRow(
+  row: ChangeRow | ConflictRow,
+  options: DiscardOptions,
+): DiscardPermission {
+  if (isUntrackedRow(row)) return { allowed: true, reason: null };
+  if (!options.hasHead) {
+    return {
+      allowed: false,
+      reason: 'Unstage the file first; there is no HEAD commit to restore from',
+    };
+  }
+  return { allowed: true, reason: null };
+}
+
+/**
+ * The confirmation of `Discard`. An untracked file is deleted, never restored;
+ * a tracked path is restored from HEAD with
+ * `git restore --source=HEAD --staged --worktree`, so both sides of that path
+ * go away — except for the unstaged row of a partially staged file, where only
+ * the worktree is restored from the index and the staged part stays.
  */
 export function discardConfirmation(
   row: ChangeRow | ConflictRow,
-  options: { hasHead: boolean },
+  options: DiscardOptions,
 ): ConfirmRequest {
   const target = rowTarget(row);
-  if (!options.hasHead) {
-    return {
-      title: `Discard ${target}`,
-      body: [
-        'This branch has no commits yet, so there is no HEAD to restore from: the discard fails and nothing on disk changes.',
-      ],
-      acceptLabel: 'Discard',
-      destructive: true,
-    };
-  }
+  // An untracked file lives outside HEAD entirely: `git clean -f` deletes it
+  // on any branch, so this check comes before the `hasHead` guard.
   if (isUntrackedRow(row)) {
     return {
       title: `Delete ${target}`,
       body: ['This deletes the untracked file from disk. This cannot be undone.'],
       acceptLabel: 'Delete file',
+      destructive: true,
+    };
+  }
+  const permission = canDiscardRow(row, options);
+  if (!permission.allowed) {
+    return {
+      title: `Discard ${target}`,
+      body: [permission.reason ?? 'This discard is not possible yet.'],
+      acceptLabel: 'Discard changes',
+      destructive: true,
+    };
+  }
+  if (options.hasStagedSide && 'side' in row && row.side === 'unstaged') {
+    return {
+      title: `Discard unstaged changes of ${target}`,
+      body: [
+        'Restores only the working tree from the index (git restore --worktree), so the staged part of this path stays staged.',
+        'This cannot be undone.',
+      ],
+      acceptLabel: 'Discard changes',
       destructive: true,
     };
   }
@@ -247,10 +315,7 @@ export function discardConfirmation(
  * derived from `discardConfirmation`, so the warning and the dialog can never
  * disagree about what a discard drops.
  */
-export function discardWarning(
-  row: ChangeRow | ConflictRow,
-  options: { hasHead: boolean },
-): string {
+export function discardWarning(row: ChangeRow | ConflictRow, options: DiscardOptions): string {
   const confirmation = discardConfirmation(row, options);
   return [confirmation.title, ...confirmation.body].join('\n\n');
 }

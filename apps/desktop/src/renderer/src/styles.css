@@ -4196,3 +4196,145 @@ code,
   flex-direction: column;
   gap: 4px;
 }
+
+/* ---------- staged row actions, the branch picker and the revision view ---------- */
+
+/* Compact row actions keep the change row readable at the narrowest width. */
+.change-row .row-action {
+  flex: 0 0 auto;
+}
+
+.row-action.danger:hover:not(:disabled) {
+  border-color: rgba(247, 118, 142, 0.35);
+  color: var(--red);
+}
+
+.branch-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.branch-row .branch-item {
+  flex: 1;
+  min-width: 0;
+}
+
+.branch-item.taken {
+  color: var(--dim);
+  cursor: help;
+}
+
+.branch-inspect {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  font-size: 9.5px;
+}
+
+.branch-menu-search {
+  padding: 2px 2px 6px;
+}
+
+.branch-menu-search .branch-input {
+  width: 100%;
+}
+
+.branch-menu-note {
+  margin: 4px 0 0;
+  padding: 5px 6px;
+  border-left: 2px solid var(--amber);
+  border-radius: 0 5px 5px 0;
+  background: #15130c;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.branch-item-badge.worktree {
+  border-color: rgba(224, 175, 104, 0.4);
+  color: var(--amber);
+}
+
+/* A revision picked in `Files` is read from git objects, not the working tree. */
+.revision-picker {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.revision-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 170px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: #0b0f15;
+  color: var(--muted);
+  font: 10px var(--mono);
+  cursor: pointer;
+}
+
+.revision-button:hover {
+  color: var(--text);
+}
+
+.revision-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.revision-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 25;
+  width: 300px;
+  max-height: 360px;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0b0f15;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.55);
+}
+
+.files-readonly {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 10px 6px;
+  padding: 5px 7px;
+  border-left: 2px solid var(--amber);
+  border-radius: 0 5px 5px 0;
+  background: #15130c;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.files-readonly-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.files-readonly code {
+  color: var(--amber);
+}
+
+/* A compare file row is a button; keep the flat `git-file` look. */
+.compare-file-row {
+  width: 100%;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.compare-file-row:disabled {
+  cursor: default;
+}

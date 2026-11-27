@@ -1,3 +1,4 @@
+import type { KeyboardEvent } from 'react';
 import { Button } from '@nest/ui';
 import { PanelMenu, type PanelMenuItem } from './PanelMenu';
 import type { SyncKind, SyncPlan } from '../gitSync';
@@ -47,6 +48,16 @@ export function CommitBox({
         : null;
 
   const amendDisabled = hasHead !== true;
+
+  /**
+   * `Ctrl+Enter` / `Cmd+Enter` commits, the gesture the terminal and the diff
+   * composer use. A plain Enter keeps its textarea meaning: a new line.
+   */
+  const onMessageKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (event.key !== 'Enter' || (!event.ctrlKey && !event.metaKey)) return;
+    event.preventDefault();
+    if (canCommit) onCommit();
+  };
   const items: PanelMenuItem[] = [
     {
       id: 'amend',
@@ -103,6 +114,7 @@ export function CommitBox({
         aria-label="Commit message"
         disabled={taskId === null || busy}
         onChange={(event) => onDraft(event.target.value)}
+        onKeyDown={onMessageKeyDown}
       />
 
       <div className="commit-actions">
