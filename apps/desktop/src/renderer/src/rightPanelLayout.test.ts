@@ -10,6 +10,7 @@ import {
   rightPanelMaxWidth,
   rightPanelWidthForKey,
   rightPanelWidthFromPointer,
+  revealCenterForTool,
   serializeRightPanelUi,
   writeRightPanelUi,
   type RightPanelStorage,
@@ -100,5 +101,38 @@ describe('persisted preference', () => {
     expect(isNarrowRightPanel(1040)).toBe(true);
     expect(isNarrowRightPanel(1181)).toBe(false);
     expect(readRightPanelUi(storage, 1100)).toEqual({ width: 420, collapsed: true });
+  });
+
+  /**
+   * A center tool is never a reason to resize the column. A narrow window is
+   * the one case that moves anything: the drawer covers the center, so it closes
+   * and the tool is visible at once.
+   */
+  describe('opening a center tool', () => {
+    it('closes the drawer of a narrow window', () => {
+      let closes = 0;
+      const closed = revealCenterForTool({
+        drawer: true,
+        close: () => {
+          closes += 1;
+        },
+      });
+
+      expect(closed).toBe(true);
+      expect(closes).toBe(1);
+    });
+
+    it('leaves a wide column and its tab alone', () => {
+      let closes = 0;
+      const closed = revealCenterForTool({
+        drawer: false,
+        close: () => {
+          closes += 1;
+        },
+      });
+
+      expect(closed).toBe(false);
+      expect(closes).toBe(0);
+    });
   });
 });

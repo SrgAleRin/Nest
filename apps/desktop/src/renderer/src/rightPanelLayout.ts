@@ -152,10 +152,20 @@ export interface RightPanelLayout {
   setCollapsed(collapsed: boolean): void;
   toggle(): void;
   close(): void;
-  /** Opens the drawer or the column, for `Open diff`. */
+  /** Opens the drawer or the column. */
   openPanel(): void;
-  /** Opens the panel wider, so a patch has room next to the terminal. */
-  widen(): void;
+}
+
+/**
+ * A center tool (`Diff`, `Graph`) was opened. In a narrow window the panel is a
+ * drawer over the center, so it closes: the tool must be visible, and the panel
+ * is one click away. A wide column keeps its width and its tab — opening a patch
+ * never resizes the panel.
+ */
+export function revealCenterForTool(layout: { drawer: boolean; close: () => void }): boolean {
+  if (!layout.drawer) return false;
+  layout.close();
+  return true;
 }
 
 /**
@@ -225,19 +235,6 @@ export function useRightPanelLayout(): RightPanelLayout {
     else setCollapsed(!ui.collapsed);
   }, [narrow, setCollapsed, ui.collapsed]);
 
-  const widen = useCallback(() => {
-    setDrawerOpen(true);
-    setUi((previous) => {
-      const nextWidth = Math.min(
-        rightPanelMaxWidth(window.innerWidth),
-        Math.max(clampRightPanelWidth(previous.width, window.innerWidth), 620),
-      );
-      const updated = { width: nextWidth, collapsed: false };
-      writeRightPanelUi(browserStorage(), updated);
-      return updated;
-    });
-  }, []);
-
   return useMemo(
     () => ({
       narrow,
@@ -250,19 +247,7 @@ export function useRightPanelLayout(): RightPanelLayout {
       toggle,
       close,
       openPanel,
-      widen,
     }),
-    [
-      narrow,
-      width,
-      ui.collapsed,
-      drawerOpen,
-      setWidth,
-      setCollapsed,
-      toggle,
-      close,
-      openPanel,
-      widen,
-    ],
+    [narrow, width, ui.collapsed, drawerOpen, setWidth, setCollapsed, toggle, close, openPanel],
   );
 }

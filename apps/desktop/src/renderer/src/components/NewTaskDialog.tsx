@@ -60,15 +60,15 @@ export function NewTaskDialog({
   step,
   error,
   retryStart,
+  initialBaseRef = null,
   onCreate,
   onCancel,
   onClose,
   onRetryStart,
-  initialBaseRef,
 }: NewTaskDialogProps) {
   const [location, setLocation] = useState<NewTaskLocation>('worktree');
   const [title, setTitle] = useState('');
-  const [baseRef, setBaseRef] = useState('');
+  const [baseRef, setBaseRef] = useState(initialBaseRef ?? '');
   const [setupScript, setSetupScript] = useState(project.setupScript ?? '');
   const seededBase = useRef(false);
   const [harnessId, setHarnessId] = useState(() => defaultHarnessId(harnesses, newSessionDefault));
@@ -301,8 +301,8 @@ export function NewTaskDialog({
               />
               <small className="field-hint">
                 Runs in the new worktree after it is created and is remembered for this project.
-                <code>.env</code> and <code>.env.local</code> are copied only when “Copy .env
-                files” is enabled in Settings.
+                <code>.env</code> and <code>.env.local</code> are copied only when “Copy .env files”
+                is enabled in Settings.
               </small>
             </label>
           </>

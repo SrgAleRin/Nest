@@ -59,8 +59,11 @@ interface SourceControlPanelProps {
   onInspectBranch?: (ref: string) => void;
   onOpenHistory: () => void;
   onOpenCompare: () => void;
-  /** A row the list should focus after coming back from a patch. */
-  initialFocus: GitSelection | null;
+  /**
+   * A row the list should focus after coming back from a patch. Optional now
+   * that the list stays on screen next to the patch in the center.
+   */
+  initialFocus?: GitSelection | null;
 }
 
 /** One action a failed operation offers inline; nothing here runs by itself. */
@@ -97,7 +100,7 @@ export function SourceControlPanel({
   onInspectBranch,
   onOpenHistory,
   onOpenCompare,
-  initialFocus,
+  initialFocus = null,
 }: SourceControlPanelProps) {
   const taskId = task?.id ?? null;
   const store = useGitSnapshotStore();

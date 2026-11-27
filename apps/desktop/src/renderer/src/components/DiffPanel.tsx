@@ -21,11 +21,11 @@ import { DiffPanelSkeleton } from './PanelSkeletons';
 import { panelPhase } from '../panelState';
 import { useGitSnapshotStore } from '../state/GitSnapshotProvider';
 import type { GitSelection, GitSide } from '../state/gitSnapshot';
+import type { CompareDiffTarget } from '../state/centerTabs';
 import {
   diffSideCounts,
   initialMode,
   isCurrentDiffAnswer,
-  isTypingTarget,
   missingTargetMessage,
   otherSideAction,
   pickTargetFile,
@@ -76,8 +76,12 @@ interface DiffPanelProps {
    * that one file and opens on that side; `null` keeps the whole patch.
    */
   target?: GitSelection | null;
-  /** Leaves the single-file view for the change list (the store keeps it). */
-  onBackToList?: () => void;
+  /**
+   * A comparison of two revisions instead of the task's own changes. The view
+   * is read-only: no staging and no review notes, because nothing here is the
+   * working tree the notes are anchored to.
+   */
+  compareTarget?: CompareDiffTarget | null;
 }
 
 interface ComposerState {
@@ -110,7 +114,38 @@ type DiffRow =
   | { kind: 'comment'; key: string; comment: ReviewComment }
   | { kind: 'composer'; key: string; composer: ComposerState };
 
-export function DiffPanel({
+/**
+ * The patch of the task, or a read-only comparison of two revisions. Two views
+ * rather than one flag: the compare view has no sides to stage and no notes to
+ * anchor, so it shares only the row model with the working diff.
+ */
+export function DiffPanel(props: DiffPanelProps) {
+  if (props.compareTarget) {
+    return (
+      <CompareDiffPanel
+        client={props.client}
+        task={props.task}
+        compareTarget={props.compareTarget}
+        refreshKey={props.refreshKey}
+        onNotify={props.onNotify}
+      />
+    );
+  }
+  return <WorkingDiffPanel {...props} />;
+}
+
+/**
+ * `Show all files`: the single-file selection lives in the task memory, so
+ * dropping it reopens the whole patch without closing the `Diff` tab.
+ */
+export function clearDiffSelection(
+  store: { updateMemory(taskId: string, patch: { selection: GitSelection | null }): unknown },
+  taskId: string,
+): void {
+  store.updateMemory(taskId, { selection: null });
+}
+
+function WorkingDiffPanel({
   client,
   task,
   sessions,
@@ -119,7 +154,6 @@ export function DiffPanel({
   onChanged,
   onNotify,
   target = null,
-  onBackToList,
 }: DiffPanelProps) {
   const targetPath = target?.path ?? null;
   const targetSide = target?.mode ?? null;
@@ -354,25 +388,19 @@ export function DiffPanel({
   const virtualItems = virtualizer.getVirtualItems();
 
   /**
-   * Escape leaves the single-file view — after the composer, which owns the key
-   * while it is open, and never while the user types in a field.
+   * Escape cancels the comment composer before anything else wants the key:
+   * with no composer open the center closes the `Diff` tab instead.
    */
   useEffect(() => {
-    if (!onBackToList) return;
-    const leave = onBackToList;
+    if (composer === null) return;
     function onKeyDown(event: KeyboardEvent): void {
       if (event.key !== 'Escape' || event.defaultPrevented) return;
-      if (composer !== null) {
-        setComposer(null);
-        return;
-      }
-      if (isTypingTarget(event.target)) return;
       event.preventDefault();
-      leave();
+      setComposer(null);
     }
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [composer, onBackToList]);
+  }, [composer]);
 
   // Which file the viewport currently sits in, for the sticky header overlay.
   const stickyFile = useMemo(() => {
@@ -561,6 +589,12 @@ export function DiffPanel({
     }
   }
 
+  /** Back to every file of the comparison, without leaving the tab. */
+  function showAllFiles(): void {
+    if (!task) return;
+    clearDiffSelection(snapshotStore, task.id);
+  }
+
   /** Opens the other side of the open file through the store's selection. */
   function switchSide(side: GitSide): void {
     if (!task || !target) return;
@@ -709,7 +743,6 @@ export function DiffPanel({
           loading={loading}
           onMode={setMode}
           onRefresh={() => request && void load(request)}
-          onBackToList={onBackToList}
         />
         <ErrorState title="Diff unavailable" onRetry={() => request && void load(request)}>
           {error}
@@ -733,7 +766,7 @@ export function DiffPanel({
         loading={loading}
         onMode={setMode}
         onRefresh={() => request && void load(request)}
-        onBackToList={onBackToList}
+        onShowAll={target ? showAllFiles : undefined}
       />
 
       <OutsidePatchNotes
@@ -775,9 +808,9 @@ export function DiffPanel({
                     {otherSide.label}
                   </button>
                 ) : null}
-                {onBackToList ? (
-                  <button className="diff-missing-back" onClick={onBackToList}>
-                    Back to list
+                {target ? (
+                  <button className="diff-missing-back" onClick={showAllFiles}>
+                    Show all files
                   </button>
                 ) : null}
               </div>
@@ -822,7 +855,7 @@ function DiffHead({
   loading,
   onMode,
   onRefresh,
-  onBackToList,
+  onShowAll,
 }: {
   descriptor: DiffDescriptor | null;
   count: number | null;
@@ -832,22 +865,13 @@ function DiffHead({
   loading: boolean;
   onMode: (mode: DiffMode) => void;
   onRefresh: () => void;
-  onBackToList?: () => void;
+  /** Drops the single-file filter; absent while the whole patch is shown. */
+  onShowAll?: (() => void) | undefined;
 }) {
   const hint = DIFF_MODE_OPTIONS.find((option) => option.mode === mode)?.hint ?? '';
   return (
     <>
       <div className="diff-head">
-        {onBackToList ? (
-          <button
-            className="mini-btn diff-back-btn"
-            aria-label="Back to Source Control"
-            title="Back to the change list; the selected file stays remembered"
-            onClick={onBackToList}
-          >
-            ← Source Control
-          </button>
-        ) : null}
         <span className="section-label">
           Diff
           {count !== null ? ` · ${count} file${count === 1 ? '' : 's'}` : ''}
@@ -863,6 +887,18 @@ function DiffHead({
           <span className="diff-target-label" title={target.path}>
             {targetLabel(target)}
           </span>
+          {onShowAll ? (
+            <button
+              type="button"
+              className="mini-btn diff-show-all"
+              data-testid="diff-show-all"
+              title="Show every changed file of this patch; nothing stays selected in the list"
+              aria-label="Show all files"
+              onClick={onShowAll}
+            >
+              Show all files
+            </button>
+          ) : null}
         </div>
       ) : null}
 
@@ -1366,5 +1402,244 @@ function estimateRowSize(row: DiffRow): number {
       return 128;
     default:
       return 24;
+  }
+}
+
+/**
+ * A comparison of two revisions, opened from `Compare`, a commit or the branch
+ * inspector. Read-only by construction: the working tree, the index and the
+ * review notes belong to the task's own patch, never to somebody else's branch.
+ */
+function CompareDiffPanel({
+  client,
+  task,
+  compareTarget,
+  refreshKey,
+  onNotify,
+}: {
+  client: NestClient;
+  task: Task | null;
+  compareTarget: CompareDiffTarget;
+  refreshKey: number;
+  onNotify: (level: 'info' | 'warn' | 'error', message: string) => void;
+}) {
+  const { base, head, path } = compareTarget;
+  const taskId = task?.id ?? null;
+  const [result, setResult] = useState<{ files: DiffFile[]; mergeBase: string | null } | null>(
+    null,
+  );
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [highlights, setHighlights] = useState<Map<DiffHunk, HunkHighlight>>(new Map());
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  /** Only the newest request may write state; the target can change mid-flight. */
+  const requestSeq = useRef(0);
+
+  const load = useCallback(async () => {
+    if (!taskId) return;
+    const seq = (requestSeq.current += 1);
+    setLoading(true);
+    setError(null);
+    try {
+      const next = await client.invoke('git.compareDiff', {
+        taskId,
+        base,
+        head,
+        ...(path !== null ? { path } : {}),
+      });
+      if (seq !== requestSeq.current) return;
+      setResult({ files: next.files, mergeBase: next.mergeBase });
+    } catch (loadError) {
+      if (seq !== requestSeq.current) return;
+      const message = errorMessage(loadError);
+      setError(message);
+      onNotify('error', message);
+    } finally {
+      if (seq === requestSeq.current) setLoading(false);
+    }
+  }, [base, client, head, onNotify, path, taskId]);
+
+  useEffect(() => {
+    void load();
+  }, [load, refreshKey]);
+
+  const diff = useMemo<GitDiff | null>(
+    () =>
+      result === null
+        ? null
+        : {
+            descriptor: {
+              mode: 'base',
+              baseRef: base,
+              workspaceIncludesIndex: false,
+              anchorSide: 'worktree',
+            },
+            files: result.files,
+          },
+    [base, result],
+  );
+
+  useEffect(() => {
+    if (!diff) {
+      setHighlights(new Map());
+      return;
+    }
+    let cancelled = false;
+    const hunks: Array<{ file: DiffFile; hunk: DiffHunk }> = [];
+    let budget = MAX_HIGHLIGHT_TOTAL_LINES;
+    for (const file of diff.files) {
+      const lines = file.hunks.reduce((total, hunk) => total + hunk.lines.length, 0);
+      if (lines === 0 || lines > MAX_HIGHLIGHT_FILE_LINES || lines > budget) continue;
+      budget -= lines;
+      for (const hunk of file.hunks) hunks.push({ file, hunk });
+    }
+    void Promise.all(
+      hunks.map(async ({ file, hunk }) => ({
+        hunk,
+        highlighted: await highlightHunk(hunk, file.path),
+      })),
+    ).then((finished) => {
+      if (cancelled) return;
+      const next = new Map<DiffHunk, HunkHighlight>();
+      for (const { hunk, highlighted } of finished) {
+        if (highlighted) next.set(hunk, highlighted);
+      }
+      setHighlights(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [diff]);
+
+  // No comments and no composer: the row model is the working diff's, minus
+  // everything that would attach something to a revision nobody checked out.
+  const rows = useMemo(() => buildRows(diff, [], null), [diff]);
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (index) => {
+      const row = rows[index];
+      return row ? estimateRowSize(row) : 0;
+    },
+    getItemKey: (index) => rows[index]?.key ?? index,
+    overscan: 10,
+  });
+  const virtualItems = virtualizer.getVirtualItems();
+
+  if (!task) {
+    return (
+      <EmptyState title="No workspace selected">Select a task to compare revisions.</EmptyState>
+    );
+  }
+
+  const banner = (
+    <>
+      <div className="diff-head">
+        <span className="section-label">
+          Diff
+          {diff ? ` · ${diff.files.length} file${diff.files.length === 1 ? '' : 's'}` : ''}
+        </span>
+        <button className="mini-btn" onClick={() => void load()} disabled={loading}>
+          {loading ? 'Loading…' : 'Refresh'}
+        </button>
+      </div>
+      <div className="diff-compare-bar" data-testid="diff-compare-banner">
+        <span className="diff-compare-label">Comparing</span>
+        <code className="diff-compare-ref">{base}</code>
+        <span aria-hidden="true">→</span>
+        <code className="diff-compare-ref">{head}</code>
+        {path !== null ? (
+          <span className="diff-target-label" title={path}>
+            {path}
+          </span>
+        ) : null}
+      </div>
+      <div className="diff-mode-hint muted">
+        Read-only comparison of two revisions. Staging, discarding and review notes apply to the
+        working diff only.
+      </div>
+    </>
+  );
+
+  if (error !== null && diff === null) {
+    return (
+      <div className="diff-panel">
+        {banner}
+        <ErrorState title="Comparison unavailable" onRetry={() => void load()}>
+          {error}
+        </ErrorState>
+      </div>
+    );
+  }
+
+  if (diff === null) return <DiffPanelSkeleton />;
+
+  return (
+    <div className="diff-panel">
+      {banner}
+      <div className="diff-body">
+        <div className="diff-scroll" ref={scrollRef}>
+          {diff.files.length === 0 ? (
+            <div className="panel-empty">
+              No changes between {base} and {head}
+              {result?.mergeBase ? ` (from ${result.mergeBase.slice(0, 7)})` : ''}.
+            </div>
+          ) : null}
+
+          <div className="diff-rows" style={{ height: virtualizer.getTotalSize() }}>
+            {virtualItems.map((item) => {
+              const row = rows[item.index];
+              if (!row) return null;
+              return (
+                <div
+                  key={item.key}
+                  data-index={item.index}
+                  ref={virtualizer.measureElement}
+                  className="diff-row"
+                  style={{ transform: `translateY(${item.start}px)` }}
+                >
+                  {renderCompareRow(row, highlights)}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** One row of the read-only comparison: no notes, no stage, no composer. */
+function renderCompareRow(row: DiffRow, highlights: Map<DiffHunk, HunkHighlight>) {
+  switch (row.kind) {
+    case 'file':
+      return <DiffFileHeader file={row.file} mode="base" />;
+    case 'empty':
+      return <div className="diff-empty">{emptyDiffLabel(row.file)}</div>;
+    case 'hunk':
+      return <div className="diff-hunk-head">{row.hunk.header}</div>;
+    case 'line': {
+      const tokens = highlights.get(row.hunk)?.lines[row.lineIndex] ?? null;
+      return (
+        <div className={`diff-line diff-${row.line.type}`}>
+          <span className="diff-num old">{row.line.oldLine ?? ''}</span>
+          <span className="diff-num new">{row.line.newLine ?? ''}</span>
+          <span className="diff-sign">
+            {row.line.type === 'add' ? '+' : row.line.type === 'del' ? '-' : ' '}
+          </span>
+          <span className="diff-text">
+            {tokens
+              ? tokens.map((token, index) => (
+                  <span key={index} style={tokenStyle(token)}>
+                    {token.content}
+                  </span>
+                ))
+              : row.line.text || ' '}
+          </span>
+        </div>
+      );
+    }
+    default:
+      return null;
   }
 }
