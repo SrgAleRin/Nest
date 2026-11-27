@@ -118,6 +118,28 @@ export async function addProject(page: Page, repoPath: string): Promise<string> 
   return added.data.project.id;
 }
 
+/**
+ * Runs one palette command by its text. The palette closes before the command
+ * runs, so the caller only has to wait for the surface the command opens.
+ */
+export async function runPaletteCommand(page: Page, text: string): Promise<void> {
+  await page.keyboard.press('Control+Shift+P');
+  const input = page.locator('.palette-search input');
+  await expect(input).toBeVisible();
+  await input.fill(text);
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.command-palette')).toHaveCount(0);
+}
+
+/**
+ * A tool tab of the center workbench. `Diff` and `Graph` open in `.center` and
+ * leave the right panel on its own section, so a spec that is about the patch
+ * never has to look inside the column to find it.
+ */
+export function centerTab(page: Page, tab: 'diff' | 'graph'): Locator {
+  return page.locator(`[data-testid="center-${tab}-tab"]`);
+}
+
 /** `git` in a fixture repository; the tests read the real index, not the UI. */
 export function git(args: string[], cwd: string): string {
   return execFileSync('git', args, {

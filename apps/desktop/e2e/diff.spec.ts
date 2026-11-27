@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { _electron as electron, type ElectronApplication } from 'playwright';
-import { pinWideWindow } from './helpers';
+import { centerTab, pinWideWindow, runPaletteCommand } from './helpers';
 
 /**
  * The diff viewer virtualizes rows, highlights syntax, supports multi-line
@@ -88,11 +88,12 @@ test('virtualizes a large diff, keeps comments working and highlights syntax', a
   await page.reload();
   await page.waitForSelector('.app', { timeout: 60_000 });
 
-  // `Show Diff panel` opens the whole working tree, with no single target.
-  await page.keyboard.press('Control+Shift+P');
-  await page.locator('.palette-search input').fill('show diff');
-  await page.keyboard.press('Enter');
-  await expect(page.locator('.right-subhead-title')).toHaveText('Diff');
+  // `Show diff` opens the whole working tree as a tab of the center, with no
+  // single target; the right panel keeps its own section on screen.
+  await runPaletteCommand(page, 'show diff');
+  await expect(centerTab(page, 'diff')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('[data-testid="center-diff-layer"]')).toBeVisible();
+  await expect(page.locator('.right-subhead-title')).toHaveCount(0);
   await expect(page.locator('.diff-target-bar')).toHaveCount(0);
   await expect(page.locator('.diff-file-head .diff-path').first()).toHaveText('a-small.ts');
   await expect(page.locator('.diff-file-head .diff-path', { hasText: 'big.ts' })).toHaveCount(1);
@@ -148,22 +149,19 @@ test('virtualizes a large diff, keeps comments working and highlights syntax', a
     '[data-testid="change-row"][data-path="a-small.ts"][data-side="unstaged"]',
   );
   await smallRow.locator('.change-open').click();
-  await expect(page.locator('.diff-target-bar')).toHaveText('a-small.ts · unstaged side');
+  await expect(page.locator('.diff-target-label')).toHaveText('a-small.ts · unstaged side');
   await expect(page.locator('.diff-file-head .diff-path')).toHaveCount(1);
   await expect(page.locator('.diff-file-head .diff-path')).toHaveText('a-small.ts');
   await expect(page.locator('.diff-file-head .diff-path', { hasText: 'big.ts' })).toHaveCount(0);
 
   // Escape on the list drops the selection, so the viewer goes back to the
-  // whole working tree: one viewer, two ways in.
-  await page.locator('#right-tab-source-control').click();
+  // whole working tree without leaving the `Diff` tab: one viewer, two ways in.
   await smallRow.locator('.change-open').focus();
   await page.keyboard.press('Escape');
   await expect(smallRow).not.toHaveAttribute('data-selected', 'true');
-  await page.keyboard.press('Control+Shift+P');
-  await page.locator('.palette-search input').fill('show diff');
-  await page.keyboard.press('Enter');
   await expect(page.locator('.diff-target-bar')).toHaveCount(0);
   await expect(page.locator('.diff-file-head .diff-path')).toHaveCount(2);
+  await expect(centerTab(page, 'diff')).toHaveAttribute('aria-selected', 'true');
 
   // Scrolling to the end mounts the last lines and shows the sticky file header.
   await page.locator('.diff-scroll').evaluate((element) => {

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { _electron as electron, type ElectronApplication } from 'playwright';
-import { addProject, openRightPanel, startHarness } from './helpers';
+import { addProject, centerTab, openRightPanel, runPaletteCommand, startHarness } from './helpers';
 
 /**
  * The Windows smoke from `docs/right-panel-plan.md` §4, asserted instead of
@@ -113,6 +113,23 @@ async function terminalAlive(page: Page): Promise<void> {
   await expect(rows).toContainText('still-here', { timeout: 30_000 });
 }
 
+/** What the active terminal currently renders; the shell's own output. */
+function terminalText(page: Page): Promise<string> {
+  return page
+    .locator('.terminal-view.active .xterm-rows')
+    .evaluate((element) => element.textContent ?? '');
+}
+
+/** The box xterm fitted itself into; `0×0` would mean a lost PTY size. */
+async function terminalScreenBox(page: Page): Promise<{ width: number; height: number }> {
+  return page
+    .locator('.terminal-view.active .xterm-screen')
+    .evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return { width: rect.width, height: rect.height };
+    });
+}
+
 test('keeps the shell readable at 1100x700 and in a wide window with the panel open', async () => {
   const { app, page, root } = await openOnce({ width: 1100, height: 700 });
   try {
@@ -147,7 +164,7 @@ test('keeps the shell readable at 1100x700 and in a wide window with the panel o
     await expect(page.locator('[data-testid="source-control-head"]')).toBeVisible();
     await expect(page.locator('[data-testid="commit-box"]')).toBeInViewport();
 
-    // Keyboard: arrow moves inside the list, Enter opens the patch, Escape returns.
+    // Keyboard: arrow moves inside the list, Enter opens the patch in the center.
     const first = page.locator('[data-testid="change-row"] .change-open').first();
     await first.focus();
     await page.keyboard.press('ArrowDown');
@@ -155,17 +172,28 @@ test('keeps the shell readable at 1100x700 and in a wide window with the panel o
     await expect(second).toBeFocused();
     await page.keyboard.press('Enter');
     await expect(page.locator('.diff-target-bar')).toBeVisible({ timeout: 30_000 });
-    await page.keyboard.press('Escape');
-    await expect(page.locator('[data-testid="change-count"]')).toBeVisible();
+    await expect(centerTab(page, 'diff')).toHaveAttribute('aria-selected', 'true');
 
-    // Back to the list keeps the selection; the drawer closes from its own
-    // affordances (Escape in the list is the explicit "clear selection" key).
-    await page.keyboard.press('Escape');
-    await expect(page.locator('[data-testid="change-count"]')).toBeVisible();
-    await page.locator('[data-testid="right-drawer-backdrop"]').click({ position: { x: 4, y: 4 } });
+    // A tool opens over the center, so the drawer steps aside and the patch is
+    // visible whole instead of behind the overlay.
     await expect(page.locator('.right-drawer')).toHaveCount(0);
     await expect(page.locator('.right-rail')).toBeVisible();
-    await expect(page.locator('.rail-toggle')).toBeFocused();
+
+    // `Escape` in the center closes the tool and leaves the shell in front.
+    await page.keyboard.press('Escape');
+    await expect(centerTab(page, 'diff')).toHaveCount(0);
+    await expect(page.locator('[data-testid="center-terminal-layer"]')).toHaveClass(/is-active/);
+
+    // `Graph` takes the same route and closes the drawer as well.
+    await page.locator('.rail-toggle').click();
+    await expect(page.locator('.right-drawer')).toBeVisible();
+    await page.getByRole('button', { name: 'Graph', exact: true }).click();
+    await expect(centerTab(page, 'graph')).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('.right-drawer')).toHaveCount(0);
+    await expect(page.locator('.right-rail')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(centerTab(page, 'graph')).toHaveCount(0);
+    await expect(page.locator('[data-testid="center-terminal-layer"]')).toHaveClass(/is-active/);
 
     // The terminal keeps its input through every open and close of the panel.
     await startHarness(page, 'fake');
@@ -173,18 +201,39 @@ test('keeps the shell readable at 1100x700 and in a wide window with the panel o
       timeout: 30_000,
     });
     await terminalAlive(page);
-    const scrollback = await page
-      .locator('.terminal-view.active .xterm-rows')
-      .evaluate((element) => element.textContent ?? '');
     await page.locator('.rail-toggle').click();
     await expect(page.locator('.right-drawer')).toBeVisible();
     // The drawer sits over the terminal, so input resumes once it is closed.
     await page.locator('[data-testid="right-drawer-backdrop"]').click({ position: { x: 4, y: 4 } });
     await expect(page.locator('.right-drawer')).toHaveCount(0);
+    await terminalAlive(page);
+
+    // Terminal ↔ Diff ↔ Graph: the xterm stays mounted under every surface, so
+    // the PTY keeps its size and its input instead of being re-fitted from 0×0.
+    const mounted = await terminalScreenBox(page);
+    expect(mounted.width).toBeGreaterThan(100);
+    expect(mounted.height).toBeGreaterThan(40);
+    const beforeSwitch = await terminalText(page);
+    await runPaletteCommand(page, 'show diff');
+    await expect(centerTab(page, 'diff')).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('[data-testid="center-terminal-layer"]')).toHaveClass(/is-hidden/);
+    await page.locator('.terminal-tab').first().click();
+    await expect(page.locator('[data-testid="center-terminal-layer"]')).toHaveClass(/is-active/);
     await expect(page.locator('.terminal-view.active .xterm-rows')).toContainText(
-      scrollback.slice(-40),
+      beforeSwitch.slice(-40),
     );
     await terminalAlive(page);
+
+    await runPaletteCommand(page, 'git graph');
+    await expect(centerTab(page, 'graph')).toHaveAttribute('aria-selected', 'true');
+    await page.locator('.terminal-tab').first().click();
+    await expect(page.locator('[data-testid="center-terminal-layer"]')).toHaveClass(/is-active/);
+    await terminalAlive(page);
+    const afterSwitch = await terminalScreenBox(page);
+    expect(afterSwitch.width).toBeGreaterThan(100);
+    expect(afterSwitch.height).toBeGreaterThan(40);
+    expect(afterSwitch.width).toBeCloseTo(mounted.width, 0);
+    expect(afterSwitch.height).toBeCloseTo(mounted.height, 0);
 
     // The wide window keeps the panel as a column: nothing clipped, no h-scroll.
     await app.evaluate(({ BrowserWindow }) => {
