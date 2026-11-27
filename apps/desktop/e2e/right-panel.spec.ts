@@ -522,7 +522,7 @@ test('keeps the draft and the selection of each task across A → B → A', asyn
     await page.waitForSelector('.app', { timeout: 60_000 });
 
     const select = async (title: string): Promise<void> => {
-      await page.locator('.task-row', { hasText: title }).locator('.task-select').click();
+      await page.locator('[data-testid="workspace-card"]', { hasText: title }).click();
     };
     await select('Main checkout');
     await expect(changeRow(page, 'second.txt', 'unstaged')).toBeVisible({ timeout: 30_000 });

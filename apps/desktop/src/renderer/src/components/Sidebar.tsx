@@ -307,6 +307,7 @@ export function Sidebar(props: SidebarProps) {
 
   const selectTask = useCallback(
     (taskId: string) => {
+      setFocusedKey(`card:${taskId}`);
       props.onSelectTask(taskId);
       if (drawer) onClose();
     },
@@ -546,8 +547,10 @@ export function Sidebar(props: SidebarProps) {
       return;
     }
 
+    const effectiveFocusedKey = focusedKey ?? (selectedTaskId ? `card:${selectedTaskId}` : null);
     const navigable = rows.flatMap((row, index) => (row.kind === 'pending-task' ? [] : [index]));
-    const currentIndex = focusedKey === null ? -1 : rows.findIndex((row) => row.key === focusedKey);
+    const currentIndex =
+      effectiveFocusedKey === null ? -1 : rows.findIndex((row) => row.key === effectiveFocusedKey);
 
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       if (navigable.length === 0) return;
@@ -576,7 +579,7 @@ export function Sidebar(props: SidebarProps) {
       return;
     }
 
-    const row = rows.find((candidate) => candidate.key === focusedKey);
+    const row = rows.find((candidate) => candidate.key === effectiveFocusedKey);
     if (!row) return;
 
     if (event.key === 'ArrowLeft') {
@@ -795,7 +798,10 @@ export function Sidebar(props: SidebarProps) {
         row={row}
         focused={focusedKey === row.key}
         manualProjectSortable={view.groupBy === 'project' && view.projectOrderBy === 'manual'}
-        onToggleCollapse={(key) => updateView((previous) => toggleCollapsedGroup(previous, key))}
+        onToggleCollapse={(key) => {
+          setFocusedKey(key);
+          updateView((previous) => toggleCollapsedGroup(previous, key));
+        }}
         onNewTask={(projectId) => props.onNewTask(projectId)}
         onOpenProjectMenu={(project, anchor) =>
           setContextMenu({ kind: 'project', project, anchor })
@@ -827,7 +833,7 @@ export function Sidebar(props: SidebarProps) {
       <button
         ref={railButtonRef}
         type="button"
-        className="rail-toggle"
+        className="left-rail-toggle"
         title="Expand sidebar (Ctrl+Shift+B)"
         aria-label="Expand sidebar"
         aria-expanded={false}

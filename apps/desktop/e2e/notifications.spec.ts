@@ -5,6 +5,7 @@ import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { _electron as electron, type ElectronApplication } from 'playwright';
 import type { NestBridge } from '@nest/shared';
+import { electronArgs } from './helpers';
 
 declare global {
   interface Window {
@@ -43,7 +44,7 @@ test('marks finished sessions unread and routes notification clicks', async () =
   delete env.ELECTRON_RUN_AS_NODE;
 
   const app: ElectronApplication = await electron.launch({
-    args: ['.'],
+    args: electronArgs(),
     cwd: appDir,
     env: {
       ...env,
@@ -108,18 +109,16 @@ test('marks finished sessions unread and routes notification clicks', async () =
       if (!response.ok) throw new Error(response.error.message);
     }, first.id);
 
-    // Unread shows up in the tab, its session row, and the task aggregate.
+    // Unread shows up in the tab and on the workspace card.
     await expect(page.locator('.terminal-tab .unread-badge')).toHaveText('1', {
       timeout: 20_000,
     });
-    await expect(page.locator('.session-row .unread-badge')).toHaveText('1');
-    await expect(page.locator('.task-row .unread-badge')).toHaveText('1');
+    await expect(page.locator('[data-testid="workspace-card"] .unread-badge')).toHaveText('1');
 
     // Opening the finished session clears it everywhere.
     await page.locator('.terminal-tab').nth(0).click();
     await expect(page.locator('.terminal-tab .unread-badge')).toHaveCount(0);
-    await expect(page.locator('.session-row .unread-badge')).toHaveCount(0);
-    await expect(page.locator('.task-row .unread-badge')).toHaveCount(0);
+    await expect(page.locator('[data-testid="workspace-card"] .unread-badge')).toHaveCount(0);
 
     // A notification click arrives as an event and opens the matching session.
     await app.evaluate(({ BrowserWindow }, sessionId) => {

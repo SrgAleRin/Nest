@@ -8,6 +8,7 @@ import type { NestBridge } from '@nest/shared';
 import {
   annotateEnvironment,
   centerTab,
+  electronArgs,
   pinWideWindow,
   startHarness,
   waitForRemoteOutcome,
@@ -56,7 +57,7 @@ function launchApp(): Promise<ElectronApplication> {
   delete env.ELECTRON_RUN_AS_NODE;
 
   return electron.launch({
-    args: ['.'],
+    args: electronArgs(),
     cwd: appDir,
     env: {
       ...env,
@@ -167,7 +168,7 @@ test('task workflow: UI creation, staged review, note, commit, first push, resta
   });
 
   // Back to the first task for the rest of the pass.
-  await page.locator('.task-row', { hasText: 'Audit workflow' }).locator('.task-select').click();
+  await page.locator('[data-testid="workspace-card"]', { hasText: 'Audit workflow' }).click();
 
   // --- run the fake harness in the task ------------------------------------
   await startHarness(page, 'fake');
@@ -281,14 +282,22 @@ test('task workflow: UI creation, staged review, note, commit, first push, resta
   // --- delete the tasks through the UI ------------------------------------
   // The `Create & start` task goes first so the leftover check below sees no
   // sessions at all; deleting it also stops the session it started.
-  page.once('dialog', (confirm) => void confirm.accept());
-  await page.locator('.task-row', { hasText: 'Started on create' }).locator('.task-remove').click();
+  const deleteViaMenu = async (title: string): Promise<void> => {
+    const card = page.locator('[data-testid="workspace-card"]', { hasText: title });
+    await card.click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Delete worktree…' }).click();
+    const modal = page.locator('.delete-task-modal');
+    await expect(modal).toBeVisible();
+    await modal.getByRole('button', { name: /Delete worktree/ }).click();
+    await expect(modal).toHaveCount(0, { timeout: 30_000 });
+  };
+
+  await deleteViaMenu('Started on create');
   await expect(page.locator('.sidebar')).not.toContainText('Started on create', {
     timeout: 30_000,
   });
 
-  page.once('dialog', (confirm) => void confirm.accept());
-  await page.locator('.task-row', { hasText: 'Audit workflow' }).locator('.task-remove').click();
+  await deleteViaMenu('Audit workflow');
   await expect(page.locator('.sidebar')).not.toContainText('Audit workflow', { timeout: 30_000 });
   expect(existsSync(createdTask.workspacePath)).toBe(false);
 

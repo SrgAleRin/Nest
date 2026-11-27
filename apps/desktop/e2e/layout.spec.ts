@@ -4,7 +4,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { _electron as electron, type ElectronApplication } from 'playwright';
-import { addProject, centerTab, openRightPanel, runPaletteCommand, startHarness } from './helpers';
+import {
+  addProject,
+  centerTab,
+  electronArgs,
+  openRightPanel,
+  runPaletteCommand,
+  startHarness,
+} from './helpers';
 
 /**
  * The Windows smoke from `docs/right-panel-plan.md` §4, asserted instead of
@@ -53,10 +60,10 @@ async function openOnce(options: {
 }): Promise<{ app: ElectronApplication; page: Page; root: string }> {
   const root = mkdtempSync(path.join(os.tmpdir(), 'nest-smoke-'));
   const repo = seed(root, 'smoke');
-  const args = ['.'];
-  if (options.scale) args.push(`--force-device-scale-factor=${options.scale}`);
+  const extraArgs: string[] = [];
+  if (options.scale) extraArgs.push(`--force-device-scale-factor=${options.scale}`);
   const app = await electron.launch({
-    args,
+    args: electronArgs(...extraArgs),
     cwd: path.resolve(__dirname, '..'),
     env: {
       ...process.env,
@@ -234,6 +241,18 @@ test('keeps the shell readable at 1100x700 and in a wide window with the panel o
     expect(afterSwitch.height).toBeGreaterThan(40);
     expect(afterSwitch.width).toBeCloseTo(mounted.width, 0);
     expect(afterSwitch.height).toBeCloseTo(mounted.height, 0);
+
+    // At <= 980 px, the left sidebar also folds into a rail + overlay drawer.
+    await app.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      if (window) window.setSize(900, 700);
+    });
+    await expect(page.locator('.sidebar-rail')).toBeVisible({ timeout: 30_000 });
+    await page.locator('.left-rail-toggle').click();
+    await expect(page.locator('.left-drawer')).toBeVisible();
+    await page.locator('[data-testid="left-drawer-backdrop"]').click({ position: { x: 400, y: 20 } });
+    await expect(page.locator('.left-drawer')).toHaveCount(0);
+    await terminalAlive(page);
 
     // The wide window keeps the panel as a column: nothing clipped, no h-scroll.
     await app.evaluate(({ BrowserWindow }) => {

@@ -33,6 +33,17 @@ export interface LaunchNestOptions {
 }
 
 /**
+ * Extra Chromium switches for headless/sandboxed runners that cannot nest the
+ * Windows AppContainer sandbox inside an agent job object.
+ */
+export function electronArgs(...extra: string[]): string[] {
+  const args = ['.'];
+  if (process.env.NEST_E2E_NO_SANDBOX === '1') args.push('--no-sandbox');
+  args.push(...extra);
+  return args;
+}
+
+/**
  * Starts the built app with its state pointed at one temporary root, so a spec
  * never reads or writes the user's own data directory.
  */
@@ -40,7 +51,7 @@ export async function launchNest(options: LaunchNestOptions): Promise<ElectronAp
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
   const app = await electron.launch({
-    args: ['.'],
+    args: electronArgs(),
     cwd: appDir,
     env: {
       ...env,

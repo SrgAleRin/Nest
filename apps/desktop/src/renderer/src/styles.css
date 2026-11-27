@@ -1086,7 +1086,8 @@ code,
   overflow: hidden;
 }
 
-.rail-toggle {
+.rail-toggle,
+.left-rail-toggle {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1100,7 +1101,8 @@ code,
   cursor: pointer;
 }
 
-.rail-toggle:hover {
+.rail-toggle:hover,
+.left-rail-toggle:hover {
   border-color: var(--border);
   background: #121823;
   color: var(--text);
@@ -4832,6 +4834,7 @@ code,
 /* The resizer sits on the panel's own edge, so the column never shifts. */
 .sidebar {
   position: relative;
+  min-width: 0;
 }
 
 /* Mirrors `.right-resizer`: 6 px of pointer target, 1 px line on the edge. */
@@ -5278,9 +5281,10 @@ code,
   outline: none;
 }
 
-/* A row with an open editor floats above its neighbours' shadows. */
-.ws-virtual-row-raised {
-  z-index: 5;
+/* A row with an open editor or picker floats above its neighbours' shadows. */
+.ws-virtual-row-raised,
+.ws-virtual-row:focus-within {
+  z-index: 6;
 }
 
 /* ---------- left panel: group headers ---------- */
@@ -5339,6 +5343,7 @@ code,
 
 .ws-group-count {
   flex: 0 0 auto;
+  margin-right: auto;
   color: var(--dim);
   font: 9px var(--mono);
 }
@@ -5347,7 +5352,6 @@ code,
   display: flex;
   align-items: center;
   gap: 5px;
-  margin-left: auto;
   flex: 0 0 auto;
 }
 

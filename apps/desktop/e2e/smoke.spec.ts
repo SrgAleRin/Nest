@@ -5,7 +5,7 @@ import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { _electron as electron, type ElectronApplication } from 'playwright';
 import type { NestBridge } from '@nest/shared';
-import { startHarness } from './helpers';
+import { electronArgs, startHarness } from './helpers';
 
 declare global {
   interface Window {
@@ -29,7 +29,7 @@ function launchApp(): Promise<ElectronApplication> {
   delete env.ELECTRON_RUN_AS_NODE;
 
   return electron.launch({
-    args: ['.'],
+    args: electronArgs(),
     cwd: appDir,
     env: {
       ...env,
@@ -79,10 +79,11 @@ test('runs the fake harness, persists scrollback and recovers after restart', as
   await expect(page.locator('.terminal-tab')).toContainText('Fake harness', { timeout: 30_000 });
   await expect(page.locator('.xterm-rows')).toContainText('FakeHarness', { timeout: 30_000 });
 
-  // The sidebar keeps every task's sessions visible, not only the open one.
-  await expect(page.locator('.session-row').filter({ hasText: 'Fake harness' })).toBeVisible({
-    timeout: 30_000,
-  });
+  // The workspace card summarizes its live agent without dumping every row.
+  await expect(page.locator('[data-testid="workspace-card"] .ws-agents-label')).toContainText(
+    'fake',
+    { timeout: 30_000 },
+  );
 
   await page.locator('.xterm-helper-textarea').focus();
   await page.keyboard.type('echo hello-e2e');
