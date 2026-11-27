@@ -117,7 +117,12 @@ test('shows inline panel errors and recovers after a retry', async () => {
   const statusNote = page.locator('.source-control-note.warn', {
     hasText: 'Could not read the git status',
   });
-  await expect(statusNote).toContainText('not a git repository', { timeout: 30_000 });
+  // The panel shows git's own message, and git words a broken gitfile
+  // differently across versions: 2.55 says "not a git repository", the runner's
+  // build says "gitfile does not point to a valid repository".
+  await expect(statusNote).toContainText(/not a git repository|not point to a valid repository/, {
+    timeout: 30_000,
+  });
   // The branches slice fails on its own and only explains the remote action.
   const branchesNote = page.locator('.source-control-note.warn', {
     hasText: 'Branches could not be read',
