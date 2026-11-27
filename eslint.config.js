@@ -29,7 +29,11 @@ export default tseslint.config(
       '**/out/**',
       '**/dist/**',
       '**/release/**',
+      // electron-builder output written to a suffixed directory (`--config.directories.output`).
+      '**/release-*/**',
       '**/coverage/**',
+      // Scratch repositories the e2e suite leaves next to the app in a dev checkout.
+      '**/.e2e-tmp/**',
       '**/test-results/**',
       '**/playwright-report/**',
       '**/*.config.js',
