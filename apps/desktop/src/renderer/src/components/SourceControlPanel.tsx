@@ -385,11 +385,10 @@ export function SourceControlPanel({
           await store.discard(taskId, [row.path]);
           return;
         }
-        await client.invoke('git.discard', { taskId, paths: [row.path], side: 'unstaged' });
-        await store.requestStatus(taskId);
+        await store.discard(taskId, [row.path], 'unstaged');
       });
     },
-    [client, run, stale, stagedPaths, store, taskId],
+    [run, stale, stagedPaths, store, taskId],
   );
 
   const discard = useCallback(
