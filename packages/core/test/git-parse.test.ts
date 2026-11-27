@@ -117,6 +117,7 @@ describe('branches', () => {
         'init',
         '*',
         '',
+        '/repo',
       ].join('\u0000'),
       [
         'refs/remotes/origin/main',
@@ -126,6 +127,7 @@ describe('branches', () => {
         '2026-01-01T00:00:00+00:00',
         'init',
         ' ',
+        '',
         '',
       ].join('\u0000'),
       [
@@ -137,6 +139,7 @@ describe('branches', () => {
         '',
         ' ',
         'refs/remotes/origin/main',
+        '',
       ].join('\u0000'),
     ].join('\n');
 
@@ -150,8 +153,15 @@ describe('branches', () => {
       ahead: 1,
       behind: 0,
       tip: 'hash-main',
+      // `%(worktreepath)` of the checkout that holds the branch.
+      worktreePath: '/repo',
     });
-    expect(branches[1]).toMatchObject({ name: 'origin/main', remote: true, current: false });
+    expect(branches[1]).toMatchObject({
+      name: 'origin/main',
+      remote: true,
+      current: false,
+      worktreePath: null,
+    });
   });
 });
 

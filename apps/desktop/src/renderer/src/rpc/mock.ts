@@ -437,7 +437,49 @@ export function createMockClient(): NestClient {
       body: '',
       refs: [],
     },
+    // Only the `nest/worktree-pool` branch reaches this one, so `scope: 'head'`
+    // hides it while `branches` and `all` show it.
+    {
+      hash: 'e5f6a7b8c9d00112233445566778899aabbccddee',
+      parents: ['a1b2c3d4e5f60718293a4b5c6d7e8f9012345678'],
+      authorName: 'Riley Chen',
+      authorEmail: 'riley@example.com',
+      authoredAt: '2026-11-21T10:15:00.000Z',
+      committedAt: '2026-11-21T10:15:00.000Z',
+      subject: 'feat: worktree pool',
+      body: 'Keeps a spare checkout ready for the next task.',
+      refs: ['nest/worktree-pool'],
+    },
+    // Reachable from `origin/release` only: `branches` skips it, `all` shows it.
+    {
+      hash: 'd4c3b2a1908f7e6d5c4b3a29180f7e6d5c4b3a29',
+      parents: ['f1e2d3c4b5a6978877665544332211ffeeddccbb'],
+      authorName: 'Riley Chen',
+      authorEmail: 'riley@example.com',
+      authoredAt: '2026-11-22T08:05:00.000Z',
+      committedAt: '2026-11-22T08:05:00.000Z',
+      subject: 'chore: release notes',
+      body: '',
+      refs: ['origin/release'],
+    },
   ];
+
+  const commitByHash = new Map(commits.map((commit) => [commit.hash, commit]));
+
+  /** Everything the given roots reach, the way `git log <roots>` walks it. */
+  const reachableFrom = (roots: readonly GitCommit[]): Set<string> => {
+    const seen = new Set<string>();
+    const queue = [...roots];
+    for (let commit = queue.pop(); commit; commit = queue.pop()) {
+      if (seen.has(commit.hash)) continue;
+      seen.add(commit.hash);
+      for (const parent of commit.parents) {
+        const next = commitByHash.get(parent);
+        if (next) queue.push(next);
+      }
+    }
+    return seen;
+  };
 
   const branches: GitBranches = {
     current: status.branch,
@@ -851,11 +893,50 @@ export function createMockClient(): NestClient {
       case 'git.log': {
         const limit = Number(params.limit ?? 50);
         const skip = Number(params.skip ?? 0);
-        const ref = params.ref ? String(params.ref) : 'HEAD';
-        const list = ref === 'HEAD' || ref === 'main' ? commits : commits.slice(1);
+        const ref = params.ref ? String(params.ref) : null;
+        const scope: 'head' | 'branches' | 'all' =
+          params.scope === 'all' || params.scope === 'branches' ? params.scope : 'head';
+        const search = params.search ? String(params.search).toLowerCase().trim() : '';
+
+        // The fixture refs mirror a real repository, so each scope reaches a
+        // different slice of the same list; an explicit ref wins over the scope.
+        const rootsForRef = (value: string): GitCommit[] => {
+          const decorated = commits.filter((commit) =>
+            commit.refs.some(
+              (entry) =>
+                entry === value ||
+                entry.replace(/^HEAD -> /, '') === value ||
+                entry.replace(/^tag: /, '') === value,
+            ),
+          );
+          if (decorated.length > 0) return decorated;
+          return value === 'HEAD' || value === 'main' ? [commits[0]!] : commits.slice(1);
+        };
+        const rootsForScope = (value: 'head' | 'branches' | 'all'): GitCommit[] => {
+          if (value === 'all') return commits.filter((commit) => commit.refs.length > 0);
+          if (value === 'branches') {
+            return commits.filter((commit) =>
+              commit.refs.some((entry) => !entry.startsWith('origin/')),
+            );
+          }
+          return [commits[0]!];
+        };
+
+        const walked = reachableFrom(ref ? rootsForRef(ref) : rootsForScope(scope));
+        const list = commits.filter((commit) => walked.has(commit.hash));
+        const matched = search
+          ? list.filter(
+              (commit) =>
+                commit.hash.toLowerCase().startsWith(search) ||
+                commit.subject.toLowerCase().includes(search) ||
+                commit.body.toLowerCase().includes(search) ||
+                commit.authorName.toLowerCase().includes(search) ||
+                commit.authorEmail.toLowerCase().includes(search),
+            )
+          : list;
         return {
-          commits: list.slice(skip, skip + limit),
-          hasMore: list.length > skip + limit,
+          commits: matched.slice(skip, skip + limit),
+          hasMore: matched.length > skip + limit,
         };
       }
       case 'git.commitDetail': {
@@ -948,6 +1029,7 @@ export function createMockClient(): NestClient {
         return status;
       }
       case 'files.list':
+        // The preview has one tree, so a `ref` reads the same fixture files.
         return { files: mockFiles, truncated: false };
       case 'files.read': {
         const path = String(params.path ?? '');
