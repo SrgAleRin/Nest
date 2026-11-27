@@ -1,10 +1,23 @@
 import type { ReactNode } from 'react';
 import { Button, Skeleton } from '@nest/ui';
 
-const SIDEBAR_PROJECTS = [
-  [118, 92, 108, 74],
-  [104, 84],
-  [114, 96, 80],
+const SIDEBAR_PROJECTS: Array<{ name: number; cards: Array<[number, number]> }> = [
+  {
+    name: 112,
+    cards: [
+      [118, 74],
+      [96, 62],
+    ],
+  },
+  {
+    name: 94,
+    cards: [
+      [108, 68],
+      [84, 58],
+      [112, 70],
+    ],
+  },
+  { name: 104, cards: [[100, 66]] },
 ];
 
 /**
@@ -21,36 +34,43 @@ export function BootSkeleton() {
         </div>
         <Skeleton width={170} height={9} />
         <div className="titlebar-actions">
-          <Skeleton width={74} height={22} radius={6} />
+          <Skeleton width={18} height={18} radius={4} />
         </div>
       </header>
 
       <main className="columns">
         <aside className="sidebar">
-          <div className="sidebar-head">
-            <Skeleton width={62} height={8} />
-            <Skeleton width={16} height={16} radius={4} />
+          <div className="boot-sidebar-toolbar">
+            <Skeleton width={132} height={22} radius={6} />
+            <Skeleton width={22} height={22} radius={6} />
+            <Skeleton width={22} height={22} radius={6} />
           </div>
           <div className="sidebar-scroll boot-sidebar">
-            {SIDEBAR_PROJECTS.map((rows, projectIndex) => (
+            {SIDEBAR_PROJECTS.map((project, projectIndex) => (
               <div className="boot-project" key={projectIndex}>
                 <div className="boot-project-row">
                   <Skeleton width={10} height={10} />
-                  <Skeleton width={projectIndex === 0 ? 112 : 94} height={10} />
+                  <Skeleton width={project.name} height={10} />
                 </div>
                 <div className="boot-task-list">
-                  {rows.map((width, rowIndex) => (
-                    <div className="boot-task-row" key={rowIndex}>
-                      <Skeleton width={8} height={8} radius={2} />
-                      <Skeleton width={width} height={9} />
+                  {project.cards.map(([title, meta], cardIndex) => (
+                    <div className="boot-task-card" key={cardIndex}>
+                      <div className="boot-task-row">
+                        <Skeleton width={8} height={8} radius={2} />
+                        <Skeleton width={title} height={9} />
+                      </div>
+                      <div className="boot-task-row boot-task-meta">
+                        <Skeleton width={meta} height={7} />
+                      </div>
                     </div>
                   ))}
                 </div>
               </div>
             ))}
           </div>
-          <div className="sidebar-foot">
-            <Skeleton width={86} height={8} />
+          <div className="sidebar-foot boot-sidebar-foot">
+            <Skeleton width={96} height={20} radius={6} />
+            <Skeleton width={78} height={20} radius={6} />
           </div>
         </aside>
 

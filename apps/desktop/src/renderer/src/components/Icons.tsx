@@ -137,6 +137,139 @@ export function SourceControlIcon({ size = 14 }: IconProps) {
   );
 }
 
+export function PanelLeftCloseIcon({ size = 14 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <rect x="2" y="3" width="12" height="10" rx="1.5" />
+      <path d="M6 3v10" />
+      <path d="m10.5 6-2 2 2 2" />
+    </svg>
+  );
+}
+
+export function PanelLeftOpenIcon({ size = 14 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <rect x="2" y="3" width="12" height="10" rx="1.5" />
+      <path d="M6 3v10" />
+      <path d="m8.5 6 2 2-2 2" />
+    </svg>
+  );
+}
+
+export function SlidersIcon({ size = 14 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M2 4.5h12M2 8h12M2 11.5h12" />
+      <circle cx="6" cy="4.5" r="1.3" />
+      <circle cx="10" cy="8" r="1.3" />
+      <circle cx="5" cy="11.5" r="1.3" />
+    </svg>
+  );
+}
+
+export function SearchIcon({ size = 14 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <circle cx="7" cy="7" r="4" />
+      <path d="m10.2 10.2 3.3 3.3" />
+    </svg>
+  );
+}
+
+export function PinIcon({ size = 14 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M6 2.5h4l-.7 3.2 2.2 2.2H4.5l2.2-2.2z" />
+      <path d="M8 7.9V13" />
+    </svg>
+  );
+}
+
+export function ArchiveIcon({ size = 14 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <rect x="2" y="3" width="12" height="3" rx="1" />
+      <path d="M3.2 6v5.8A1.2 1.2 0 0 0 4.4 13h7.2a1.2 1.2 0 0 0 1.2-1.2V6" />
+      <path d="M6.5 8.5h3" />
+    </svg>
+  );
+}
+
+export function RestoreIcon({ size = 14 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M2.5 8a5.5 5.5 0 1 0 1.8-4.1" />
+      <path d="M2.5 2.5V5H5" />
+    </svg>
+  );
+}
+
+export function MoreHorizontalIcon({ size = 14 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <circle cx="3.5" cy="8" r="1" fill="currentColor" />
+      <circle cx="8" cy="8" r="1" fill="currentColor" />
+      <circle cx="12.5" cy="8" r="1" fill="currentColor" />
+    </svg>
+  );
+}
+
+export function AlertCircleIcon({ size = 14 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <circle cx="8" cy="8" r="6" />
+      <path d="M8 5v3.5" />
+      <path d="M8 11h.01" />
+    </svg>
+  );
+}
+
+export function FileTextIcon({ size = 14 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M4 2.5h5l3 3v8H4z" />
+      <path d="M9 2.5v3h3" />
+      <path d="M6 8.5h4M6 10.8h4" />
+    </svg>
+  );
+}
+
+export function CircleIcon({ size = 14 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <circle cx="8" cy="8" r="5" />
+    </svg>
+  );
+}
+
+export function ClockIcon({ size = 14 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <circle cx="8" cy="8" r="6" />
+      <path d="M8 4.5V8l2.5 1.5" />
+    </svg>
+  );
+}
+
+export function EyeIcon({ size = 14 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M1.8 8s2.3-3.8 6.2-3.8S14.2 8 14.2 8s-2.3 3.8-6.2 3.8S1.8 8 1.8 8z" />
+      <circle cx="8" cy="8" r="1.8" />
+    </svg>
+  );
+}
+
+export function CheckCircleIcon({ size = 14 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <circle cx="8" cy="8" r="6" />
+      <path d="m5.5 8.2 1.8 1.8 3.4-3.6" />
+    </svg>
+  );
+}
+
 export function GearIcon({ size = 14 }: IconProps) {
   return (
     <svg {...svgProps(size)}>
