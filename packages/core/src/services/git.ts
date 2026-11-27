@@ -7,6 +7,7 @@ import type {
   DiffMode,
   GitBranches,
   GitBranch,
+  GitCommit,
   GitCommitDetail,
   GitCompare,
   GitCompareDiff,
@@ -40,6 +41,8 @@ const REMOTE_TIMEOUT_MS = 60_000;
 const PULL_TIMEOUT_MS = 120_000;
 const DEFAULT_LOG_LIMIT = 50;
 const MAX_LOG_LIMIT = 200;
+/** `search` is applied in code, so the walk is capped to keep one page cheap. */
+const SEARCH_SCAN_LIMIT = 2000;
 const MAX_COMPARE_COMMITS = 100;
 const MAX_COMPARE_FILES = 2000;
 /** Reading untracked files costs IO; a huge untracked tree only needs a sample. */
@@ -334,7 +337,11 @@ export class GitService {
     });
   }
 
-  /** Commits reachable from `ref` (newest first), one page at a time. */
+  /**
+   * Commits reachable from `ref` or from a whole scope (newest first), one page
+   * at a time. `scope: 'all'` walks every branch, remote-tracking ref and tag,
+   * which is what the graph needs to draw the repository without a checkout.
+   */
   async log(taskId: string, options: LogRequest = {}): Promise<GitLog> {
     const task = this.tasks.get(taskId);
     const cwd = task.workspacePath;
@@ -344,31 +351,59 @@ export class GitService {
     // An unborn repository has no HEAD to walk; the panel shows an empty state.
     if (!(await hasHead(cwd))) return { commits: [], hasMore: false };
 
-    if (options.scope && options.scope !== 'head') {
-      throw new NestError('not_implemented', 'Walking every branch is not implemented yet');
-    }
-    if (options.search) {
-      throw new NestError('not_implemented', 'Searching the log is not implemented yet');
+    // An explicit `ref` wins over `scope` and is walked on its own.
+    const ref = options.ref ? assertRef(options.ref, 'ref') : null;
+    if (ref) await assertRevision(cwd, ref);
+
+    const roots = logRootArguments(ref, options.scope);
+
+    const search = options.search?.trim() ?? '';
+    if (!search) {
+      const { stdout } = await git(
+        cwd,
+        [
+          'log',
+          '--no-color',
+          ...roots,
+          `--max-count=${limit + 1}`,
+          `--skip=${skip}`,
+          `--format=${LOG_FORMAT}`,
+          '--',
+        ],
+        { timeout: LOG_TIMEOUT_MS },
+      );
+      const commits = parseLog(stdout);
+      return { commits: commits.slice(0, limit), hasMore: commits.length > limit };
     }
 
-    const ref = options.ref ? assertRef(options.ref, 'ref') : 'HEAD';
-    if (options.ref) await assertRevision(cwd, ref);
-
+    // Git has no single argument that ORs message and author, so the search runs
+    // on the parsed page: walk `skip + SEARCH_SCAN_LIMIT` commits from the start
+    // of the walk (one more, to tell a capped scan from a short walk), drop the
+    // non-matching ones, then apply `skip` and `limit` to what is left. Running
+    // out of the scan window is what `hasMore` then means.
+    const scanWindow = skip + SEARCH_SCAN_LIMIT;
     const { stdout } = await git(
       cwd,
       [
         'log',
         '--no-color',
-        `--max-count=${limit + 1}`,
-        `--skip=${skip}`,
+        ...roots,
+        `--max-count=${scanWindow + 1}`,
         `--format=${LOG_FORMAT}`,
-        ref,
         '--',
       ],
       { timeout: LOG_TIMEOUT_MS },
     );
-    const commits = parseLog(stdout);
-    return { commits: commits.slice(0, limit), hasMore: commits.length > limit };
+    const walked = parseLog(stdout);
+    const capped = walked.length > scanWindow;
+    const matches = (capped ? walked.slice(0, scanWindow) : walked).filter((commit) =>
+      matchesLogSearch(commit, search),
+    );
+
+    return {
+      commits: matches.slice(skip, skip + limit),
+      hasMore: capped || matches.length > skip + limit,
+    };
   }
 
   /** Commit metadata plus its patch against the first parent. */
@@ -416,9 +451,44 @@ export class GitService {
    * Patch between two revisions (three-dot: from their merge base), used to
    * read a branch that is not checked out here without touching the worktree.
    */
-  async compareDiff(taskId: string, _request: CompareDiffRequest): Promise<GitCompareDiff> {
-    this.tasks.get(taskId);
-    throw new NestError('not_implemented', 'Comparing two revisions is not implemented yet');
+  async compareDiff(taskId: string, request: CompareDiffRequest): Promise<GitCompareDiff> {
+    const task = this.tasks.get(taskId);
+    const cwd = task.workspacePath;
+    const base = assertRef(request.base, 'base ref');
+    const head = assertRef(request.head ?? 'HEAD', 'head ref');
+    await assertRevision(cwd, base, 'base ref');
+    await assertRevision(cwd, head, 'head ref');
+    const filePath = request.path ? assertRevisionPath(request.path) : null;
+
+    // Same rule as `compare()`: start from the common ancestor when the two
+    // revisions share one, otherwise compare the trees directly. Only the
+    // object database is read, so the index and the worktree stay untouched.
+    const mergeBase = await gitOrNull(cwd, ['merge-base', base, head]);
+    const from = mergeBase?.trim() || base;
+    const { stdout } = await git(
+      cwd,
+      [
+        'diff',
+        '--no-color',
+        '--no-ext-diff',
+        '-M',
+        '--unified=3',
+        '--src-prefix=a/',
+        '--dst-prefix=b/',
+        from,
+        head,
+        '--',
+        ...(filePath ? [filePath] : []),
+      ],
+      { timeout: LOG_TIMEOUT_MS },
+    );
+
+    return {
+      base,
+      head,
+      mergeBase: mergeBase?.trim() || null,
+      files: parseUnifiedDiff(stdout).sort((a, b) => a.path.localeCompare(b.path)),
+    };
   }
 
   async branches(taskId: string): Promise<GitBranches> {
@@ -806,6 +876,45 @@ async function assertRevision(cwd: string, revision: string, label = 'ref'): Pro
   if (!(await revisionExists(cwd, revision))) {
     throw new NestError('ref_missing', `Unknown ${label}: ${revision}`);
   }
+}
+
+/** Which history `git log` walks: never `--all`, which also picks up `refs/stash`. */
+function logRootArguments(ref: string | null, scope: LogRequest['scope']): string[] {
+  if (ref) return ['--topo-order', ref];
+  if (scope === 'all') return ['--topo-order', '--branches', '--remotes', '--tags'];
+  if (scope === 'branches') return ['--topo-order', '--branches', '--tags'];
+  return ['HEAD'];
+}
+
+/**
+ * A path inside a revision (`<rev>:<path>`): relative, no empty segment and no
+ * `..`, so the expression can never name an object outside the tree.
+ */
+function assertRevisionPath(filePath: string): string {
+  const normalized = filePath.replace(/\\/g, '/');
+  const invalid =
+    normalized.length === 0 ||
+    path.posix.isAbsolute(normalized) ||
+    path.win32.isAbsolute(normalized) ||
+    normalized.split('/').some((segment) => segment === '' || segment === '.' || segment === '..');
+  if (invalid) throw new NestError('invalid_path', `Invalid file path: ${filePath}`);
+  return normalized;
+}
+
+/**
+ * `git log` filters by message or by author, never by either, so `search` is a
+ * case-insensitive substring of the subject or body, of the author name or
+ * email, or a prefix of the commit hash.
+ */
+function matchesLogSearch(commit: GitCommit, query: string): boolean {
+  const needle = query.toLowerCase();
+  return (
+    commit.hash.toLowerCase().startsWith(needle) ||
+    commit.subject.toLowerCase().includes(needle) ||
+    commit.body.toLowerCase().includes(needle) ||
+    commit.authorName.toLowerCase().includes(needle) ||
+    commit.authorEmail.toLowerCase().includes(needle)
+  );
 }
 
 function parseRemotes(raw: string): GitRemote[] {

@@ -1,6 +1,10 @@
 import type { GitBranch } from '@nest/shared';
 
-/** One record per ref, NUL separated; subjects never contain newlines. */
+/**
+ * One record per ref, NUL separated; subjects never contain newlines.
+ * `%(worktreepath)` (Git >= 2.23) is the checkout that already holds the ref,
+ * so the panel knows which branch is taken without spawning `git worktree list`.
+ */
 export const BRANCH_FORMAT = [
   '%(refname)',
   '%(objectname)',
@@ -10,6 +14,7 @@ export const BRANCH_FORMAT = [
   '%(subject)',
   '%(HEAD)',
   '%(symref)',
+  '%(worktreepath)',
 ].join('%00');
 
 const FIELD_SEPARATOR = '\u0000';
@@ -35,18 +40,10 @@ export function parseBranches(raw: string): BranchRecord[] {
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;
     const fields = line.split(FIELD_SEPARATOR);
-    if (fields.length < 8) continue;
+    if (fields.length < 9) continue;
 
-    const [refname, tip, upstream, track, committedAt, subject, head, symref] = fields as [
-      string,
-      string,
-      string,
-      string,
-      string,
-      string,
-      string,
-      string,
-    ];
+    const [refname, tip, upstream, track, committedAt, subject, head, symref, worktreePath] =
+      fields as [string, string, string, string, string, string, string, string, string];
 
     // `origin/HEAD` and other symbolic refs only point at another branch and
     // would show up twice in the branch list.
@@ -71,7 +68,8 @@ export function parseBranches(raw: string): BranchRecord[] {
       tip,
       subject,
       committedAt,
-      worktreePath: null,
+      // Empty for a free branch, including every remote-tracking ref.
+      worktreePath: worktreePath ? worktreePath : null,
     });
   }
 
