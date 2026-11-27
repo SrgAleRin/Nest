@@ -22,10 +22,11 @@ interface SourceControlHeaderProps {
   /** The remote action in flight: the control says what it is doing. */
   pendingSync: SyncKind | null;
   stale: boolean;
-  hasSelection: boolean;
   onSync: (kind: SyncKind) => void;
   onRefresh: () => void;
   onOpenDiff: () => void;
+  onOpenGraph: () => void;
+  onInspectBranch?: (ref: string) => void;
   onOpenHistory: () => void;
   onOpenCompare: () => void;
   onSwitchBranch: (branch: string) => void;
@@ -47,10 +48,11 @@ export function SourceControlHeader({
   busy,
   pendingSync,
   stale,
-  hasSelection,
   onSync,
   onRefresh,
   onOpenDiff,
+  onOpenGraph,
+  onInspectBranch,
   onOpenHistory,
   onOpenCompare,
   onSwitchBranch,
@@ -70,6 +72,7 @@ export function SourceControlHeader({
           busy={busy}
           onSwitch={onSwitchBranch}
           onCreate={onCreateBranch}
+          {...(onInspectBranch ? { onInspect: onInspectBranch } : {})}
         />
 
         {task?.kind === 'checkout' ? (
@@ -113,13 +116,8 @@ export function SourceControlHeader({
             label="More source control actions"
             title="More source control actions"
             items={[
-              {
-                id: 'diff',
-                label: 'Open diff',
-                detail: hasSelection ? undefined : 'Select a changed file first',
-                disabled: !hasSelection,
-                onSelect: onOpenDiff,
-              },
+              { id: 'diff', label: 'Open diff', onSelect: onOpenDiff },
+              { id: 'graph', label: 'Git graph (all branches)', onSelect: onOpenGraph },
               { id: 'history', label: 'History', onSelect: onOpenHistory },
               { id: 'compare', label: 'Compare branches', onSelect: onOpenCompare },
               {

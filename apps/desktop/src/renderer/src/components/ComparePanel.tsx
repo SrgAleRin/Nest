@@ -1,10 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { GitBranches, GitCompare, GitCompareFile, NestClient, Task } from '@nest/shared';
+import type { GitCompare, GitCompareFile, NestClient, Task } from '@nest/shared';
 import { EmptyState, ErrorState } from '@nest/ui';
 import { CommitRow } from './CommitList';
 import { FileTree } from './FileTree';
 import { panelPhase } from '../panelState';
+import { useGitSnapshot, useGitSnapshotStore } from '../state/GitSnapshotProvider';
 import { diffStatusLetter, diffStatusTone, errorMessage, shortHash } from '../utils';
+
+/** The two revisions a file patch is opened between. */
+export interface CompareDiffTarget {
+  base: string;
+  head: string;
+  path: string | null;
+}
 
 interface ComparePanelProps {
   client: NestClient;
@@ -12,6 +20,11 @@ interface ComparePanelProps {
   refreshKey: number;
   onOpenCommit: (hash: string) => void;
   onNotify: (level: 'info' | 'warn' | 'error', message: string) => void;
+  /**
+   * Opens the patch of a file between the selected revisions in the center
+   * `Diff`. Omitted when the panel runs on its own: the rows then stay inert.
+   */
+  onOpenDiff?: (target: CompareDiffTarget) => void;
 }
 
 interface Selection {
@@ -19,23 +32,43 @@ interface Selection {
   head: string;
 }
 
+/**
+ * Branch-to-branch comparison. The branch list is the snapshot the rest of the
+ * panel reads, the comparison itself is one `git.compare`. A file row opens
+ * its cross-branch patch in the center without checking anything out, and a
+ * commit row opens that commit in the center graph.
+ */
 export function ComparePanel({
   client,
   task,
   refreshKey,
   onOpenCommit,
   onNotify,
+  onOpenDiff,
 }: ComparePanelProps) {
-  const [branches, setBranches] = useState<GitBranches | null>(null);
+  const taskId = task?.id ?? null;
+  const store = useGitSnapshotStore();
+  const snapshot = useGitSnapshot(taskId);
+  const branches = snapshot?.branches.data ?? null;
+  const branchesLoading = snapshot?.branches.loading ?? false;
+  const branchesError = snapshot?.branches.error ?? null;
+
   const [selection, setSelection] = useState<Selection>({ base: '', head: '' });
   const [compare, setCompare] = useState<GitCompare | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // The effect below must not restart when the pickers change, so it reads the
-  // current pair from a ref and only refreshes the data.
+  // The effects below must not restart when the pickers change, so they read
+  // the current pair from a ref and only refresh the data.
   const current = useRef<Selection>({ base: '', head: '' });
+
+  // Branches are a separate snapshot slice; a failure here never blanks the
+  // comparison that is already on screen.
+  useEffect(() => {
+    if (!taskId || branches || branchesLoading || branchesError) return;
+    void store.requestBranches(taskId);
+  }, [branches, branchesError, branchesLoading, store, taskId]);
 
   const runCompare = useCallback(
     async (next: Selection) => {
@@ -62,50 +95,34 @@ export function ComparePanel({
     [client, task],
   );
 
-  const load = useCallback(async () => {
-    if (!task) {
-      setBranches(null);
-      setCompare(null);
-      setError(null);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      const nextBranches = await client.invoke('git.branches', { taskId: task.id });
-      setBranches(nextBranches);
+  // Seed the pair from the branch list once: upstream/default branch as the
+  // base, the current branch as the head. A user pick is never overwritten.
+  useEffect(() => {
+    if (!branches || current.current.base) return;
+    const base = branches.baseRef || branches.local[0]?.name || '';
+    if (!base) return;
+    const next: Selection = { base, head: current.current.head || branches.current || 'HEAD' };
+    current.current = next;
+    setSelection(next);
+    void runCompare(next);
+  }, [branches, runCompare]);
 
-      // Keep the user's picks across refreshes; fall back to upstream/default
-      // branch and the current branch on the first load.
-      const previous = current.current;
-      const next: Selection = {
-        base: previous.base || nextBranches.baseRef || nextBranches.local[0]?.name || '',
-        head: previous.head || nextBranches.current || 'HEAD',
-      };
-      current.current = next;
-      setSelection(next);
+  /** Re-reads the comparison; the branch list refreshes with the snapshot. */
+  const refresh = useCallback(() => {
+    if (!taskId) return;
+    if (current.current.base) void runCompare(current.current);
+  }, [runCompare, taskId]);
 
-      if (!next.base) {
-        setCompare(null);
-        setLoading(false);
-        return;
-      }
-      const result = await client.invoke('git.compare', {
-        taskId: task.id,
-        base: next.base,
-        head: next.head,
-      });
-      setCompare(result);
-    } catch (loadError) {
-      setError(errorMessage(loadError));
-    } finally {
-      setLoading(false);
-    }
-  }, [client, task]);
+  /** A manual refresh or a fetch also re-reads the branch list. */
+  const reload = useCallback(() => {
+    if (!taskId) return;
+    void store.requestBranches(taskId);
+    refresh();
+  }, [refresh, store, taskId]);
 
   useEffect(() => {
-    void load();
-  }, [load, refreshKey]);
+    refresh();
+  }, [refresh, refreshKey]);
 
   function pick(next: Partial<Selection>): void {
     const merged: Selection = { ...current.current, ...next };
@@ -120,7 +137,7 @@ export function ComparePanel({
     try {
       const result = await client.invoke('git.fetch', { taskId: task.id });
       onNotify('info', result.output || 'Fetched');
-      await load();
+      reload();
     } catch (fetchError) {
       onNotify('error', errorMessage(fetchError));
     } finally {
@@ -144,23 +161,28 @@ export function ComparePanel({
     );
   }
 
-  const phase = panelPhase({ loading, error, hasData: compare !== null });
+  const phase = panelPhase({ loading, error: error ?? branchesError, hasData: compare !== null });
 
   if (phase === 'error' && !compare) {
     return (
       <div className="compare-panel">
         <div className="diff-head">
           <span className="section-label">Compare</span>
-          <button className="mini-btn" onClick={() => void load()} disabled={loading}>
+          <button className="mini-btn" onClick={reload} disabled={loading}>
             Retry
           </button>
         </div>
-        <ErrorState title="Comparison unavailable" onRetry={() => void load()}>
-          {error}
+        <ErrorState title="Comparison unavailable" onRetry={reload}>
+          {error ?? branchesError}
         </ErrorState>
       </div>
     );
   }
+
+  const openFilePatch = (file: GitCompareFile): void => {
+    if (!onOpenDiff || !compare) return;
+    onOpenDiff({ base: compare.base, head: compare.head, path: file.path });
+  };
 
   return (
     <div className="panel-scroll compare-panel">
@@ -170,7 +192,7 @@ export function ComparePanel({
           <button className="mini-btn" onClick={() => void fetch()} disabled={busy}>
             {busy ? 'Fetching…' : 'Fetch'}
           </button>
-          <button className="mini-btn" onClick={() => void load()} disabled={loading}>
+          <button className="mini-btn" onClick={reload} disabled={loading}>
             {loading ? 'Loading…' : 'Refresh'}
           </button>
         </div>
@@ -213,9 +235,16 @@ export function ComparePanel({
       </div>
 
       {error ? <div className="compare-error">{error}</div> : null}
+      {branchesError ? (
+        <div className="compare-error">
+          Branches could not be read, so the pickers may be incomplete. {branchesError}
+        </div>
+      ) : null}
 
       {!selection.base ? (
-        <div className="panel-empty">Pick a base branch to compare against</div>
+        <div className="panel-empty">
+          {branchesLoading ? 'Loading branches…' : 'Pick a base branch to compare against'}
+        </div>
       ) : !compare ? (
         <div className="panel-empty">{loading ? 'Comparing…' : 'No comparison yet'}</div>
       ) : (
@@ -255,11 +284,20 @@ export function ComparePanel({
 
           <div className="git-files-head">
             <span className="section-label">Files ({compare.files.length})</span>
+            {onOpenDiff ? (
+              <span className="change-group-hint">Click a file to open its patch</span>
+            ) : null}
           </div>
           <FileTree
             entries={compare.files}
             emptyLabel="No file changes against the merge base"
-            renderFile={(file, depth) => <CompareFileRow file={file} depth={depth} />}
+            renderFile={(file, depth) => (
+              <CompareFileRow
+                file={file}
+                depth={depth}
+                onOpen={onOpenDiff ? () => openFilePatch(file) : null}
+              />
+            )}
           />
         </>
       )}
@@ -267,10 +305,28 @@ export function ComparePanel({
   );
 }
 
-function CompareFileRow({ file, depth }: { file: GitCompareFile; depth: number }) {
+function CompareFileRow({
+  file,
+  depth,
+  onOpen,
+}: {
+  file: GitCompareFile;
+  depth: number;
+  onOpen: (() => void) | null;
+}) {
   const name = file.path.split('/').pop() ?? file.path;
   return (
-    <div className="git-file tree-row" style={{ paddingLeft: 6 + depth * 11 }} title={file.path}>
+    <button
+      type="button"
+      className="git-file tree-row compare-file-row"
+      style={{ paddingLeft: 6 + depth * 11 }}
+      title={onOpen ? `Open the patch of ${file.path}` : file.path}
+      aria-label={`${diffStatusLetter(file.status)} ${file.path}${
+        onOpen ? ' — open its patch between the compared revisions' : ''
+      }`}
+      disabled={!onOpen}
+      onClick={() => onOpen?.()}
+    >
       <span className={`git-letter ${diffStatusTone(file.status)}`}>
         {diffStatusLetter(file.status)}
       </span>
@@ -283,7 +339,7 @@ function CompareFileRow({ file, depth }: { file: GitCompareFile; depth: number }
       ) : (
         <span className="git-stat muted">bin</span>
       )}
-    </div>
+    </button>
   );
 }
 
