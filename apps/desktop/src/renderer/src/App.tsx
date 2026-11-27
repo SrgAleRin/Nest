@@ -11,7 +11,7 @@ import type {
   UpdateStatus,
 } from '@nest/shared';
 import { DEFAULT_TERMINAL_PREFERENCES, newId } from '@nest/shared';
-import { Badge, Button, IconButton } from '@nest/ui';
+import { Badge, IconButton } from '@nest/ui';
 import { BootSkeleton, FatalScreen } from './components/Boot';
 import { CenterPane } from './components/CenterPane';
 import { CommandPalette } from './components/CommandPalette';
@@ -19,9 +19,17 @@ import type { GraphActions } from './components/GitGraphPanel';
 import { GearIcon } from './components/Icons';
 import { NewTaskDialog, type NewTaskSubmission } from './components/NewTaskDialog';
 import { startFailureMessage, taskToSelect, type StartFailure } from './newTask';
+import { LEFT_PANEL_RAIL_WIDTH, useLeftPanelLayout } from './leftPanelLayout';
+import { WORKFLOW_STATUS_LABELS } from './sidebarPlan';
 import { RIGHT_SECTIONS, RightPanel, type RightTab } from './components/RightPanel';
 import { SettingsDialog } from './components/SettingsDialog';
 import { Sidebar } from './components/Sidebar';
+import { DeleteTaskDialog, type DeleteTaskOptions } from './components/sidebar/DeleteTaskDialog';
+import { RemoveProjectDialog } from './components/sidebar/RemoveProjectDialog';
+import {
+  ProjectSettingsDialog,
+  type ProjectSettingsPatch,
+} from './components/sidebar/ProjectSettingsDialog';
 import type { CommandItem } from './commands';
 import { createClient } from './rpc/client';
 import { branchLabel, branchSnapshot, type BranchSnapshot } from './state/branch';
@@ -72,9 +80,14 @@ interface Toast {
   message: string;
 }
 
+/**
+ * The task to fall back to: the one that was selected while it still exists and
+ * is active, otherwise the main checkout — the place the user works by hand.
+ */
 function pickTaskId(tasks: Task[], current: string | null): string | null {
-  if (current && tasks.some((task) => task.id === current)) return current;
-  return tasks.find((task) => task.kind === 'checkout')?.id ?? tasks[0]?.id ?? null;
+  const active = tasks.filter((task) => task.status === 'active');
+  if (current && active.some((task) => task.id === current)) return current;
+  return active.find((task) => task.kind === 'checkout')?.id ?? active[0]?.id ?? null;
 }
 
 export function App() {
@@ -130,6 +143,22 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
   // `Source Control`. Patches and history live in the center workbench.
   const [rightTab, setRightTab] = useState<RightTab>('source-control');
   const rightLayout = useRightPanelLayout();
+  // The left column is a preference, not project data: width, collapsed rail and
+  // the narrow-window drawer all live in this layout hook.
+  const leftLayout = useLeftPanelLayout();
+  /** The archive drawer replaces the workspace list inside the left panel. */
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  /** Palette triggers: an inline rename, and showing the selected workspace. */
+  const [renameNonce, setRenameNonce] = useState(0);
+  const [revealNonce, setRevealNonce] = useState(0);
+  /** Non-blocking replacements for `window.confirm`. */
+  const [deleteTaskTarget, setDeleteTaskTarget] = useState<Task | null>(null);
+  const [deleteTaskBusy, setDeleteTaskBusy] = useState(false);
+  const [removeProjectTarget, setRemoveProjectTarget] = useState<Project | null>(null);
+  const [removeProjectBusy, setRemoveProjectBusy] = useState(false);
+  const [projectSettingsTarget, setProjectSettingsTarget] = useState<Project | null>(null);
+  const [projectSettingsBusy, setProjectSettingsBusy] = useState(false);
+  const [projectSettingsError, setProjectSettingsError] = useState<string | null>(null);
   // Which surface of the center workbench each task shows. The terminals are
   // never part of it: they stay mounted under every surface.
   const centerTabs = useMemo(createCenterTabsStore, []);
@@ -321,6 +350,9 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
         case 'task:updated':
           setTasks((prev) => upsert(prev, event.task));
           return;
+        case 'project:updated':
+          setProjects((prev) => upsert(prev, event.project));
+          return;
         case 'task:progress':
           setOperations((prev) => applyOperationProgress(prev, event));
           return;
@@ -427,48 +459,77 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  const addProject = useCallback(async () => {
-    try {
-      const directory = await client.invoke('dialog.pickDirectory', {});
-      if (!directory) return;
-      const { project, checkout } = await client.invoke('projects.add', { path: directory });
-      setProjects((prev) => upsert(prev, project));
-      setTasks((prev) => upsert(prev, checkout));
-      setSelectedTaskId(checkout.id);
-      notify('info', `Added ${project.name}`);
-    } catch (error) {
-      notify('error', errorMessage(error));
-    }
-  }, [client, notify]);
-
-  const removeProject = useCallback(
-    async (project: Project) => {
-      const message = [
-        `Remove "${project.name}" from Nest?`,
-        '',
-        'Deleted from Nest: its tasks, sessions and their scrollback, review comments',
-        'and project settings (including the setup script).',
-        '',
-        'Kept on disk: the main checkout and every worktree, untouched. Git branches',
-        'stay too. They are not re-registered when you add the project back — only the',
-        'main checkout returns.',
-        '',
-        'Running sessions of this project are stopped first. If one does not stop,',
-        'nothing is deleted and you can retry.',
-      ].join('\n');
-      if (!window.confirm(message)) return;
+  /** Registers a folder: the picker and a dropped directory share this path. */
+  const addProjectPath = useCallback(
+    async (path: string) => {
       try {
-        const removed = tasksRef.current.filter((task) => task.projectId === project.id);
-        await client.invoke('projects.remove', { projectId: project.id });
-        setProjects((prev) => prev.filter((candidate) => candidate.id !== project.id));
-        // Every task of the project is gone, so its caches are dead weight.
-        for (const task of removed) forgetTaskViews({ git: gitStore, center: centerTabs, files: filesViewActions }, task.id);
-        await refreshAll();
+        const { project, checkout } = await client.invoke('projects.add', { path });
+        setProjects((prev) => upsert(prev, project));
+        setTasks((prev) => upsert(prev, checkout));
+        setSelectedTaskId(checkout.id);
+        notify('info', `Added ${project.name}`);
       } catch (error) {
         notify('error', errorMessage(error));
       }
     },
-    [centerTabs, client, gitStore, notify, refreshAll],
+    [client, notify],
+  );
+
+  const addProject = useCallback(async () => {
+    try {
+      const directory = await client.invoke('dialog.pickDirectory', {});
+      if (!directory) return;
+      await addProjectPath(directory);
+    } catch (error) {
+      notify('error', errorMessage(error));
+    }
+  }, [addProjectPath, client, notify]);
+
+  /** Removal is asked for by a dialog, never by `window.confirm`. */
+  const confirmRemoveProject = useCallback(async () => {
+    const project = removeProjectTarget;
+    if (!project) return;
+    setRemoveProjectBusy(true);
+    try {
+      const removed = tasksRef.current.filter((task) => task.projectId === project.id);
+      await client.invoke('projects.remove', { projectId: project.id });
+      setProjects((prev) => prev.filter((candidate) => candidate.id !== project.id));
+      // Every task of the project is gone, so its caches are dead weight.
+      for (const task of removed) {
+        forgetTaskViews({ git: gitStore, center: centerTabs, files: filesViewActions }, task.id);
+      }
+      setRemoveProjectTarget(null);
+      await refreshAll();
+    } catch (error) {
+      notify('error', errorMessage(error));
+    } finally {
+      setRemoveProjectBusy(false);
+    }
+  }, [centerTabs, client, gitStore, notify, refreshAll, removeProjectTarget]);
+
+  const saveProjectSettings = useCallback(
+    async (patch: ProjectSettingsPatch) => {
+      const project = projectSettingsTarget;
+      if (!project) return;
+      setProjectSettingsBusy(true);
+      setProjectSettingsError(null);
+      try {
+        const updated = await client.invoke('projects.update', {
+          projectId: project.id,
+          name: patch.name,
+          defaultBaseRef: patch.defaultBaseRef,
+          setupScript: patch.setupScript,
+        });
+        setProjects((prev) => upsert(prev, updated));
+        setProjectSettingsTarget(null);
+        notify('info', 'Project settings saved');
+      } catch (error) {
+        setProjectSettingsError(errorMessage(error));
+      } finally {
+        setProjectSettingsBusy(false);
+      }
+    },
+    [client, notify, projectSettingsTarget],
   );
 
   /**
@@ -681,29 +742,19 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
     [client, notify],
   );
 
-  const removeTask = useCallback(
-    async (task: Task) => {
-      let changes: string[] = [];
-      try {
-        const status = await client.invoke('git.status', { taskId: task.id });
-        changes = status.files.map((file) => file.path);
-      } catch {
-        // The workspace may already be gone; removeTask still has to work.
-      }
-
-      const preview =
-        changes.slice(0, 15).join('\n') +
-        (changes.length > 15 ? `\n…and ${changes.length - 15} more` : '');
-      const message =
-        changes.length > 0
-          ? `Worktree of "${task.title}" has ${changes.length} uncommitted ` +
-            `change${changes.length === 1 ? '' : 's'}:\n\n${preview}\n\n` +
-            'Remove the task and discard these changes?'
-          : `Remove task "${task.title}" and its worktree?`;
-      if (!window.confirm(message)) return;
+  /** The deletion dialog already named what would be lost; this runs it. */
+  const confirmDeleteTask = useCallback(
+    async (options: DeleteTaskOptions) => {
+      const task = deleteTaskTarget;
+      if (!task) return;
+      setDeleteTaskBusy(true);
 
       const remove = async (force: boolean) => {
-        await client.invoke('tasks.remove', { taskId: task.id, force });
+        await client.invoke('tasks.remove', {
+          taskId: task.id,
+          force,
+          deleteBranch: options.deleteBranch,
+        });
         setTasks((prev) => prev.filter((candidate) => candidate.id !== task.id));
         // The task's caches go with it: its git snapshot and its center state.
         forgetTaskViews({ git: gitStore, center: centerTabs, files: filesViewActions }, task.id);
@@ -713,31 +764,283 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
           delete next[task.id];
           return next;
         });
+        setDeleteTaskTarget(null);
         await refreshAll();
       };
 
       try {
-        await remove(changes.length > 0);
+        await remove(options.force);
       } catch (error) {
-        // The status may have changed between the check and the removal.
+        // A change may have appeared between the dialog's status read and the
+        // removal; the user already agreed to lose the worktree.
         if (error instanceof Error && error.name === 'workspace_dirty') {
-          if (
-            window.confirm(
-              `${error.message}\n\nDelete anyway? The worktree and its uncommitted changes will be lost.`,
-            )
-          ) {
-            try {
-              await remove(true);
-            } catch (forceError) {
-              notify('error', errorMessage(forceError));
-            }
+          try {
+            await remove(true);
+          } catch (forceError) {
+            notify('error', errorMessage(forceError));
           }
-          return;
+        } else {
+          notify('error', errorMessage(error));
         }
+      } finally {
+        setDeleteTaskBusy(false);
+      }
+    },
+    [centerTabs, client, deleteTaskTarget, gitStore, notify, refreshAll],
+  );
+
+  /** Selecting a workspace also clears the "new activity" flag it carries. */
+  const selectTask = useCallback(
+    (taskId: string) => {
+      setSelectedTaskId(taskId);
+      const task = tasksRef.current.find((candidate) => candidate.id === taskId);
+      if (!task?.unread) return;
+      setTasks((prev) =>
+        prev.map((candidate) =>
+          candidate.id === taskId ? { ...candidate, unread: false } : candidate,
+        ),
+      );
+      void client
+        .invoke('tasks.update', { taskId, unread: false })
+        .then((updated) => setTasks((prev) => upsert(prev, updated)))
+        .catch((error) => notify('error', errorMessage(error)));
+    },
+    [client, notify],
+  );
+
+  /** One patch of a task row: the state answers first, the row confirms it. */
+  const updateTask = useCallback(
+    async (
+      task: Task,
+      patch: {
+        title?: string;
+        workflowStatus?: Task['workflowStatus'];
+        pinned?: boolean;
+        notes?: string | null;
+        unread?: boolean;
+      },
+    ) => {
+      setTasks((prev) =>
+        prev.map((candidate) =>
+          candidate.id === task.id ? { ...candidate, ...patch } : candidate,
+        ),
+      );
+      try {
+        const updated = await client.invoke('tasks.update', { taskId: task.id, ...patch });
+        setTasks((prev) => upsert(prev, updated));
+      } catch (error) {
+        setTasks((prev) => upsert(prev, task));
         notify('error', errorMessage(error));
       }
     },
-    [centerTabs, client, gitStore, notify, refreshAll],
+    [client, notify],
+  );
+
+  const archiveTask = useCallback(
+    async (task: Task) => {
+      try {
+        const archived = await client.invoke('tasks.archive', { taskId: task.id });
+        const remaining = tasksRef.current.filter(
+          (candidate) => candidate.id !== task.id && candidate.status === 'active',
+        );
+        setTasks((prev) => upsert(prev, archived));
+        setStartFailures((prev) => {
+          if (!(task.id in prev)) return prev;
+          const next = { ...prev };
+          delete next[task.id];
+          return next;
+        });
+        setSelectedTaskId((current) => {
+          if (current !== task.id) return current;
+          return (
+            remaining.find(
+              (candidate) =>
+                candidate.projectId === task.projectId && candidate.kind === 'checkout',
+            )?.id ??
+            remaining.find((candidate) => candidate.projectId === task.projectId)?.id ??
+            remaining.find((candidate) => candidate.kind === 'checkout')?.id ??
+            remaining[0]?.id ??
+            null
+          );
+        });
+        notify('info', `Archived ${task.title}`);
+      } catch (error) {
+        notify('error', errorMessage(error));
+      }
+    },
+    [client, notify],
+  );
+
+  const restoreTask = useCallback(
+    async (task: Task) => {
+      try {
+        const restored = await client.invoke('tasks.restore', { taskId: task.id });
+        setTasks((prev) => upsert(prev, restored));
+        setSelectedTaskId(restored.id);
+        notify('info', `Restored ${restored.title}`);
+      } catch (error) {
+        notify('error', errorMessage(error));
+      }
+    },
+    [client, notify],
+  );
+
+  /**
+   * Clean up of the archive: only worktrees that git reports clean are removed,
+   * one after another, and the summary says how many were left alone.
+   */
+  const cleanUpArchived = useCallback(
+    async (targets: Task[]) => {
+      let removed = 0;
+      let skipped = 0;
+      for (const task of targets) {
+        if (task.kind !== 'worktree') {
+          skipped += 1;
+          continue;
+        }
+        try {
+          const status = await client.invoke('git.status', { taskId: task.id });
+          if (status.files.length > 0 || status.ahead > 0) {
+            skipped += 1;
+            continue;
+          }
+        } catch {
+          // A workspace whose status cannot be read is never cleaned up blindly.
+          skipped += 1;
+          continue;
+        }
+        try {
+          await client.invoke('tasks.remove', {
+            taskId: task.id,
+            force: false,
+            deleteBranch: false,
+          });
+          removed += 1;
+          setTasks((prev) => prev.filter((candidate) => candidate.id !== task.id));
+          forgetTaskViews({ git: gitStore, center: centerTabs, files: filesViewActions }, task.id);
+        } catch {
+          skipped += 1;
+        }
+      }
+      notify(
+        skipped > 0 ? 'warn' : 'info',
+        `Removed ${removed} archived workspace${removed === 1 ? '' : 's'}` +
+          (skipped > 0 ? `, skipped ${skipped} with local changes` : ''),
+      );
+    },
+    [centerTabs, client, gitStore, notify],
+  );
+
+  const stopTaskSessions = useCallback(
+    async (task: Task) => {
+      const live = sessions.filter(
+        (session) =>
+          session.taskId === task.id &&
+          (session.status === 'starting' ||
+            session.status === 'running' ||
+            session.status === 'idle'),
+      );
+      for (const session of live) {
+        try {
+          await client.invoke('sessions.stop', { sessionId: session.id });
+        } catch (error) {
+          notify('error', errorMessage(error));
+        }
+      }
+    },
+    [client, notify, sessions],
+  );
+
+  const reorderTasks = useCallback(
+    (taskIds: string[]) => {
+      const order = new Map(taskIds.map((taskId, index) => [taskId, index]));
+      setTasks((prev) =>
+        prev.map((task) => {
+          const position = order.get(task.id);
+          return position === undefined ? task : { ...task, sortOrder: position };
+        }),
+      );
+      void client
+        .invoke('tasks.reorder', { taskIds })
+        .catch((error) => notify('error', errorMessage(error)));
+    },
+    [client, notify],
+  );
+
+  const reorderProjects = useCallback(
+    (projectIds: string[]) => {
+      const order = new Map(projectIds.map((projectId, index) => [projectId, index]));
+      setProjects((prev) =>
+        prev.map((project) => {
+          const position = order.get(project.id);
+          return position === undefined ? project : { ...project, sortOrder: position };
+        }),
+      );
+      void client
+        .invoke('projects.reorder', { projectIds })
+        .catch((error) => notify('error', errorMessage(error)));
+    },
+    [client, notify],
+  );
+
+  const updateProject = useCallback(
+    async (project: Project, patch: { hidden?: boolean }) => {
+      try {
+        const updated = await client.invoke('projects.update', { projectId: project.id, ...patch });
+        setProjects((prev) => upsert(prev, updated));
+      } catch (error) {
+        notify('error', errorMessage(error));
+      }
+    },
+    [client, notify],
+  );
+
+  const openCheckout = useCallback(
+    async (projectId: string) => {
+      try {
+        const task = await client.invoke('tasks.openCheckout', { projectId });
+        setTasks((prev) => upsert(prev, task));
+        setSelectedTaskId(task.id);
+      } catch (error) {
+        notify('error', errorMessage(error));
+      }
+    },
+    [client, notify],
+  );
+
+  const revealTask = useCallback(
+    (task: Task) => {
+      void client.invoke('tasks.reveal', { taskId: task.id }).catch((error) => {
+        notify('error', errorMessage(error));
+      });
+    },
+    [client, notify],
+  );
+
+  const copyText = useCallback(
+    (value: string, label: string) => {
+      void navigator.clipboard
+        .writeText(value)
+        .then(() => notify('info', `${label} copied`))
+        .catch((error: unknown) => notify('error', errorMessage(error)));
+    },
+    [notify],
+  );
+
+  /** Cancels a pending creation from its row, without opening the dialog. */
+  const abortOperation = useCallback(
+    (operationId: string) => {
+      setOperations((prev) => settleOperation(prev, operationId));
+      void client
+        .invoke('tasks.abort', { operationId })
+        .then((result) => {
+          if (result.aborted) notify('info', 'Task creation cancelled');
+        })
+        .catch(() => {
+          // The operation already finished; its own promise reports the result.
+        });
+    },
+    [client, notify],
   );
 
   const startSession = useCallback(
@@ -858,9 +1161,8 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
   const shortcutsRef = useRef({
     openPalette,
     focusTerminal,
-    settingsOpen,
-    paletteOpen,
-    newTaskProjectId,
+    toggleLeftPanel: leftLayout.toggle,
+    modalOpen: false,
     selectedProjectId: selectedProject?.id ?? null,
     selectedSessionId,
     tabs: selectedSessions,
@@ -871,9 +1173,15 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
   shortcutsRef.current = {
     openPalette,
     focusTerminal,
-    settingsOpen,
-    paletteOpen,
-    newTaskProjectId,
+    toggleLeftPanel: leftLayout.toggle,
+    // Any dialog owns the keyboard while it is on screen.
+    modalOpen:
+      settingsOpen ||
+      paletteOpen ||
+      Boolean(newTaskProjectId) ||
+      Boolean(deleteTaskTarget) ||
+      Boolean(removeProjectTarget) ||
+      Boolean(projectSettingsTarget),
     selectedProjectId: selectedProject?.id ?? null,
     selectedSessionId,
     tabs: selectedSessions,
@@ -900,9 +1208,13 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
       }
       // Every other shortcut belongs to the app only while no modal owns the
       // keyboard.
-      if (actions.settingsOpen || actions.paletteOpen || actions.newTaskProjectId) return;
+      if (actions.modalOpen) return;
 
       switch (shortcut) {
+        case 'toggle-left-panel':
+          event.preventDefault();
+          actions.toggleLeftPanel();
+          return;
         case 'new-task':
           if (!actions.selectedProjectId) return;
           event.preventDefault();
@@ -1041,6 +1353,9 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
 
   const paletteCommands: CommandItem[] = [];
   for (const task of tasks) {
+    // The palette switches between live workspaces; archived ones are restored
+    // from the archive drawer instead.
+    if (task.status !== 'active') continue;
     const project = projects.find((candidate) => candidate.id === task.projectId);
     paletteCommands.push({
       id: `task:${task.id}`,
@@ -1048,7 +1363,7 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
       detail: `${project?.name ?? 'project'} · ${task.branch}`,
       keywords: 'switch task project workspace',
       kind: 'task',
-      run: () => setSelectedTaskId(task.id),
+      run: () => selectTask(task.id),
     });
   }
   for (const session of sessions) {
@@ -1264,6 +1579,79 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
     run: () => rightLayout.toggle(),
   });
   paletteCommands.push({
+    id: 'sidebar:toggle',
+    title: 'Toggle left sidebar',
+    detail: 'Ctrl+Shift+B',
+    keywords: 'hide show left panel sidebar workspaces layout',
+    kind: 'action',
+    run: () => leftLayout.toggle(),
+  });
+  paletteCommands.push({
+    id: 'sidebar:archive',
+    title: 'Show archived workspaces',
+    detail: 'left sidebar',
+    keywords: 'archive restore deleted workspaces sidebar',
+    kind: 'action',
+    run: () => {
+      leftLayout.openPanel();
+      setArchiveOpen(true);
+    },
+  });
+  if (selectedTask && selectedTask.status === 'active') {
+    paletteCommands.push({
+      id: 'sidebar:reveal',
+      title: 'Reveal current workspace in sidebar',
+      detail: selectedTask.kind === 'checkout' ? 'main checkout' : selectedTask.title,
+      keywords: 'show find locate filter search sidebar workspace',
+      kind: 'action',
+      run: () => {
+        leftLayout.openPanel();
+        setArchiveOpen(false);
+        setRevealNonce((nonce) => nonce + 1);
+      },
+    });
+    paletteCommands.push({
+      id: 'task:pin',
+      title: selectedTask.pinned ? 'Unpin workspace' : 'Pin workspace',
+      detail: selectedTask.kind === 'checkout' ? 'main checkout' : selectedTask.title,
+      keywords: 'pin unpin keep top sidebar workspace',
+      kind: 'action',
+      run: () => void updateTask(selectedTask, { pinned: !selectedTask.pinned }),
+    });
+    for (const status of ['todo', 'in_progress', 'in_review', 'done'] as const) {
+      paletteCommands.push({
+        id: `task:status:${status}`,
+        title: `Set workspace status: ${WORKFLOW_STATUS_LABELS[status]}`,
+        detail: selectedTask.kind === 'checkout' ? 'main checkout' : selectedTask.title,
+        keywords: 'workflow status stage review todo progress done',
+        kind: 'action',
+        run: () => void updateTask(selectedTask, { workflowStatus: status }),
+      });
+    }
+    if (selectedTask.kind === 'worktree') {
+      paletteCommands.push({
+        id: 'task:rename',
+        title: 'Rename workspace',
+        detail: selectedTask.title,
+        keywords: 'rename title workspace task',
+        kind: 'action',
+        run: () => {
+          leftLayout.openPanel();
+          setArchiveOpen(false);
+          setRenameNonce((nonce) => nonce + 1);
+        },
+      });
+      paletteCommands.push({
+        id: 'task:archive',
+        title: 'Archive workspace',
+        detail: selectedTask.title,
+        keywords: 'archive hide park workspace',
+        kind: 'action',
+        run: () => void archiveTask(selectedTask),
+      });
+    }
+  }
+  paletteCommands.push({
     id: 'app:palette',
     title: 'Command palette',
     detail: 'Ctrl+Shift+P',
@@ -1321,21 +1709,23 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
           <IconButton label="Settings" title="Settings" onClick={() => setSettingsOpen(true)}>
             <GearIcon size={14} />
           </IconButton>
-          <Button
-            variant="primary"
-            size="sm"
-            disabled={!selectedProject || busy}
-            onClick={() => selectedProject && openNewTask(selectedProject.id)}
-          >
-            New task
-          </Button>
         </div>
       </header>
 
       <main
-        className={`columns ${rightLayout.narrow ? 'columns-narrow' : ''}`}
+        className={[
+          'columns',
+          rightLayout.narrow ? 'columns-narrow' : '',
+          leftLayout.narrow ? 'columns-left-narrow' : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
         style={{
-          gridTemplateColumns: `270px minmax(0, 1fr) ${
+          gridTemplateColumns: `${
+            leftLayout.open && !leftLayout.drawer
+              ? `${leftLayout.width}px`
+              : `${LEFT_PANEL_RAIL_WIDTH}px`
+          } minmax(0, 1fr) ${
             rightLayout.open && !rightLayout.narrow
               ? `${rightLayout.width}px`
               : `${RIGHT_PANEL_RAIL_WIDTH}px`
@@ -1346,24 +1736,52 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
           projects={projects}
           tasks={tasks}
           sessions={sessions}
+          harnesses={visibleHarnesses}
           selectedTaskId={selectedTaskId}
           selectedSessionId={selectedSessionId}
           unread={unread}
-          profile={info?.profile ?? null}
-          onSelectTask={setSelectedTaskId}
+          operations={operations}
+          startFailures={startFailures}
+          open={leftLayout.open}
+          drawer={leftLayout.drawer}
+          width={leftLayout.width}
+          onWidthChange={leftLayout.setWidth}
+          onClose={leftLayout.close}
+          onOpenPanel={leftLayout.openPanel}
+          archiveOpen={archiveOpen}
+          onSetArchiveOpen={setArchiveOpen}
+          renameNonce={renameNonce}
+          revealNonce={revealNonce}
+          onSelectTask={selectTask}
           onSelectSession={(session) => selectSession(session.id)}
+          onStartSession={(taskId, harnessId) => void startSession(harnessId, taskId)}
+          onStopTaskSessions={(task) => void stopTaskSessions(task)}
+          onRetryStart={(taskId, harnessId) => void retryStartInTask(taskId, harnessId)}
+          onAbortOperation={abortOperation}
           onAddProject={() => void addProject()}
-          onRemoveProject={(project) => void removeProject(project)}
+          onAddProjectPath={(path) => void addProjectPath(path)}
+          onOpenCheckout={(projectId) => void openCheckout(projectId)}
+          onUpdateProject={(project, patch) => void updateProject(project, patch)}
+          onOpenProjectSettings={(project) => {
+            setProjectSettingsError(null);
+            setProjectSettingsTarget(project);
+          }}
+          onRemoveProject={setRemoveProjectTarget}
           onRevealProject={(project) =>
             void client.invoke('projects.reveal', { projectId: project.id }).catch((error) => {
               notify('error', errorMessage(error));
             })
           }
+          onReorderProjects={reorderProjects}
           onNewTask={openNewTask}
-          onRemoveTask={(task) => void removeTask(task)}
-          onRetryStart={(taskId, harnessId) => void retryStartInTask(taskId, harnessId)}
-          operations={operations}
-          startFailures={startFailures}
+          onUpdateTask={(task, patch) => void updateTask(task, patch)}
+          onReorderTasks={reorderTasks}
+          onArchiveTask={(task) => void archiveTask(task)}
+          onRestoreTask={(task) => void restoreTask(task)}
+          onDeleteTask={setDeleteTaskTarget}
+          onCleanUpArchived={(targets) => void cleanUpArchived(targets)}
+          onRevealTask={revealTask}
+          onCopyText={copyText}
         />
 
         <CenterPane
@@ -1505,6 +1923,44 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
             setSettingsOpen(false);
             notify('info', 'Settings saved');
             void refreshHarnesses();
+          }}
+        />
+      ) : null}
+
+      {deleteTaskTarget ? (
+        <DeleteTaskDialog
+          client={client}
+          task={deleteTaskTarget}
+          project={projects.find((project) => project.id === deleteTaskTarget.projectId) ?? null}
+          busy={deleteTaskBusy}
+          onConfirm={(options) => void confirmDeleteTask(options)}
+          onCancel={() => {
+            if (!deleteTaskBusy) setDeleteTaskTarget(null);
+          }}
+        />
+      ) : null}
+
+      {removeProjectTarget ? (
+        <RemoveProjectDialog
+          project={removeProjectTarget}
+          busy={removeProjectBusy}
+          onConfirm={() => void confirmRemoveProject()}
+          onCancel={() => {
+            if (!removeProjectBusy) setRemoveProjectTarget(null);
+          }}
+        />
+      ) : null}
+
+      {projectSettingsTarget ? (
+        <ProjectSettingsDialog
+          project={projectSettingsTarget}
+          busy={projectSettingsBusy}
+          error={projectSettingsError}
+          onSave={(patch) => void saveProjectSettings(patch)}
+          onCancel={() => {
+            if (projectSettingsBusy) return;
+            setProjectSettingsTarget(null);
+            setProjectSettingsError(null);
           }}
         />
       ) : null}
