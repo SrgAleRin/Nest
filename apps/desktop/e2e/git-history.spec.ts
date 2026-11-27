@@ -53,7 +53,22 @@ test.beforeAll(() => {
   git(['switch', 'main'], repoPath);
   writeFileSync(path.join(repoPath, 'README.md'), '# history\n\nmain notes\n', 'utf8');
   commit(repoPath, 'main: readme');
-  git(['merge', '--no-ff', 'feature', '-m', 'merge: feature into main'], repoPath);
+  // A merge commit needs the same identity a plain commit does: the runner has
+  // no global git config.
+  git(
+    [
+      '-c',
+      'user.name=Nest',
+      '-c',
+      'user.email=nest@example.com',
+      'merge',
+      '--no-ff',
+      'feature',
+      '-m',
+      'merge: feature into main',
+    ],
+    repoPath,
+  );
   git(['tag', 'v1.1.0'], repoPath);
 
   // A commit only the feature branch carries: main has nothing of it, and the

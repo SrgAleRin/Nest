@@ -5,7 +5,7 @@ import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { _electron as electron, type ElectronApplication } from 'playwright';
 import type { NestBridge } from '@nest/shared';
-import { pinWideWindow } from './helpers';
+import { centerTab, pinWideWindow } from './helpers';
 
 declare global {
   interface Window {
@@ -152,10 +152,13 @@ test('shows inline panel errors and recovers after a retry', async () => {
   await expect(page.locator('.error-state')).toHaveCount(0, { timeout: 30_000 });
   await expect(page.locator('.diff-file-head .diff-path')).toHaveText('README.md');
 
-  // And back in the list the column is whole again. The restored `.git` is
-  // picked up by the watcher on its own, so the notes may already be gone by the
-  // time the list is back; the retry is what is left to check when they are not.
-  await page.getByRole('button', { name: '← Source Control' }).click();
+  // And the column is whole again. The patch lives in the center `Diff` tab, so
+  // the list never left: closing the tab is the whole way back. The restored
+  // `.git` is picked up by the watcher on its own, so the notes may already be
+  // gone by the time the tab closes; the retry is what is left to check when
+  // they are not.
+  await page.keyboard.press('Escape');
+  await expect(centerTab(page, 'diff')).toHaveCount(0);
   const retryBranches = branchesNote.getByRole('button', { name: 'Retry' });
   if (await retryBranches.count()) await retryBranches.click();
   await expect(page.locator('.source-control-note.warn')).toHaveCount(0, { timeout: 30_000 });
