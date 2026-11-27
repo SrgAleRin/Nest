@@ -271,8 +271,8 @@ export function createMockClient(): NestClient {
         untracked: false,
         additions: 12,
         deletions: 4,
-        stagedAdditions: 0,
-        stagedDeletions: 0,
+        stagedAdditions: null,
+        stagedDeletions: null,
         unstagedAdditions: 12,
         unstagedDeletions: 4,
       },
@@ -290,8 +290,8 @@ export function createMockClient(): NestClient {
         deletions: 0,
         stagedAdditions: 48,
         stagedDeletions: 0,
-        unstagedAdditions: 0,
-        unstagedDeletions: 0,
+        unstagedAdditions: null,
+        unstagedDeletions: null,
       },
       {
         path: 'docs/notes.md',
@@ -305,9 +305,9 @@ export function createMockClient(): NestClient {
         untracked: true,
         additions: 9,
         deletions: 0,
-        stagedAdditions: 9,
-        stagedDeletions: 0,
-        unstagedAdditions: 0,
+        stagedAdditions: null,
+        stagedDeletions: null,
+        unstagedAdditions: 9,
         unstagedDeletions: 0,
       },
     ],
@@ -804,8 +804,43 @@ export function createMockClient(): NestClient {
         return { descriptor, files: diff.files.filter((file) => file.staged === staged) };
       }
       case 'git.stage':
-      case 'git.unstage':
+      case 'git.unstage': {
+        // The mock keeps one side per path: staging folds the counts into the
+        // index, unstaging puts them back into the worktree.
+        const paths = new Set((params.paths as string[] | undefined) ?? []);
+        const staging = method === 'git.stage';
+        status.files = status.files.map((file) => {
+          if (!paths.has(file.path)) return file;
+          const additions = file.additions ?? 0;
+          const deletions = file.deletions ?? 0;
+          return staging
+            ? {
+                ...file,
+                indexStatus: file.untracked ? 'A' : 'M',
+                worktreeStatus: ' ',
+                staged: true,
+                unstaged: false,
+                untracked: false,
+                stagedAdditions: additions,
+                stagedDeletions: deletions,
+                unstagedAdditions: null,
+                unstagedDeletions: null,
+              }
+            : {
+                ...file,
+                indexStatus: ' ',
+                worktreeStatus: 'M',
+                staged: false,
+                unstaged: true,
+                untracked: false,
+                stagedAdditions: null,
+                stagedDeletions: null,
+                unstagedAdditions: additions,
+                unstagedDeletions: deletions,
+              };
+        });
         return status;
+      }
       case 'git.commit': {
         status.files = status.files.filter((file) => !file.staged);
         emit({ type: 'git:changed', taskId: String(params.taskId) });
@@ -889,7 +924,26 @@ export function createMockClient(): NestClient {
       }
       case 'git.discard': {
         const paths = new Set((params.paths as string[] | undefined) ?? []);
-        status.files = status.files.filter((file) => !paths.has(file.path));
+        const side = (params.side as 'staged' | 'unstaged' | 'both' | undefined) ?? 'both';
+        status.files = status.files.flatMap((file) => {
+          if (!paths.has(file.path)) return [file];
+          // `unstaged` restores the worktree from the index, so a staged part of
+          // the same file stays in the list with its worktree counters cleared.
+          if (side === 'unstaged' && file.staged) {
+            return [
+              {
+                ...file,
+                worktreeStatus: ' ',
+                unstaged: false,
+                additions: file.stagedAdditions,
+                deletions: file.stagedDeletions,
+                unstagedAdditions: null,
+                unstagedDeletions: null,
+              },
+            ];
+          }
+          return [];
+        });
         emit({ type: 'git:changed', taskId: String(params.taskId) });
         return status;
       }

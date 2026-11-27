@@ -6,6 +6,16 @@ export interface NumstatEntry {
 export type Numstat = Map<string, NumstatEntry>;
 
 /**
+ * The two diffs a status row is made of: `HEAD → index` and `index → worktree`.
+ * They are read separately, so a partially staged file keeps its own counters
+ * per side instead of one `HEAD → worktree` sum shown twice.
+ */
+export interface NumstatSides {
+  staged: Numstat;
+  unstaged: Numstat;
+}
+
+/**
  * Parses `git diff --numstat -z` output. Records are NUL-terminated and look
  * like `12\t3\tpath`; renames carry an empty path followed by the old and the
  * new path, so the map is keyed by the new path (the one git status reports).
@@ -44,7 +54,17 @@ export function parseNumstat(raw: string): Numstat {
   return stats;
 }
 
-/** Adds staged and unstaged stats for the same file (used without a HEAD commit). */
+/**
+ * Adds one counter pair to another. A binary side has no line counts, so the
+ * sum stays unknown unless that side reports nothing at all.
+ */
+function addCounts(left: number | null, right: number | null): number | null {
+  if (left === null) return right === 0 ? 0 : null;
+  if (right === null) return left === 0 ? 0 : null;
+  return left + right;
+}
+
+/** Adds stats for the same file (the aggregate view, or a merged fallback). */
 export function mergeNumstat(target: Numstat, source: Numstat): void {
   for (const [filePath, entry] of source) {
     const existing = target.get(filePath);
@@ -53,14 +73,20 @@ export function mergeNumstat(target: Numstat, source: Numstat): void {
       continue;
     }
     target.set(filePath, {
-      additions:
-        existing.additions === null || entry.additions === null
-          ? null
-          : existing.additions + entry.additions,
-      deletions:
-        existing.deletions === null || entry.deletions === null
-          ? null
-          : existing.deletions + entry.deletions,
+      additions: addCounts(existing.additions, entry.additions),
+      deletions: addCounts(existing.deletions, entry.deletions),
     });
   }
+}
+
+/**
+ * The aggregate `HEAD → worktree` counters a status row shows. A side without a
+ * numstat record contributes nothing, so a file changed on one side only keeps
+ * the counts of that side.
+ */
+export function sumNumstat(sides: NumstatSides): Numstat {
+  const total: Numstat = new Map();
+  mergeNumstat(total, sides.staged);
+  mergeNumstat(total, sides.unstaged);
+  return total;
 }

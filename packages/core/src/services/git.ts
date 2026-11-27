@@ -25,7 +25,7 @@ import { BRANCH_FORMAT, parseBranches, type BranchRecord } from '../git/branches
 import { LOG_FORMAT, parseLog } from '../git/log.js';
 import { parseNameStatus, toCompareFiles } from '../git/compare.js';
 import { buildUntrackedDiff, parseUnifiedDiff } from '../git/diff.js';
-import { mergeNumstat, parseNumstat, type Numstat } from '../git/numstat.js';
+import { parseNumstat, sumNumstat, type NumstatSides } from '../git/numstat.js';
 import { assertRef } from '../git/refs.js';
 import { parseStatus } from '../git/status.js';
 import type { TaskService } from './tasks.js';
@@ -72,6 +72,33 @@ export interface CompareDiffRequest {
 /** Which side of a change `discard` drops. */
 export type DiscardSide = 'staged' | 'unstaged' | 'both';
 
+/**
+ * One promise chain per workspace: the mutating git commands of the same
+ * checkout run one after another, so two clicks (or a click racing a fetch)
+ * cannot collide on `.git/index.lock`. Reads never wait.
+ *
+ * A failed mutation settles its slot and the chain moves on, so one broken
+ * command does not block every later one.
+ */
+export class MutationQueue {
+  private readonly tails = new Map<string, Promise<void>>();
+
+  run<T>(key: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.tails.get(key) ?? Promise.resolve();
+    const result = previous.then(operation);
+    const tail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.tails.set(key, tail);
+    void tail.then(() => {
+      // Forget the key once nothing is queued behind this operation anymore.
+      if (this.tails.get(key) === tail) this.tails.delete(key);
+    });
+    return result;
+  }
+}
+
 export interface PushOptions {
   /** Lease-guarded force push; only the current branch is rewritten. */
   force?: boolean;
@@ -84,6 +111,8 @@ export interface PushOptions {
 }
 
 export class GitService {
+  private readonly mutations = new MutationQueue();
+
   constructor(
     private readonly db: Db,
     private readonly tasks: TaskService,
@@ -187,21 +216,25 @@ export class GitService {
   async stage(taskId: string, paths: string[]): Promise<GitStatus> {
     const task = this.tasks.get(taskId);
     assertPathsInside(task.workspacePath, paths);
-    await git(task.workspacePath, ['add', '--', ...paths]);
-    this.emit({ type: 'git:changed', taskId });
-    return readStatus(task.workspacePath);
+    return this.mutations.run(task.workspacePath, async () => {
+      await git(task.workspacePath, ['add', '--', ...paths]);
+      this.emit({ type: 'git:changed', taskId });
+      return readStatus(task.workspacePath);
+    });
   }
 
   async unstage(taskId: string, paths: string[]): Promise<GitStatus> {
     const task = this.tasks.get(taskId);
     assertPathsInside(task.workspacePath, paths);
-    // A rename lives in the index as an addition plus a deletion, so undoing
-    // only the new path leaves the original staged as deleted.
-    const status = await readStatus(task.workspacePath);
-    const targets = expandChangedPaths(status.files, paths);
-    await unstageTargets(task.workspacePath, targets);
-    this.emit({ type: 'git:changed', taskId });
-    return readStatus(task.workspacePath);
+    return this.mutations.run(task.workspacePath, async () => {
+      // A rename lives in the index as an addition plus a deletion, so undoing
+      // only the new path leaves the original staged as deleted.
+      const status = await readStatus(task.workspacePath);
+      const targets = expandChangedPaths(status.files, paths);
+      await unstageTargets(task.workspacePath, targets);
+      this.emit({ type: 'git:changed', taskId });
+      return readStatus(task.workspacePath);
+    });
   }
 
   async commit(
@@ -211,36 +244,38 @@ export class GitService {
     amend = false,
   ): Promise<{ hash: string; summary: string }> {
     const task = this.tasks.get(taskId);
-    // Amending replaces the current commit, so it needs one; the first commit
-    // on an unborn branch does not (git creates the root commit without HEAD).
-    if (amend && !(await hasHead(task.workspacePath))) {
-      throw new NestError(
-        'amend_without_head',
-        'There is no commit to amend: this branch has no commits yet',
-      );
-    }
-    // `stageAll` is the only path that touches the index; a normal commit
-    // records exactly what is staged and leaves the worktree alone.
-    if (stageAll) {
-      await git(task.workspacePath, ['add', '-A']);
-    }
-    // Amending only the message is a valid operation, so the staged check is
-    // skipped for it; a normal commit still needs something to record. A
-    // conflict is let through so git explains the unmerged files instead of
-    // Nest reporting an empty index.
-    if (!amend && !(await indexHasChanges(task.workspacePath))) {
-      const status = await readStatus(task.workspacePath);
-      if (!status.files.some((file) => file.conflict)) {
-        throw new NestError('nothing_staged', 'Nothing is staged for commit');
+    return this.mutations.run(task.workspacePath, async () => {
+      // Amending replaces the current commit, so it needs one; the first commit
+      // on an unborn branch does not (git creates the root commit without HEAD).
+      if (amend && !(await hasHead(task.workspacePath))) {
+        throw new NestError(
+          'amend_without_head',
+          'There is no commit to amend: this branch has no commits yet',
+        );
       }
-    }
-    await git(
-      task.workspacePath,
-      amend ? ['commit', '--amend', '-m', message] : ['commit', '-m', message],
-    );
-    const hash = (await git(task.workspacePath, ['rev-parse', '--short', 'HEAD'])).stdout.trim();
-    this.emit({ type: 'git:changed', taskId });
-    return { hash, summary: message.split('\n')[0] ?? message };
+      // `stageAll` is the only path that touches the index; a normal commit
+      // records exactly what is staged and leaves the worktree alone.
+      if (stageAll) {
+        await git(task.workspacePath, ['add', '-A']);
+      }
+      // Amending only the message is a valid operation, so the staged check is
+      // skipped for it; a normal commit still needs something to record. A
+      // conflict is let through so git explains the unmerged files instead of
+      // Nest reporting an empty index.
+      if (!amend && !(await indexHasChanges(task.workspacePath))) {
+        const status = await readStatus(task.workspacePath);
+        if (!status.files.some((file) => file.conflict)) {
+          throw new NestError('nothing_staged', 'Nothing is staged for commit');
+        }
+      }
+      await git(
+        task.workspacePath,
+        amend ? ['commit', '--amend', '-m', message] : ['commit', '-m', message],
+      );
+      const hash = (await git(task.workspacePath, ['rev-parse', '--short', 'HEAD'])).stdout.trim();
+      this.emit({ type: 'git:changed', taskId });
+      return { hash, summary: message.split('\n')[0] ?? message };
+    });
   }
 
   /**
@@ -252,49 +287,51 @@ export class GitService {
   async push(taskId: string, options: PushOptions = {}): Promise<{ output: string }> {
     const task = this.tasks.get(taskId);
     const cwd = task.workspacePath;
-    const branch = (await gitOrNull(cwd, ['symbolic-ref', '--short', '-q', 'HEAD']))?.trim();
-    if (!branch) {
-      throw new NestError(
-        'detached_head',
-        'Check out a branch before pushing: a detached HEAD has no branch to publish',
-      );
-    }
+    return this.mutations.run(cwd, async () => {
+      const branch = (await gitOrNull(cwd, ['symbolic-ref', '--short', '-q', 'HEAD']))?.trim();
+      if (!branch) {
+        throw new NestError(
+          'detached_head',
+          'Check out a branch before pushing: a detached HEAD has no branch to publish',
+        );
+      }
 
-    const remotes = ((await gitOrNull(cwd, ['remote'])) ?? '')
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean);
-    if (remotes.length === 0) {
-      throw new NestError('no_remotes', 'This repository has no remotes to push to');
-    }
+      const remotes = ((await gitOrNull(cwd, ['remote'])) ?? '')
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+      if (remotes.length === 0) {
+        throw new NestError('no_remotes', 'This repository has no remotes to push to');
+      }
 
-    const upstream =
-      (
-        await gitOrNull(cwd, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])
-      )?.trim() || null;
-    const remote = pushRemote(remotes, upstream);
-    const target = `${remote}/${branch}`;
+      const upstream =
+        (
+          await gitOrNull(cwd, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])
+        )?.trim() || null;
+      const remote = pushRemote(remotes, upstream);
+      const target = `${remote}/${branch}`;
 
-    if (upstream && upstream !== target && !options.publish) {
-      throw new NestError(
-        'upstream_mismatch',
-        `Branch ${branch} tracks ${upstream}, so a plain push would update ${upstream}`,
-        `Nest never rewrites an upstream you did not choose.\n\n` +
-          `Publish ${branch} as ${target} instead: the branch is pushed explicitly ` +
-          `("git push -u ${remote} ${branch}") and ${upstream} is left untouched.`,
-      );
-    }
+      if (upstream && upstream !== target && !options.publish) {
+        throw new NestError(
+          'upstream_mismatch',
+          `Branch ${branch} tracks ${upstream}, so a plain push would update ${upstream}`,
+          `Nest never rewrites an upstream you did not choose.\n\n` +
+            `Publish ${branch} as ${target} instead: the branch is pushed explicitly ` +
+            `("git push -u ${remote} ${branch}") and ${upstream} is left untouched.`,
+        );
+      }
 
-    // Force is lease-guarded: it rewrites the remote branch only if nobody else
-    // pushed to it since the last fetch.
-    const forceArgs = options.force ? ['--force-with-lease'] : [];
-    const explicit = !upstream || upstream !== target;
-    const result = explicit
-      ? await git(cwd, ['push', ...forceArgs, '-u', remote, branch])
-      : await git(cwd, ['push', ...forceArgs]);
+      // Force is lease-guarded: it rewrites the remote branch only if nobody
+      // else pushed to it since the last fetch.
+      const forceArgs = options.force ? ['--force-with-lease'] : [];
+      const explicit = !upstream || upstream !== target;
+      const result = explicit
+        ? await git(cwd, ['push', ...forceArgs, '-u', remote, branch])
+        : await git(cwd, ['push', ...forceArgs]);
 
-    this.emit({ type: 'git:changed', taskId });
-    return { output: [result.stdout, result.stderr].filter(Boolean).join('\n').trim() };
+      this.emit({ type: 'git:changed', taskId });
+      return { output: [result.stdout, result.stderr].filter(Boolean).join('\n').trim() };
+    });
   }
 
   /** Commits reachable from `ref` (newest first), one page at a time. */
@@ -488,47 +525,53 @@ export class GitService {
 
   async fetch(taskId: string): Promise<{ output: string }> {
     const task = this.tasks.get(taskId);
-    const remotes = await gitOrNull(task.workspacePath, ['remote']);
-    if (!remotes || !remotes.trim()) {
-      throw new NestError('no_remotes', 'This repository has no remotes to fetch from');
-    }
-    const result = await git(task.workspacePath, ['fetch', '--prune'], {
-      timeout: REMOTE_TIMEOUT_MS,
+    return this.mutations.run(task.workspacePath, async () => {
+      const remotes = await gitOrNull(task.workspacePath, ['remote']);
+      if (!remotes || !remotes.trim()) {
+        throw new NestError('no_remotes', 'This repository has no remotes to fetch from');
+      }
+      const result = await git(task.workspacePath, ['fetch', '--prune'], {
+        timeout: REMOTE_TIMEOUT_MS,
+      });
+      this.emit({ type: 'git:changed', taskId });
+      return { output: combineOutput(result) };
     });
-    this.emit({ type: 'git:changed', taskId });
-    return { output: combineOutput(result) };
   }
 
   /** Fast-forward only: Nest never creates merge commits behind the user's back. */
   async pull(taskId: string): Promise<{ output: string }> {
     const task = this.tasks.get(taskId);
-    const upstream = await gitOrNull(task.workspacePath, [
-      'rev-parse',
-      '--abbrev-ref',
-      '--symbolic-full-name',
-      '@{u}',
-    ]);
-    if (!upstream || !upstream.trim()) {
-      throw new NestError('no_upstream', 'The current branch has no upstream to pull from');
-    }
-    let result: GitResult;
-    try {
-      result = await git(task.workspacePath, ['pull', '--ff-only'], { timeout: PULL_TIMEOUT_MS });
-    } catch (error) {
-      if (
-        error instanceof NestError &&
-        /fast-forward|diverg|reconcile/i.test(error.details ?? '')
-      ) {
-        throw new NestError(
-          'pull_not_fast_forward',
-          'The branch has diverged from its upstream; merge or rebase it manually',
-          error.details,
-        );
+    return this.mutations.run(task.workspacePath, async () => {
+      const upstream = await gitOrNull(task.workspacePath, [
+        'rev-parse',
+        '--abbrev-ref',
+        '--symbolic-full-name',
+        '@{u}',
+      ]);
+      if (!upstream || !upstream.trim()) {
+        throw new NestError('no_upstream', 'The current branch has no upstream to pull from');
       }
-      throw error;
-    }
-    this.emit({ type: 'git:changed', taskId });
-    return { output: combineOutput(result) };
+      let result: GitResult;
+      try {
+        result = await git(task.workspacePath, ['pull', '--ff-only'], {
+          timeout: PULL_TIMEOUT_MS,
+        });
+      } catch (error) {
+        if (
+          error instanceof NestError &&
+          /fast-forward|diverg|reconcile/i.test(error.details ?? '')
+        ) {
+          throw new NestError(
+            'pull_not_fast_forward',
+            'The branch has diverged from its upstream; merge or rebase it manually',
+            error.details,
+          );
+        }
+        throw error;
+      }
+      this.emit({ type: 'git:changed', taskId });
+      return { output: combineOutput(result) };
+    });
   }
 
   async checkout(
@@ -540,88 +583,97 @@ export class GitService {
     const cwd = task.workspacePath;
     const name = assertRef(branch, 'branch');
 
-    if (options.create) {
-      await git(cwd, ['check-ref-format', '--branch', name]).catch((error) => {
-        if (error instanceof NestError) {
-          throw new NestError('invalid_ref', `Invalid branch name: ${name}`, error.details);
+    return this.mutations.run(cwd, async () => {
+      if (options.create) {
+        await git(cwd, ['check-ref-format', '--branch', name]).catch((error) => {
+          if (error instanceof NestError) {
+            throw new NestError('invalid_ref', `Invalid branch name: ${name}`, error.details);
+          }
+          throw error;
+        });
+        if (await revisionExists(cwd, `refs/heads/${name}`)) {
+          throw new NestError('branch_exists', `Branch ${name} already exists`);
         }
-        throw error;
-      });
-      if (await revisionExists(cwd, `refs/heads/${name}`)) {
-        throw new NestError('branch_exists', `Branch ${name} already exists`);
+        const from = options.from ? assertRef(options.from, 'start point') : null;
+        if (from) await assertRevision(cwd, from, 'start point');
+        await git(cwd, from ? ['switch', '-c', name, from] : ['switch', '-c', name]);
+      } else if (await revisionExists(cwd, `refs/heads/${name}`)) {
+        await git(cwd, ['switch', name]);
+      } else if (await revisionExists(cwd, `refs/remotes/${name}`)) {
+        const localName = name.slice(name.indexOf('/') + 1);
+        if (await revisionExists(cwd, `refs/heads/${localName}`)) {
+          throw new NestError(
+            'branch_exists',
+            `Local branch ${localName} already exists; switch to it instead`,
+          );
+        }
+        await git(cwd, ['switch', '--track', name]);
+      } else {
+        throw new NestError('branch_missing', `Branch ${name} was not found`);
       }
-      const from = options.from ? assertRef(options.from, 'start point') : null;
-      if (from) await assertRevision(cwd, from, 'start point');
-      await git(cwd, from ? ['switch', '-c', name, from] : ['switch', '-c', name]);
-    } else if (await revisionExists(cwd, `refs/heads/${name}`)) {
-      await git(cwd, ['switch', name]);
-    } else if (await revisionExists(cwd, `refs/remotes/${name}`)) {
-      const localName = name.slice(name.indexOf('/') + 1);
-      if (await revisionExists(cwd, `refs/heads/${localName}`)) {
-        throw new NestError(
-          'branch_exists',
-          `Local branch ${localName} already exists; switch to it instead`,
-        );
-      }
-      await git(cwd, ['switch', '--track', name]);
-    } else {
-      throw new NestError('branch_missing', `Branch ${name} was not found`);
-    }
 
-    this.emit({ type: 'git:changed', taskId });
-    return this.readAndSync(task);
+      this.emit({ type: 'git:changed', taskId });
+      return this.readAndSync(task);
+    });
   }
 
   /**
-   * Throws away working tree changes for the given paths. Tracked files go back
-   * to HEAD; untracked files are deleted. The paths must currently be reported
-   * as changed, so a stale click cannot wipe an unrelated file.
+   * Throws away pending changes for the given paths. The paths must currently be
+   * reported as changed, so a stale click cannot wipe an unrelated file.
+   *
+   * `side` names the part that goes away: `unstaged` restores only the working
+   * tree from the index, so a staged part of the same file survives; `staged`
+   * and `both` drop the path back to HEAD. Untracked files have no index or HEAD
+   * entry at all, so every side deletes them from disk — that works on a branch
+   * without commits too, where a tracked file instead fails with `no_head`.
    */
   async discard(taskId: string, paths: string[], side: DiscardSide = 'both'): Promise<GitStatus> {
-    if (side === 'unstaged') {
-      throw new NestError(
-        'not_implemented',
-        'Discarding only the worktree side is not implemented yet',
-      );
-    }
     const task = this.tasks.get(taskId);
     const cwd = task.workspacePath;
-    const status = await readStatus(cwd);
-    const changed = new Map(status.files.map((file) => [file.path, file]));
+    return this.mutations.run(cwd, async () => {
+      const status = await readStatus(cwd);
+      const changed = new Map(status.files.map((file) => [file.path, file]));
 
-    const tracked: string[] = [];
-    const untracked: string[] = [];
-    for (const filePath of paths) {
-      assertInsideWorkspace(cwd, filePath);
-      const file = changed.get(filePath);
-      if (!file) {
-        throw new NestError('path_not_changed', `${filePath} has no pending changes`);
+      const tracked: string[] = [];
+      const untracked: string[] = [];
+      for (const filePath of paths) {
+        assertInsideWorkspace(cwd, filePath);
+        const file = changed.get(filePath);
+        if (!file) {
+          throw new NestError('path_not_changed', `${filePath} has no pending changes`);
+        }
+        if (file.untracked) {
+          untracked.push(filePath);
+          continue;
+        }
+        // A rename is restored as a pair: the original name comes back from HEAD
+        // while the new one leaves the index and the workspace. A copy only
+        // removes the new file; its source was never changed.
+        for (const target of expandChangedPaths([file], [filePath])) tracked.push(target);
       }
-      if (file.untracked) {
-        untracked.push(filePath);
-        continue;
-      }
-      // A rename is restored as a pair: the original name comes back from HEAD
-      // while the new one leaves the index and the workspace. A copy only
-      // removes the new file; its source was never changed.
-      for (const target of expandChangedPaths([file], [filePath])) tracked.push(target);
-    }
 
-    if (tracked.length > 0) {
-      if (!(await hasHead(cwd))) {
-        throw new NestError(
-          'no_head',
-          'Nothing is committed yet, so tracked changes cannot be restored',
-        );
+      if (tracked.length > 0) {
+        if (side === 'unstaged') {
+          // The index is the baseline: restoring from it needs no HEAD, keeps a
+          // staged part of the file, and works on an unborn branch.
+          await git(cwd, ['restore', '--worktree', '--', ...tracked]);
+        } else {
+          if (!(await hasHead(cwd))) {
+            throw new NestError(
+              'no_head',
+              'Nothing is committed yet, so tracked changes cannot be restored',
+            );
+          }
+          await git(cwd, ['restore', '--source=HEAD', '--staged', '--worktree', '--', ...tracked]);
+        }
       }
-      await git(cwd, ['restore', '--source=HEAD', '--staged', '--worktree', '--', ...tracked]);
-    }
-    if (untracked.length > 0) {
-      await git(cwd, ['clean', '-f', '--', ...untracked]);
-    }
+      if (untracked.length > 0) {
+        await git(cwd, ['clean', '-f', '--', ...untracked]);
+      }
 
-    this.emit({ type: 'git:changed', taskId });
-    return readStatus(cwd);
+      this.emit({ type: 'git:changed', taskId });
+      return readStatus(cwd);
+    });
   }
 
   /** Default ref for the compare panel: the upstream, then the remote default branch. */
@@ -819,18 +871,21 @@ async function readStatus(cwd: string): Promise<GitStatus> {
   ]);
 
   const parsed = parseStatus(stdout);
+  const totals = sumNumstat(stats);
   const files: GitFile[] = parsed.files.map((file) => {
-    const stat = stats.get(file.path);
+    const total = totals.get(file.path);
+    const staged = stats.staged.get(file.path);
+    const unstaged = stats.unstaged.get(file.path);
     return {
       ...file,
-      additions: stat?.additions ?? null,
-      deletions: stat?.deletions ?? null,
-      // Per-side counters are filled by the numstat split; until then every
-      // row shows the `HEAD → worktree` sum on both sides.
-      stagedAdditions: stat?.additions ?? null,
-      stagedDeletions: stat?.deletions ?? null,
-      unstagedAdditions: stat?.additions ?? null,
-      unstagedDeletions: stat?.deletions ?? null,
+      additions: total?.additions ?? null,
+      deletions: total?.deletions ?? null,
+      // Each side carries the counters of its own diff; a side without a
+      // numstat record has nothing to report, so the row stays empty there.
+      stagedAdditions: staged?.additions ?? null,
+      stagedDeletions: staged?.deletions ?? null,
+      unstagedAdditions: unstaged?.additions ?? null,
+      unstagedDeletions: unstaged?.deletions ?? null,
     };
   });
 
@@ -840,26 +895,21 @@ async function readStatus(cwd: string): Promise<GitStatus> {
 }
 
 /**
- * `git diff HEAD` covers staged and unstaged changes against the last commit.
- * Repositories without commits have no HEAD, so both diffs are merged instead.
+ * Both diffs a status row is made of: `HEAD → index` (`--cached`) and
+ * `index → worktree`. They are read separately, so a partially staged file
+ * keeps its own counters per side instead of one sum shown twice.
+ *
+ * A repository without commits has no HEAD, but git compares the index against
+ * the empty tree there, so the same two commands still describe an unborn
+ * branch and no fallback is needed.
  */
-async function readNumstat(cwd: string): Promise<Numstat> {
+async function readNumstat(cwd: string): Promise<NumstatSides> {
   const options = { timeout: NUMSTAT_TIMEOUT_MS };
-  const againstHead = await gitOrNull(
-    cwd,
-    ['diff', '--numstat', '-z', '-M', '--no-color', 'HEAD'],
-    options,
-  );
-  if (againstHead !== null) return parseNumstat(againstHead);
-
-  const [worktree, staged] = await Promise.all([
-    gitOrNull(cwd, ['diff', '--numstat', '-z', '--no-color'], options),
-    gitOrNull(cwd, ['diff', '--numstat', '-z', '--no-color', '--cached'], options),
+  const [staged, unstaged] = await Promise.all([
+    git(cwd, ['diff', '--numstat', '-z', '-M', '--no-color', '--cached'], options),
+    git(cwd, ['diff', '--numstat', '-z', '-M', '--no-color'], options),
   ]);
-  const stats: Numstat = new Map();
-  if (staged) mergeNumstat(stats, parseNumstat(staged));
-  if (worktree) mergeNumstat(stats, parseNumstat(worktree));
-  return stats;
+  return { staged: parseNumstat(staged.stdout), unstaged: parseNumstat(unstaged.stdout) };
 }
 
 /** Untracked files are missing from git diff, so their lines are counted here. */
@@ -871,8 +921,12 @@ async function countUntracked(files: GitFile[], cwd: string): Promise<void> {
       budget -= 1;
       const counted = await countLines(path.join(cwd, file.path));
       if (!counted) return;
+      // An untracked file has no index side; its whole content is the worktree,
+      // so the counters land on the unstaged side only.
       file.additions = counted.additions;
       file.deletions = counted.deletions;
+      file.unstagedAdditions = counted.additions;
+      file.unstagedDeletions = counted.deletions;
     }),
   );
 }
