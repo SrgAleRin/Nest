@@ -4196,3 +4196,491 @@ code,
   flex-direction: column;
   gap: 4px;
 }
+
+/* ---------- center workbench: terminals + Diff + Git Graph ---------- */
+
+/*
+ * The center stacks its layers in one box. Only the active layer is displayed:
+ * the others stay mounted, which is what keeps the xterm instances alive under
+ * `Diff` and `Graph`. `display: none` also means a hidden layer reports a zero
+ * box, so its `ResizeObserver` never asks for a 0x0 terminal and the fit runs
+ * again when the layer comes back.
+ */
+.center-layers {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.center-layer {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  /* Every layer clips its own content; the shell never scrolls sideways. */
+  overflow: hidden;
+}
+
+.center-layer.is-hidden {
+  display: none;
+}
+
+/* The tool tabs sit at the right end of the strip, after the session tabs. */
+.center-tool-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 4px;
+  padding-left: 6px;
+  border-left: 1px solid var(--border-soft);
+}
+
+.center-tool-tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 5px 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.center-tool-tab.selected {
+  background: #0d1117;
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.center-tool-tab-close {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+}
+
+.center-tool-tab-close:hover,
+.center-tool-tab-close:focus-visible {
+  background: #2a1620;
+  color: var(--red);
+}
+
+/* The center layers reuse the patch and graph styles below. */
+.center-layer-diff .diff-panel,
+.center-layer-graph .graph-panel {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ---------- Git graph ---------- */
+
+.graph-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.graph-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 4px;
+}
+
+.graph-toolbar-inputs {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.graph-scopes {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.graph-scope.selected {
+  border-color: var(--blue);
+  color: var(--text);
+}
+
+.graph-toolbar-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.graph-ref-picker {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1 1 320px;
+  min-width: 140px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--dim);
+}
+
+.graph-ref-input,
+.graph-search {
+  min-width: 0;
+  padding: 5px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 11.5px;
+  outline: none;
+}
+
+.graph-search {
+  flex: 1 1 260px;
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+}
+
+.graph-ref-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  width: min(420px, 70vw);
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+}
+
+.graph-ref-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 7px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.graph-ref-option:hover,
+.graph-ref-option:focus-visible {
+  background: #131a24;
+}
+
+.graph-ref-option-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.graph-ref-option-meta {
+  margin-left: auto;
+  color: var(--dim);
+  font: 10px var(--mono);
+  white-space: nowrap;
+}
+
+.graph-ref-worktree,
+.graph-badge.worktree {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: rgba(224, 175, 104, 0.16);
+  color: var(--amber);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.graph-ref-empty {
+  padding: 6px 8px;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.graph-note {
+  flex: 0 0 auto;
+  padding: 4px 10px 6px;
+  color: var(--amber);
+  font-size: 10.5px;
+}
+
+.graph-body {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+}
+
+.graph-list {
+  flex: 1 1 55%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.graph-body-split .graph-list {
+  min-width: 380px;
+}
+
+.graph-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.graph-rows {
+  position: relative;
+  width: 100%;
+}
+
+.graph-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 26px;
+}
+
+.graph-commit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 26px;
+  padding: 0 10px 0 0;
+  border-left: 2px solid transparent;
+  color: var(--muted);
+  font-size: 11.5px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.graph-commit:hover {
+  background: #0e131b;
+}
+
+.graph-commit.selected {
+  border-left-color: var(--blue);
+  background: #131a24;
+  color: var(--text);
+}
+
+.graph-commit.on-head .graph-subject {
+  color: var(--text);
+}
+
+.graph-lanes {
+  flex: 0 0 auto;
+  align-self: stretch;
+  overflow: visible;
+}
+
+.graph-subject {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.graph-commit-meta {
+  flex: 0 0 auto;
+  color: var(--dim);
+  font: 10px var(--mono);
+  white-space: nowrap;
+}
+
+.graph-refs {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 45%;
+  overflow: hidden;
+}
+
+.graph-badge {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 9.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.graph-badge:hover,
+.graph-badge:focus-visible {
+  border-color: var(--blue);
+  color: var(--text);
+}
+
+.graph-badge.head {
+  border-color: rgba(158, 206, 106, 0.5);
+  color: var(--green);
+}
+
+.graph-badge.remote {
+  border-color: rgba(125, 207, 255, 0.45);
+  color: #7dcfff;
+}
+
+.graph-badge.tag {
+  border-color: rgba(187, 154, 247, 0.5);
+  color: var(--purple);
+}
+
+.graph-older {
+  flex: 0 0 auto;
+  margin: 6px 10px 10px;
+  align-self: flex-start;
+}
+
+/* ---------- branch inspector ---------- */
+
+.branch-inspector {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 10px 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.branch-inspector-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.branch-inspector-name {
+  overflow: hidden;
+  color: var(--text);
+  font: 11.5px var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.branch-inspector-counts {
+  display: flex;
+  gap: 4px;
+  font: 10px var(--mono);
+}
+
+.branch-inspector-counts em {
+  color: var(--green);
+  font-style: normal;
+}
+
+.branch-inspector-counts del {
+  color: var(--amber);
+  text-decoration: none;
+}
+
+.branch-inspector-tip {
+  color: var(--dim);
+  font: 10px var(--mono);
+}
+
+.branch-inspector-close {
+  margin-left: auto;
+}
+
+.branch-inspector-subject {
+  overflow: hidden;
+  color: var(--dim);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.branch-inspector-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* ---------- commit detail inside the graph ---------- */
+
+.graph-detail {
+  flex: 1 1 45%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+}
+
+.commit-detail-actions {
+  display: flex;
+  gap: 6px;
+  padding: 0 10px 6px;
+}
+
+/* Narrow windows: the graph keeps its list and the detail stacks under it. */
+@media (max-width: 1180px) {
+  .graph-body-split {
+    flex-direction: column;
+  }
+
+  .graph-body-split .graph-list {
+    min-width: 0;
+    flex: 1 1 50%;
+  }
+
+  .graph-detail {
+    flex: 1 1 50%;
+    border-top: 1px solid var(--border);
+    border-left: 0;
+  }
+
+  .graph-commit-meta {
+    display: none;
+  }
+
+  .graph-refs {
+    max-width: 35%;
+  }
+}

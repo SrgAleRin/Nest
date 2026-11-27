@@ -44,12 +44,14 @@ interface SourceControlPanelProps {
   onNotify: (level: 'info' | 'warn' | 'error', message: string) => void;
   /** Opens the stored selection as a patch, without resizing the panel. */
   onOpenPatch: () => void;
-  /** The explicit `Open diff`: opens the patch and widens the panel. */
+  /** The explicit `Open diff`: opens the whole patch in the center. */
   onOpenDiff: () => void;
+  /** Opens the git graph of this repository in the center. */
+  onOpenGraph?: () => void;
   onOpenHistory: () => void;
   onOpenCompare: () => void;
   /** A row the list should focus after coming back from a patch. */
-  initialFocus: GitSelection | null;
+  initialFocus?: GitSelection | null;
 }
 
 /** One action a failed operation offers inline; nothing here runs by itself. */
@@ -85,7 +87,7 @@ export function SourceControlPanel({
   onOpenDiff,
   onOpenHistory,
   onOpenCompare,
-  initialFocus,
+  initialFocus = null,
 }: SourceControlPanelProps) {
   const taskId = task?.id ?? null;
   const store = useGitSnapshotStore();

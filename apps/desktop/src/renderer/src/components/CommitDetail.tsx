@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react';
-import type { DiffFile, GitCommitDetail, NestClient } from '@nest/shared';
+import { useEffect, useMemo, useState } from 'react';
+import type { DiffFile, DiffHunk, GitCommitDetail, NestClient } from '@nest/shared';
 import { FileTree } from './FileTree';
+import { highlightHunk, tokenStyle, type HunkHighlight } from '../highlight';
 import { absoluteTime, diffStatusLetter, diffStatusTone, errorMessage, shortHash } from '../utils';
 
 /** One commit with an aria-label and a copyable hash. */
@@ -10,10 +11,21 @@ interface CommitDetailProps {
   client: NestClient;
   detail: GitCommitDetail;
   onBack: () => void;
+  /** Label of the way back; the graph and the history view name their own. */
+  backLabel?: string;
+  /** Opens the commit's tree read-only, without a checkout. */
+  onBrowseFiles?: (ref: string) => void;
   onNotify: (level: 'info' | 'warn' | 'error', message: string) => void;
 }
 
-export function CommitDetailView({ client, detail, onBack, onNotify }: CommitDetailProps) {
+export function CommitDetailView({
+  client,
+  detail,
+  onBack,
+  backLabel = 'History',
+  onBrowseFiles,
+  onNotify,
+}: CommitDetailProps) {
   const { commit, files } = detail;
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
 
@@ -49,7 +61,7 @@ export function CommitDetailView({ client, detail, onBack, onNotify }: CommitDet
     <div className="panel-scroll commit-detail">
       <div className="commit-detail-head">
         <button className="mini-btn" onClick={onBack}>
-          ← History
+          ← {backLabel}
         </button>
         <button
           className="commit-detail-hash"
@@ -68,6 +80,20 @@ export function CommitDetailView({ client, detail, onBack, onNotify }: CommitDet
       </div>
 
       {commit.body ? <pre className="commit-detail-body">{commit.body}</pre> : null}
+
+      {onBrowseFiles ? (
+        <div className="commit-detail-actions">
+          <button
+            type="button"
+            className="mini-btn"
+            data-testid="commit-browse-files"
+            title={`Open the files of ${commit.hash} in the Files panel, read-only`}
+            onClick={() => onBrowseFiles(commit.hash)}
+          >
+            Browse files at this commit
+          </button>
+        </div>
+      ) : null}
 
       <div className="commit-detail-refs">
         {commit.refs.map((ref) => (
@@ -136,6 +162,31 @@ function CommitFileRow({
 function PatchView({ file }: { file: DiffFile }) {
   const lineCount = file.hunks.reduce((total, hunk) => total + hunk.lines.length, 0);
   const truncated = lineCount > MAX_PATCH_LINES;
+  const [highlights, setHighlights] = useState<Map<DiffHunk, HunkHighlight>>(new Map());
+
+  // Shiki is loaded per grammar on demand, so the patch is drawn plain first
+  // and coloured when the highlighter is ready; a large patch stays plain.
+  useEffect(() => {
+    if (truncated || file.hunks.length === 0) {
+      setHighlights(new Map());
+      return;
+    }
+    let cancelled = false;
+    void Promise.all(
+      file.hunks.map(async (hunk) => ({ hunk, highlighted: await highlightHunk(hunk, file.path) })),
+    ).then((finished) => {
+      if (cancelled) return;
+      const next = new Map<DiffHunk, HunkHighlight>();
+      for (const { hunk, highlighted } of finished) {
+        if (highlighted) next.set(hunk, highlighted);
+      }
+      setHighlights(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [file, truncated]);
+
   let budget = MAX_PATCH_LINES;
 
   if (file.hunks.length === 0) {
@@ -150,20 +201,32 @@ function PatchView({ file }: { file: DiffFile }) {
         const lines = truncated ? hunk.lines.slice(0, Math.max(0, budget)) : hunk.lines;
         budget -= lines.length;
         if (lines.length === 0) return null;
+        const tokens = highlights.get(hunk)?.lines ?? null;
         return (
           <div key={`${hunk.header}:${hunkIndex}`}>
             <div className="diff-hunk-head">{hunk.header}</div>
-            {lines.map((line, lineIndex) => (
-              <div className={`diff-line diff-${line.type}`} key={lineIndex}>
-                <span className="diff-num old">{line.oldLine ?? ''}</span>
-                <span className="diff-num new">{line.newLine ?? ''}</span>
-                <span className="diff-sign">
-                  {line.type === 'add' ? '+' : line.type === 'del' ? '-' : ' '}
-                </span>
-                <span className="diff-text">{line.text || ' '}</span>
-                <span />
-              </div>
-            ))}
+            {lines.map((line, lineIndex) => {
+              const highlighted = tokens?.[lineIndex] ?? null;
+              return (
+                <div className={`diff-line diff-${line.type}`} key={lineIndex}>
+                  <span className="diff-num old">{line.oldLine ?? ''}</span>
+                  <span className="diff-num new">{line.newLine ?? ''}</span>
+                  <span className="diff-sign">
+                    {line.type === 'add' ? '+' : line.type === 'del' ? '-' : ' '}
+                  </span>
+                  <span className="diff-text">
+                    {highlighted
+                      ? highlighted.map((token, tokenIndex) => (
+                          <span key={tokenIndex} style={tokenStyle(token)}>
+                            {token.content}
+                          </span>
+                        ))
+                      : line.text || ' '}
+                  </span>
+                  <span />
+                </div>
+              );
+            })}
           </div>
         );
       })}

@@ -37,6 +37,8 @@ interface NewTaskDialogProps {
   error: string | null;
   /** Set when the task exists but the harness did not start: retry start only. */
   retryStart: { taskId: string; harnessId: string } | null;
+  /** Branch or tag the new task starts from, when it was opened from one. */
+  initialBaseRef?: string | null;
   onCreate: (submission: NewTaskSubmission) => void;
   /** Aborts the running creation and closes the dialog. */
   onCancel: () => void;
@@ -54,6 +56,7 @@ export function NewTaskDialog({
   step,
   error,
   retryStart,
+  initialBaseRef = null,
   onCreate,
   onCancel,
   onClose,
@@ -61,7 +64,7 @@ export function NewTaskDialog({
 }: NewTaskDialogProps) {
   const [location, setLocation] = useState<NewTaskLocation>('worktree');
   const [title, setTitle] = useState('');
-  const [baseRef, setBaseRef] = useState('');
+  const [baseRef, setBaseRef] = useState(initialBaseRef ?? '');
   const [setupScript, setSetupScript] = useState(project.setupScript ?? '');
   const [harnessId, setHarnessId] = useState(() => defaultHarnessId(harnesses, newSessionDefault));
   const [preview, setPreview] = useState<TaskPreview | null>(null);
@@ -285,8 +288,8 @@ export function NewTaskDialog({
               />
               <small className="field-hint">
                 Runs in the new worktree after it is created and is remembered for this project.
-                <code>.env</code> and <code>.env.local</code> are copied only when “Copy .env
-                files” is enabled in Settings.
+                <code>.env</code> and <code>.env.local</code> are copied only when “Copy .env files”
+                is enabled in Settings.
               </small>
             </label>
           </>

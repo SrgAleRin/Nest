@@ -11,6 +11,8 @@ interface ComparePanelProps {
   task: Task | null;
   refreshKey: number;
   onOpenCommit: (hash: string) => void;
+  /** Opens one file (or the whole comparison) as a read-only patch in the center. */
+  onOpenDiff?: (target: { base: string; head: string; path: string | null }) => void;
   onNotify: (level: 'info' | 'warn' | 'error', message: string) => void;
 }
 

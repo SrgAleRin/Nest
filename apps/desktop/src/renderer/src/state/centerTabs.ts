@@ -142,6 +142,22 @@ export function activateCenterSurface(
   return { ...state, active: surface };
 }
 
+/**
+ * The cleanup a removed task needs. Its git snapshot (status, branches, memory)
+ * and its center state are per-task caches; both go with the task, so a task id
+ * that comes back — or a removed project's tasks — starts from nothing.
+ */
+export function forgetTaskViews(
+  targets: {
+    git: { forgetTask(taskId: string): void };
+    center: { forgetTaskCenter(taskId: string): void };
+  },
+  taskId: string,
+): void {
+  targets.git.forgetTask(taskId);
+  targets.center.forgetTaskCenter(taskId);
+}
+
 /** Drops a task's center state; the next visit starts from the default. */
 export function forgetTaskCenter(states: CenterTabsMap, taskId: string): CenterTabsMap {
   if (!(taskId in states)) return states;

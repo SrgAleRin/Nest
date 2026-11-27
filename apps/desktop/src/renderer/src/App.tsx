@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type {
   AppInfo,
   AppSettings,
@@ -13,17 +13,24 @@ import type {
 import { DEFAULT_TERMINAL_PREFERENCES, newId } from '@nest/shared';
 import { Badge, Button, IconButton } from '@nest/ui';
 import { BootSkeleton, FatalScreen } from './components/Boot';
+import { CenterPane } from './components/CenterPane';
 import { CommandPalette } from './components/CommandPalette';
+import type { GraphActions } from './components/GitGraphPanel';
 import { GearIcon } from './components/Icons';
 import { NewTaskDialog, type NewTaskSubmission } from './components/NewTaskDialog';
 import { startFailureMessage, taskToSelect, type StartFailure } from './newTask';
 import { RIGHT_SECTIONS, RightPanel, type RightTab } from './components/RightPanel';
 import { SettingsDialog } from './components/SettingsDialog';
 import { Sidebar } from './components/Sidebar';
-import { TerminalPane } from './components/TerminalPane';
 import type { CommandItem } from './commands';
 import { createClient } from './rpc/client';
 import { branchLabel, branchSnapshot, type BranchSnapshot } from './state/branch';
+import {
+  createCenterTabsStore,
+  forgetTaskViews,
+  type CompareDiffTarget,
+  type GraphFocus,
+} from './state/centerTabs';
 import { createGitSnapshotStore, type GitSnapshotStore } from './state/gitSnapshot';
 import { GitSnapshotProvider, useGitSnapshotFor } from './state/GitSnapshotProvider';
 import {
@@ -47,7 +54,11 @@ import {
   startOperation,
   type TaskOperations,
 } from './state/taskOperations';
-import { RIGHT_PANEL_RAIL_WIDTH, useRightPanelLayout } from './rightPanelLayout';
+import {
+  RIGHT_PANEL_RAIL_WIDTH,
+  revealCenterForTool,
+  useRightPanelLayout,
+} from './rightPanelLayout';
 import { changedPathCount } from './sourceControl';
 import { resolveShortcut } from './shortcuts';
 import { eventSessionData } from './state/terminalBus';
@@ -114,10 +125,20 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
   const [loadError, setLoadError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  // The right column has three top-level sections; `history`, `compare` and
-  // `diff` are views inside `Source Control`, not neighbouring tabs.
+  // The right column has three top-level sections; `compare` is a view inside
+  // `Source Control`. Patches and history live in the center workbench.
   const [rightTab, setRightTab] = useState<RightTab>('source-control');
   const rightLayout = useRightPanelLayout();
+  // Which surface of the center workbench each task shows. The terminals are
+  // never part of it: they stay mounted under every surface.
+  const centerTabs = useMemo(createCenterTabsStore, []);
+  const centerState = useSyncExternalStore(centerTabs.subscribe, () =>
+    centerTabs.getTask(selectedTaskId),
+  );
+  /** `Inspect branch…` from the palette focuses the graph's ref picker. */
+  const [graphPickerNonce, setGraphPickerNonce] = useState(0);
+  /** Branch the `New task` dialog starts from, when a branch inspector opened it. */
+  const [newTaskBaseRef, setNewTaskBaseRef] = useState<string | null>(null);
   const [unread, setUnread] = useState<Record<string, number>>({});
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [activateSessionId, setActivateSessionId] = useState<string | null>(null);
@@ -309,6 +330,7 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
           if (event.state === 'aborted' && event.taskId) {
             const taskId = event.taskId;
             setTasks((prev) => prev.filter((task) => task.id !== taskId));
+            forgetTaskViews({ git: gitStore, center: centerTabs }, taskId);
           }
           return;
         case 'git:changed':
@@ -335,7 +357,7 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
           return;
       }
     });
-  }, [client, gitStore, notify]);
+  }, [centerTabs, client, gitStore, notify]);
 
   // Keep the transition map in sync with sessions loaded from the database, so
   // a session that was already running when the window opened still reports its
@@ -435,19 +457,26 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
       ].join('\n');
       if (!window.confirm(message)) return;
       try {
+        const removed = tasksRef.current.filter((task) => task.projectId === project.id);
         await client.invoke('projects.remove', { projectId: project.id });
         setProjects((prev) => prev.filter((candidate) => candidate.id !== project.id));
+        // Every task of the project is gone, so its caches are dead weight.
+        for (const task of removed) forgetTaskViews({ git: gitStore, center: centerTabs }, task.id);
         await refreshAll();
       } catch (error) {
         notify('error', errorMessage(error));
       }
     },
-    [client, notify, refreshAll],
+    [centerTabs, client, gitStore, notify, refreshAll],
   );
 
-  /** Opens the dialog for a project, clearing the state of a previous creation. */
+  /**
+   * Opens the dialog for a project, clearing the state of a previous creation.
+   * `baseRef` prefills the branch a new task starts from (a branch inspector
+   * hands its own ref in), and is dropped when the dialog closes.
+   */
   const openNewTask = useCallback(
-    (projectId: string) => {
+    (projectId: string, baseRef: string | null = null) => {
       // Reopening while a creation runs keeps its progress (and its cancel).
       if (!newTaskBusy) {
         newTaskOperationRef.current = null;
@@ -455,6 +484,7 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
       }
       setNewTaskError(null);
       setNewTaskRetry(null);
+      setNewTaskBaseRef(baseRef);
       setNewTaskProjectId(projectId);
     },
     [newTaskBusy],
@@ -465,6 +495,7 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
     setNewTaskProjectId(null);
     setNewTaskError(null);
     setNewTaskRetry(null);
+    setNewTaskBaseRef(null);
   }, []);
 
   /** Cancels the running creation in core, then closes. Never starts a session. */
@@ -673,6 +704,8 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
       const remove = async (force: boolean) => {
         await client.invoke('tasks.remove', { taskId: task.id, force });
         setTasks((prev) => prev.filter((candidate) => candidate.id !== task.id));
+        // The task's caches go with it: its git snapshot and its center state.
+        forgetTaskViews({ git: gitStore, center: centerTabs }, task.id);
         setStartFailures((prev) => {
           if (!(task.id in prev)) return prev;
           const next = { ...prev };
@@ -703,7 +736,7 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
         notify('error', errorMessage(error));
       }
     },
-    [client, notify, refreshAll],
+    [centerTabs, client, gitStore, notify, refreshAll],
   );
 
   const startSession = useCallback(
@@ -792,8 +825,9 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
       if (!session) return;
       setSelectedTaskId(session.taskId);
       setSessionTabs((prev) => rememberSession(prev, session.taskId, session.id));
+      centerTabs.activateCenterSurface(session.taskId, 'terminal');
     },
-    [sessions],
+    [centerTabs, sessions],
   );
 
   // A click inside the terminal pane stays in the current task, so the tab is
@@ -806,10 +840,17 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
     [selectedTaskId],
   );
 
-  /** Puts the caret back into the selected terminal (Ctrl+`). */
+  /**
+   * Puts the caret back into the selected terminal (Ctrl + backtick). The terminal
+   * layer may be behind a tool tab, so the surface switches first and the focus
+   * lands after the layer is on screen again.
+   */
   const focusTerminal = useCallback(() => {
-    document.querySelector<HTMLElement>('.terminal-view.active .xterm-helper-textarea')?.focus();
-  }, []);
+    if (selectedTaskId) centerTabs.activateCenterSurface(selectedTaskId, 'terminal');
+    requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>('.terminal-view.active .xterm-helper-textarea')?.focus();
+    });
+  }, [centerTabs, selectedTaskId]);
 
   // Shortcut actions are read from a ref: the listener is registered once, yet
   // it always sees the current tab, task and modal state.
@@ -915,6 +956,86 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
     // show; invalidate coalesces it with a watcher event for the same tick.
     gitStore.invalidate(selectedTaskId);
   }, [gitStore, selectedTaskId]);
+
+  /**
+   * Opens a center tool. A wide column keeps its width and its tab; in a narrow
+   * window the right panel is a drawer over the center, so it closes and the
+   * tool is visible at once.
+   */
+  const showCenterTool = useCallback(() => {
+    revealCenterForTool(rightLayout);
+  }, [rightLayout]);
+
+  /** The task's own patch, on the file the change list selected. */
+  const openWorkingDiff = useCallback(() => {
+    if (!selectedTaskId) return;
+    centerTabs.openWorkingDiff(selectedTaskId);
+    showCenterTool();
+  }, [centerTabs, selectedTaskId, showCenterTool]);
+
+  /**
+   * `Open diff` and the palette mean the whole patch of the task: the file the
+   * list remembered is dropped, so the click always opens every changed file.
+   */
+  const openWholeDiff = useCallback(() => {
+    if (!selectedTaskId) return;
+    gitStore.updateMemory(selectedTaskId, { selection: null });
+    openWorkingDiff();
+  }, [gitStore, openWorkingDiff, selectedTaskId]);
+
+  /** The git graph, optionally focused on a range, a ref or one commit. */
+  const openGraph = useCallback(
+    (focus?: GraphFocus) => {
+      if (!selectedTaskId) return;
+      centerTabs.openGraph(selectedTaskId, focus);
+      showCenterTool();
+    },
+    [centerTabs, selectedTaskId, showCenterTool],
+  );
+
+  /** A read-only comparison of two revisions, in the center patch. */
+  const openCompareDiff = useCallback(
+    (target: CompareDiffTarget) => {
+      if (!selectedTaskId) return;
+      centerTabs.openCompareDiff(selectedTaskId, target);
+      showCenterTool();
+    },
+    [centerTabs, selectedTaskId, showCenterTool],
+  );
+
+  /**
+   * `Inspect branch…`: the graph opens with the ref picker focused, so the user
+   * chooses a branch without checking anything out.
+   */
+  const inspectBranch = useCallback(() => {
+    setGraphPickerNonce((nonce) => nonce + 1);
+    openGraph();
+  }, [openGraph]);
+
+  const graphActions = useMemo<GraphActions>(
+    () => ({
+      onScope: (scope) => {
+        if (selectedTaskId) centerTabs.openGraph(selectedTaskId, { scope });
+      },
+      onOpenRef: (ref) => {
+        if (selectedTaskId) centerTabs.openGraph(selectedTaskId, { ref });
+      },
+      onSelectCommit: (hash) => {
+        if (selectedTaskId) centerTabs.openGraph(selectedTaskId, { commitHash: hash });
+      },
+      onCompareWithHead: (ref) => openCompareDiff({ base: 'HEAD', head: ref, path: null }),
+      onBrowseFiles: () => {
+        // The `Files` panel reads the revision from the shared store of the
+        // right-panel unit; this only brings that panel on screen.
+        setRightTab('files');
+        rightLayout.openPanel();
+      },
+      onNewTaskFromRef: (ref) => {
+        if (selectedTask) openNewTask(selectedTask.projectId, ref);
+      },
+    }),
+    [centerTabs, openCompareDiff, openNewTask, rightLayout, selectedTask, selectedTaskId],
+  );
 
   const paletteCommands: CommandItem[] = [];
   for (const task of tasks) {
@@ -1037,12 +1158,9 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
       id: 'git:history',
       title: 'Show commit history',
       detail: currentBranch ?? selectedTask.branch,
-      keywords: 'log commits past',
+      keywords: 'log commits past graph',
       kind: 'action',
-      run: () => {
-        rightLayout.openPanel();
-        setRightTab('history');
-      },
+      run: () => openGraph({ scope: 'head' }),
     });
   }
   if (selectedProject) {
@@ -1098,21 +1216,41 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
       },
     });
   }
-  for (const [tab, label] of [
-    ['history', 'History'],
-    ['compare', 'Compare'],
-    ['diff', 'Diff'],
-  ] as Array<[RightTab, string]>) {
+  paletteCommands.push({
+    id: 'panel:compare',
+    title: 'Show Compare panel',
+    detail: 'right column',
+    keywords: 'tab switch right column branches diff',
+    kind: 'action',
+    run: () => {
+      rightLayout.openPanel();
+      setRightTab('compare');
+    },
+  });
+  if (selectedTask) {
     paletteCommands.push({
-      id: `panel:${tab}`,
-      title: `Show ${label} panel`,
-      detail: 'right column',
-      keywords: 'tab switch right column log commits patch',
+      id: 'center:diff',
+      title: 'Show diff in the center',
+      detail: currentBranch ?? selectedTask.branch,
+      keywords: 'patch changes working diff center',
       kind: 'action',
-      run: () => {
-        rightLayout.openPanel();
-        setRightTab(tab);
-      },
+      run: openWholeDiff,
+    });
+    paletteCommands.push({
+      id: 'center:graph',
+      title: 'Show Git graph (all branches)',
+      detail: currentBranch ?? selectedTask.branch,
+      keywords: 'graph branches tree dag log commits history center',
+      kind: 'action',
+      run: () => openGraph({ scope: 'all' }),
+    });
+    paletteCommands.push({
+      id: 'center:inspect-branch',
+      title: 'Inspect branch…',
+      detail: 'read another branch without checking it out',
+      keywords: 'branch inspect browse compare remote tag',
+      kind: 'action',
+      run: inspectBranch,
     });
   }
   paletteCommands.push({
@@ -1226,7 +1364,7 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
           startFailures={startFailures}
         />
 
-        <TerminalPane
+        <CenterPane
           client={client}
           task={selectedTask}
           hasProjects={projects.length > 0}
@@ -1237,17 +1375,31 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
           allHarnessesDisabled={allHarnessesDisabled}
           terminal={settings?.terminal ?? DEFAULT_TERMINAL_PREFERENCES}
           busy={busy}
+          newSessionDefault={settings?.newSessionDefault ?? 'ask'}
+          resumableHarnesses={resumableHarnesses}
+          refreshKey={gitVersion}
+          center={centerState}
+          graphPickerNonce={graphPickerNonce}
           onSelectSession={selectSessionTab}
           onStart={(harnessId) => void startSession(harnessId)}
           onCloseSession={(session) => void closeSession(session)}
-          newSessionDefault={settings?.newSessionDefault ?? 'ask'}
           onResume={(session) => void resumeSession(session)}
           onNewSession={restartSession}
-          resumableHarnesses={resumableHarnesses}
           onError={reportError}
           onOpenPalette={openPalette}
           onOpenSettings={() => setSettingsOpen(true)}
           onAddProject={() => void addProject()}
+          onGitChanged={bumpGit}
+          onNotify={notify}
+          onActivateSurface={(surface) => {
+            if (!selectedTaskId) return;
+            centerTabs.activateCenterSurface(selectedTaskId, surface);
+          }}
+          onCloseTab={(tab) => {
+            if (!selectedTaskId) return;
+            centerTabs.closeCenterTab(selectedTaskId, tab);
+          }}
+          graph={graphActions}
         />
 
         <RightPanel
@@ -1273,7 +1425,10 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
           onWidthChange={rightLayout.setWidth}
           onClose={rightLayout.close}
           onOpenPanel={rightLayout.openPanel}
-          onWiden={rightLayout.widen}
+          onOpenWorkingDiff={openWorkingDiff}
+          onOpenWholeDiff={openWholeDiff}
+          onOpenGraph={openGraph}
+          onOpenCompareDiff={openCompareDiff}
         />
       </main>
 
@@ -1331,6 +1486,7 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
           step={newTaskStep}
           error={newTaskError}
           retryStart={newTaskRetry}
+          initialBaseRef={newTaskBaseRef}
           onCreate={(submission) => void createTask(submission)}
           onCancel={cancelNewTask}
           onClose={closeNewTask}

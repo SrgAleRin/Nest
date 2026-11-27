@@ -2,20 +2,16 @@ import {
   useCallback,
   useEffect,
   useRef,
-  useState,
   type KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import type { NestClient, Session, Task } from '@nest/shared';
 import { ComparePanel } from './ComparePanel';
-import { DiffPanel } from './DiffPanel';
 import { FilesPanel } from './FilesPanel';
-import { HistoryPanel } from './HistoryPanel';
 import { SessionsPanel } from './SessionsPanel';
 import { SourceControlPanel } from './SourceControlPanel';
 import { ChevronIcon, FolderIcon, SourceControlIcon, TerminalIcon } from './Icons';
-import type { GitSelection } from '../state/gitSnapshot';
-import { useGitTaskMemory } from '../state/GitSnapshotProvider';
+import type { CompareDiffTarget, GraphFocus } from '../state/centerTabs';
 import {
   RIGHT_PANEL_MIN_WIDTH,
   rightPanelMaxWidth,
@@ -23,8 +19,12 @@ import {
   rightPanelWidthFromPointer,
 } from '../rightPanelLayout';
 
-/** Everything the right column can show; only three of them are top-level. */
-export type RightTab = 'files' | 'source-control' | 'sessions' | 'history' | 'compare' | 'diff';
+/**
+ * Everything the right column can show. Patches and history left this panel:
+ * the center workbench owns them now, so the column keeps the change list next
+ * to the patch instead of replacing it.
+ */
+export type RightTab = 'files' | 'source-control' | 'sessions' | 'compare';
 
 export type RightSectionId = 'files' | 'source-control' | 'sessions';
 
@@ -35,7 +35,7 @@ export interface RightSection {
   title: string;
 }
 
-/** The three top-level sections. `History`, `Compare` and `Diff` are views. */
+/** The three top-level sections. `Compare` is a view of `Source Control`. */
 export const RIGHT_SECTIONS: readonly RightSection[] = [
   { id: 'files', label: 'Files', title: 'Files of this workspace (read-only preview)' },
   {
@@ -52,12 +52,6 @@ export function rightSectionOf(tab: RightTab): RightSectionId {
   if (tab === 'sessions') return 'sessions';
   return 'source-control';
 }
-
-const SUBVIEW_TITLES: Readonly<Record<'history' | 'compare' | 'diff', string>> = {
-  history: 'History',
-  compare: 'Compare',
-  diff: 'Diff',
-};
 
 export interface RightPanelProps {
   client: NestClient;
@@ -77,6 +71,14 @@ export interface RightPanelProps {
   resumableHarnesses: ReadonlySet<string>;
   /** Unique changed paths of this task, for the section badge and the rail. */
   changeCount: number;
+  /** Opens (or switches to) the task's own patch in the center. Never resizes this panel. */
+  onOpenWorkingDiff: () => void;
+  /** `Open diff`: the whole patch, dropping the file the list remembered. */
+  onOpenWholeDiff: () => void;
+  /** Opens (or switches to) the git graph in the center. */
+  onOpenGraph: (focus?: GraphFocus) => void;
+  /** Opens a read-only comparison of two revisions in the center patch. */
+  onOpenCompareDiff: (target: CompareDiffTarget) => void;
   // Layout: the width and the collapsed state are local UI preferences.
   open: boolean;
   drawer: boolean;
@@ -84,51 +86,18 @@ export interface RightPanelProps {
   onWidthChange: (width: number) => void;
   onClose: () => void;
   onOpenPanel: () => void;
-  onWiden: () => void;
 }
 
 export function RightPanel(props: RightPanelProps) {
   const tab = props.tab;
   const setTab = props.onTabChange;
   const taskId = props.task?.id ?? null;
-  const subview = tab === 'history' || tab === 'compare' || tab === 'diff' ? tab : null;
-  const memory = useGitTaskMemory(taskId);
-  const [restoreFocus, setRestoreFocus] = useState<GitSelection | null>(null);
+  const subview = tab === 'compare' ? tab : null;
   const railButtonRef = useRef<HTMLButtonElement | null>(null);
   const wasOpen = useRef(props.open);
 
-  // The target is tagged with the task it belongs to: a commit hash from
-  // another workspace must never be requested against the current one.
-  const [commitTarget, setCommitTarget] = useState<{ taskId: string; hash: string } | null>(null);
-  const commitHash = commitTarget && commitTarget.taskId === taskId ? commitTarget.hash : null;
-
-  const openCommit = useCallback(
-    (hash: string) => {
-      if (!taskId) return;
-      setCommitTarget({ taskId, hash });
-      setTab('history');
-    },
-    [setTab, taskId],
-  );
-
-  const { onWiden } = props;
-
-  /** `Open diff`: the selection is already in the task memory. */
-  const openDiff = useCallback(() => {
-    // Widening also opens the panel, and the drawer in a narrow window.
-    onWiden();
-    setTab('diff');
-  }, [onWiden, setTab]);
-
-  /**
-   * Back from a patch: the list comes back with the row that was open still
-   * selected and focused, so `Open diff` keeps its target without a second
-   * click. Dropping the selection stays an explicit action of the list itself.
-   */
-  const backToList = useCallback(() => {
-    setRestoreFocus(memory.selection);
-    setTab('source-control');
-  }, [memory.selection, setTab]);
+  /** Back from `Compare` to the change list; the section stays selected. */
+  const backToList = useCallback(() => setTab('source-control'), [setTab]);
 
   // Closing the panel puts the focus back on the rail button that opens it
   // again; the terminal is untouched, because only the layout changed.
@@ -138,10 +107,8 @@ export function RightPanel(props: RightPanelProps) {
   }, [props.open]);
 
   // A drawer is dismissed with Escape, the way every overlay is — except where
-  // the section already owns that key: a patch marks it as handled to go back to
-  // the list, and the list itself clears its selection. Those run first and set
-  // `defaultPrevented`, which is why this listens on the document and not on the
-  // panel. It stays above the collapsed-rail return: every hook runs every render.
+  // the section already owns that key. It stays above the collapsed-rail
+  // return: every hook runs every render.
   useEffect(() => {
     if (!props.drawer || subview !== null) return;
     const onKeyDown = (event: globalThis.KeyboardEvent): void => {
@@ -248,10 +215,7 @@ export function RightPanel(props: RightPanelProps) {
                 aria-label={`${item.label}${count > 0 ? `, ${count}` : ''}`}
                 title={item.title}
                 className={`right-tab ${selected ? 'selected' : ''}`}
-                onClick={() => {
-                  setRestoreFocus(null);
-                  setTab(item.id);
-                }}
+                onClick={() => setTab(item.id)}
               >
                 <span className="right-tab-icon" aria-hidden="true">
                   {item.id === 'files' ? (
@@ -292,12 +256,12 @@ export function RightPanel(props: RightPanelProps) {
         role="tabpanel"
         aria-labelledby={`right-tab-${section}`}
       >
-        {subview ? (
+        {subview === 'compare' ? (
           <div className="right-subhead">
             <button type="button" className="mini-btn" onClick={backToList}>
               ← Source Control
             </button>
-            <span className="right-subhead-title">{SUBVIEW_TITLES[subview]}</span>
+            <span className="right-subhead-title">Compare</span>
           </div>
         ) : null}
 
@@ -309,14 +273,11 @@ export function RightPanel(props: RightPanelProps) {
             refreshKey={props.refreshKey}
             onChanged={props.onGitChanged}
             onNotify={props.onNotify}
-            onOpenPatch={() => setTab('diff')}
-            onOpenDiff={openDiff}
-            onOpenHistory={() => {
-              setCommitTarget(null);
-              setTab('history');
-            }}
+            onOpenPatch={props.onOpenWorkingDiff}
+            onOpenDiff={props.onOpenWholeDiff}
+            onOpenGraph={() => props.onOpenGraph()}
+            onOpenHistory={() => props.onOpenGraph({ scope: 'head' })}
             onOpenCompare={() => setTab('compare')}
-            initialFocus={restoreFocus}
           />
         ) : null}
 
@@ -343,41 +304,15 @@ export function RightPanel(props: RightPanelProps) {
           />
         ) : null}
 
-        {subview === 'history' ? (
-          <HistoryPanel
-            key={`${taskId ?? 'none'}:history`}
-            client={props.client}
-            task={props.task}
-            refreshKey={props.refreshKey}
-            selectedHash={commitHash}
-            onSelectCommit={(hash) => setCommitTarget(hash && taskId ? { taskId, hash } : null)}
-            onNotify={props.onNotify}
-          />
-        ) : null}
-
         {subview === 'compare' ? (
           <ComparePanel
             key={`${taskId ?? 'none'}:compare`}
             client={props.client}
             task={props.task}
             refreshKey={props.refreshKey}
-            onOpenCommit={openCommit}
+            onOpenCommit={(hash) => props.onOpenGraph({ commitHash: hash })}
+            onOpenDiff={props.onOpenCompareDiff}
             onNotify={props.onNotify}
-          />
-        ) : null}
-
-        {subview === 'diff' ? (
-          <DiffPanel
-            key={`${taskId ?? 'none'}:diff`}
-            client={props.client}
-            task={props.task}
-            sessions={props.sessions}
-            selectedSessionId={props.selectedSessionId}
-            refreshKey={props.refreshKey}
-            onChanged={props.onGitChanged}
-            onNotify={props.onNotify}
-            target={memory.selection}
-            onBackToList={backToList}
           />
         ) : null}
       </div>

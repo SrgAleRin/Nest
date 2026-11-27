@@ -80,3 +80,38 @@
 .diff-panel .diff-row {
   min-width: 0;
 }
+
+/* `Show all files`: drop the single-file filter, stay in the patch. */
+.diff-show-all {
+  flex: 0 0 auto;
+}
+
+/*
+ * A comparison of two revisions: the banner names both sides, so a read-only
+ * patch is never mistaken for the working tree of this task.
+ */
+.diff-compare-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.diff-compare-label {
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 9.5px;
+}
+
+.diff-compare-ref {
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--panel);
+  color: var(--text);
+  font: 10px var(--mono);
+}
