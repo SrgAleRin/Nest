@@ -55,16 +55,39 @@ export async function launchNest(options: LaunchNestOptions): Promise<ElectronAp
       NEST_DISABLE_UPDATES: '1',
     },
   });
-  // The panel is a column in a wide window and a drawer in a narrow one, and a
-  // spec that leaves the window at its default size would silently test one or
-  // the other depending on the screen. CI runners are 1024 wide, so the size is
-  // asked for instead of inherited; the drawer has its own specs that resize.
-  await app.firstWindow();
-  await app.evaluate(({ BrowserWindow }) => {
-    const window = BrowserWindow.getAllWindows()[0];
-    if (window) window.setSize(1440, 900);
-  });
+  await pinWideWindow(app);
   return app;
+}
+
+/** The window a spec that expects the column layout asks for. */
+export const WIDE_WINDOW = { width: 1440, height: 900 } as const;
+
+/**
+ * Asks for a window wide enough for the right column.
+ *
+ * The panel is a column in a wide window and a drawer below
+ * `RIGHT_PANEL_NARROW_WIDTH` (1180). Windows clamps a newly created window to
+ * the work area, so on a 1024-wide CI desktop every spec would silently get the
+ * drawer and the column assertions would never run. A resize after the window
+ * exists is not clamped — that is what the 1440x900 default in `main` relies on
+ * — so the size is asked for here, and the spec fails loudly if the window
+ * stays narrow instead of testing a layout it did not expect.
+ */
+export async function pinWideWindow(app: ElectronApplication): Promise<void> {
+  const page = await app.firstWindow();
+  await page.waitForSelector('.app', { timeout: 60_000 });
+  const resize = (): Promise<void> =>
+    app.evaluate(({ BrowserWindow }, size) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      if (window) window.setSize(size.width, size.height);
+    }, WIDE_WINDOW);
+  await resize();
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if ((await page.evaluate(() => window.innerWidth)) > 1200) return;
+    await page.waitForTimeout(200);
+    await resize();
+  }
+  throw new Error('the window stayed narrower than the right column needs');
 }
 
 /** Opens the panel when the window is narrow enough to show the rail instead. */

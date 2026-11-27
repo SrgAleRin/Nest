@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { _electron as electron, type ElectronApplication } from 'playwright';
+import { pinWideWindow } from './helpers';
 
 /**
  * The diff viewer virtualizes rows, highlights syntax, supports multi-line
@@ -74,6 +75,8 @@ test('virtualizes a large diff, keeps comments working and highlights syntax', a
   });
 
   const page = await app.firstWindow();
+
+  await pinWideWindow(app);
   await page.waitForSelector('.app', { timeout: 60_000 });
 
   const added = await page.evaluate(

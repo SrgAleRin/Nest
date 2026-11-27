@@ -5,6 +5,7 @@ import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { _electron as electron, type ElectronApplication } from 'playwright';
 import type { NestBridge } from '@nest/shared';
+import { pinWideWindow } from './helpers';
 
 declare global {
   interface Window {
@@ -89,6 +90,8 @@ test('shows inline panel errors and recovers after a retry', async () => {
   });
 
   const page = await app.firstWindow();
+
+  await pinWideWindow(app);
   await page.waitForSelector('.app', { timeout: 60_000 });
 
   const added = await page.evaluate(async (projectPath) => {

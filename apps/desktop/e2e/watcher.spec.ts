@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { _electron as electron, type ElectronApplication } from 'playwright';
+import { pinWideWindow } from './helpers';
 
 /**
  * The Git panel must react to files written outside Nest (an agent in a
@@ -56,6 +57,8 @@ test('refreshes git status and shows line counts for files changed on disk', asy
   });
 
   const page = await app.firstWindow();
+
+  await pinWideWindow(app);
   await page.waitForSelector('.app', { timeout: 60_000 });
 
   const added = await page.evaluate(

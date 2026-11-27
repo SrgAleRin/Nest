@@ -95,12 +95,8 @@ test('saves harness settings and keeps a disabled harness resumable', async () =
     await expect(page.locator('.settings-modal')).toBeVisible();
     expect(await page.locator('.settings-row').count()).toBeGreaterThanOrEqual(7);
     await expect(page.locator('.update-state')).toHaveText('Updates disabled');
-    const customSection = page
-      .locator('.settings-section')
-      .filter({ hasText: 'Custom command' });
-    const customCommandField = customSection
-      .locator('.field')
-      .filter({ hasText: 'Command' });
+    const customSection = page.locator('.settings-section').filter({ hasText: 'Custom command' });
+    const customCommandField = customSection.locator('.field').filter({ hasText: 'Command' });
     const feedField = page.locator('.field').filter({ hasText: 'Update feed' });
     const fontSizeField = page.locator('.field').filter({ hasText: 'Font size' });
 

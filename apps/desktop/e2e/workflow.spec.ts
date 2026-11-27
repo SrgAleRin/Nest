@@ -5,7 +5,7 @@ import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { _electron as electron, type ElectronApplication } from 'playwright';
 import type { NestBridge } from '@nest/shared';
-import { annotateEnvironment, startHarness, waitForRemoteOutcome } from './helpers';
+import { annotateEnvironment, pinWideWindow, startHarness, waitForRemoteOutcome } from './helpers';
 
 declare global {
   interface Window {
@@ -101,6 +101,7 @@ test.afterAll(async () => {
 test('task workflow: UI creation, staged review, note, commit, first push, restart, delete', async () => {
   app = await launchApp();
   let page = await app.firstWindow();
+  await pinWideWindow(app);
   await page.waitForSelector('.app', { timeout: 60_000 });
 
   // Adding the project needs a native folder picker, so it uses the bridge;
@@ -249,6 +250,7 @@ test('task workflow: UI creation, staged review, note, commit, first push, resta
   await app.close();
   app = await launchApp();
   page = await app.firstWindow();
+  await pinWideWindow(app);
   await page.waitForSelector('.app', { timeout: 60_000 });
 
   const notesAfterRestart = await page.evaluate(async (taskId) => {

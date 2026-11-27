@@ -5,7 +5,7 @@ import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { _electron as electron, type ElectronApplication } from 'playwright';
 import type { NestBridge } from '@nest/shared';
-import { openPanelMenu } from './helpers';
+import { openPanelMenu, pinWideWindow } from './helpers';
 
 declare global {
   interface Window {
@@ -80,6 +80,8 @@ test('browses changes, commits and branch comparison', async () => {
   });
 
   const page = await app.firstWindow();
+
+  await pinWideWindow(app);
   await page.waitForSelector('.app', { timeout: 60_000 });
 
   const added = await page.evaluate(

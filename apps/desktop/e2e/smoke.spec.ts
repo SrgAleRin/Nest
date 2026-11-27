@@ -115,9 +115,7 @@ test('runs the fake harness, persists scrollback and recovers after restart', as
   await page.mouse.move(screenBox.x + 220, screenBox.y + 8, { steps: 8 });
   await page.mouse.up();
   await page.keyboard.press('Control+Shift+c');
-  await expect
-    .poll(() => app.evaluate(({ clipboard }) => clipboard.readText()))
-    .not.toBe('');
+  await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).not.toBe('');
 
   // A status change (running -> idle) must not remount the terminal: remounting
   // disposes xterm and replays scrollback, which looks like flashing in TUIs.

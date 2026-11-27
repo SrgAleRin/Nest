@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { _electron as electron, type ElectronApplication } from 'playwright';
-import { startHarness } from './helpers';
+import { pinWideWindow, startHarness } from './helpers';
 
 const appDir = path.resolve(__dirname, '..');
 let tempRoot = '';
@@ -67,6 +67,8 @@ test('keeps at most eight terminals mounted and replays scrollback for the rest'
   });
 
   const page = await app.firstWindow();
+
+  await pinWideWindow(app);
   await page.waitForSelector('.app', { timeout: 60_000 });
   await page.evaluate((projectPath) => {
     return window.nest!.invoke('projects.add', { path: projectPath });
@@ -118,6 +120,8 @@ test('opens a plain terminal and closes tabs for good', async () => {
   });
 
   const page = await app.firstWindow();
+
+  await pinWideWindow(app);
   await page.waitForSelector('.app', { timeout: 60_000 });
   await page.evaluate((projectPath) => {
     return window.nest!.invoke('projects.add', { path: projectPath });
@@ -231,6 +235,8 @@ test('the plus button follows the configured default', async () => {
   });
 
   const page = await app.firstWindow();
+
+  await pinWideWindow(app);
   await page.waitForSelector('.app', { timeout: 60_000 });
   await page.evaluate((projectPath) => {
     return window.nest!.invoke('projects.add', { path: projectPath });
