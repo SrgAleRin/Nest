@@ -9,6 +9,7 @@ import {
   type NestEvent,
   type Project,
   type Task,
+  type TaskWorkflowStatus,
 } from '@nest/shared';
 import type { Db } from '../db/database.js';
 import { NestError } from '../errors.js';
@@ -82,6 +83,7 @@ const DEFAULT_WORKSPACE_SETTINGS: TaskWorkspaceSettings = {
 
 export class TaskService {
   private beforeRemove: (task: Task) => void | Promise<void> = () => {};
+  private beforeArchive: (task: Task) => void | Promise<void> = () => {};
   /**
    * One tail per project: two concurrent creations would otherwise race for the
    * same slug, workspace path and branch. The stored promise never rejects, so
@@ -106,20 +108,29 @@ export class TaskService {
     this.beforeRemove = handler;
   }
 
-  list(projectId?: string): Task[] {
-    const rows = projectId
-      ? (this.db
-          .prepare(
-            `SELECT * FROM tasks WHERE project_id = ? ORDER BY
-               CASE kind WHEN 'checkout' THEN 0 ELSE 1 END, created_at`,
-          )
-          .all(projectId) as unknown as TaskRow[])
-      : (this.db
-          .prepare(
-            `SELECT * FROM tasks ORDER BY
-               CASE kind WHEN 'checkout' THEN 0 ELSE 1 END, created_at`,
-          )
-          .all() as unknown as TaskRow[]);
+  /**
+   * Runs before an archive writes its row. Composition uses it to stop and
+   * verify the task's PTYs, the same way removal does.
+   */
+  onBeforeArchive(handler: (task: Task) => void | Promise<void>): void {
+    this.beforeArchive = handler;
+  }
+
+  /**
+   * `includeArchived` defaults to true so existing callers keep seeing every
+   * task; the sidebar asks for the active ones with `{ includeArchived: false }`.
+   */
+  list(projectId?: string, options: { includeArchived?: boolean } = {}): Task[] {
+    const activeOnly = options.includeArchived === false;
+    const filters = [
+      projectId ? 'project_id = ?' : '',
+      activeOnly ? "status = 'active'" : '',
+    ].filter(Boolean);
+    const where = filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : '';
+    const sql = `SELECT * FROM tasks ${where} ORDER BY
+      CASE kind WHEN 'checkout' THEN 0 ELSE 1 END, sort_order ASC, created_at ASC`;
+    const statement = this.db.prepare(sql);
+    const rows = (projectId ? statement.all(projectId) : statement.all()) as unknown as TaskRow[];
     return rows.map(toTask);
   }
 
@@ -489,7 +500,10 @@ export class TaskService {
       .forEach(([key]) => this.operations.delete(key));
   }
 
-  async remove(taskId: string, options: { force?: boolean } = {}): Promise<void> {
+  async remove(
+    taskId: string,
+    options: { force?: boolean; deleteBranch?: boolean } = {},
+  ): Promise<void> {
     const task = this.get(taskId);
     if (task.kind === 'checkout' || task.slug === MAIN_CHECKOUT_SLUG) {
       throw new NestError('checkout_immutable', 'The main checkout cannot be removed');
@@ -516,6 +530,7 @@ export class TaskService {
     if (!existsSync(task.workspacePath)) {
       await this.removeMissingWorktree(project.path, task.workspacePath);
       this.deleteRow(taskId);
+      await this.deleteTaskBranch(project, task, options.deleteBranch);
       return;
     }
 
@@ -554,6 +569,133 @@ export class TaskService {
     }
 
     this.deleteRow(taskId);
+    await this.deleteTaskBranch(project, task, options.deleteBranch);
+  }
+
+  /**
+   * Drops the branch of a removed task, but only when it is this task's own:
+   * never the main checkout branch, never the project base ref, and never a
+   * branch another worktree still has checked out. An unreadable state keeps
+   * the branch.
+   */
+  private async deleteTaskBranch(
+    project: Project,
+    task: Task,
+    deleteBranch?: boolean,
+  ): Promise<void> {
+    if (!deleteBranch) return;
+    if (!task.branch || task.branch === 'HEAD') return;
+    const checkout = this.projects.checkout(project.id);
+    if (task.branch === checkout?.branch) return;
+    if (task.branch === project.defaultBaseRef) return;
+    if (!(await branchExists(project.path, task.branch))) return;
+    if (await this.branchInUse(project.path, task.branch)) return;
+    await gitOrNull(project.path, ['branch', '-D', task.branch]);
+  }
+
+  update(
+    taskId: string,
+    patch: {
+      title?: string;
+      workflowStatus?: TaskWorkflowStatus;
+      pinned?: boolean;
+      notes?: string | null;
+      unread?: boolean;
+      sortOrder?: number;
+    },
+  ): Task {
+    const task = this.get(taskId);
+    const values: Array<string | number | null> = [];
+    const assignments: string[] = [];
+
+    if (patch.title !== undefined) {
+      if (task.kind === 'checkout' || task.slug === MAIN_CHECKOUT_SLUG) {
+        throw new NestError('checkout_immutable', 'Main checkout cannot be renamed');
+      }
+      const title = patch.title.trim();
+      if (!title) throw new NestError('invalid_task_title', 'Task title cannot be empty');
+      // The slug, the branch and the workspace path stay as they are: they are
+      // the task's identity on disk, not part of its label.
+      assignments.push('title = ?');
+      values.push(title);
+    }
+    if (patch.workflowStatus !== undefined) {
+      assignments.push('workflow_status = ?');
+      values.push(patch.workflowStatus);
+    }
+    if (patch.pinned !== undefined) {
+      assignments.push('pinned = ?');
+      values.push(patch.pinned ? 1 : 0);
+    }
+    if (patch.notes !== undefined) {
+      const notes = patch.notes === null || patch.notes.trim() === '' ? null : patch.notes;
+      assignments.push('notes = ?');
+      values.push(notes);
+    }
+    if (patch.unread !== undefined) {
+      assignments.push('unread = ?');
+      values.push(patch.unread ? 1 : 0);
+    }
+    if (patch.sortOrder !== undefined) {
+      assignments.push('sort_order = ?');
+      values.push(patch.sortOrder);
+    }
+
+    if (assignments.length > 0) {
+      this.db
+        .prepare(`UPDATE tasks SET ${assignments.join(', ')}, updated_at = ? WHERE id = ?`)
+        .run(...values, nowIso(), taskId);
+    }
+
+    const updated = this.get(taskId);
+    this.emit({ type: 'task:updated', task: updated });
+    return updated;
+  }
+
+  /** Hides a task from the active list; its worktree, branch and sessions stay. */
+  async archive(taskId: string): Promise<Task> {
+    const task = this.get(taskId);
+    if (task.kind === 'checkout' || task.slug === MAIN_CHECKOUT_SLUG) {
+      throw new NestError('cannot_archive_checkout', 'Main checkout cannot be archived');
+    }
+    if (task.status === 'archived') return task;
+
+    // A live PTY under an archived task would keep writing to a row the UI no
+    // longer lists, so it is stopped first, exactly like removal.
+    await this.beforeArchive(task);
+    const timestamp = nowIso();
+    this.db
+      .prepare(
+        "UPDATE tasks SET status = 'archived', archived_at = ?, pinned = 0, updated_at = ? WHERE id = ?",
+      )
+      .run(timestamp, timestamp, taskId);
+    const updated = this.get(taskId);
+    this.emit({ type: 'task:updated', task: updated });
+    return updated;
+  }
+
+  restore(taskId: string): Task {
+    const task = this.get(taskId);
+    if (task.status === 'active') return task;
+    this.db
+      .prepare("UPDATE tasks SET status = 'active', archived_at = NULL, updated_at = ? WHERE id = ?")
+      .run(nowIso(), taskId);
+    const updated = this.get(taskId);
+    this.emit({ type: 'task:updated', task: updated });
+    return updated;
+  }
+
+  /** Stores the sidebar order exactly as given: index becomes `sort_order`. */
+  reorder(taskIds: string[]): void {
+    const update = this.db.prepare('UPDATE tasks SET sort_order = ? WHERE id = ?');
+    this.db.exec('BEGIN');
+    try {
+      taskIds.forEach((taskId, index) => update.run(index, taskId));
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
   }
 
   /**

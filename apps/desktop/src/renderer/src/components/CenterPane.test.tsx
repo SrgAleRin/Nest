@@ -35,6 +35,12 @@ const task: Task = {
   workspacePath: 'D:/nest/task-a',
   status: 'active',
   setupError: null,
+  workflowStatus: 'in_progress',
+  pinned: false,
+  sortOrder: 0,
+  notes: null,
+  archivedAt: null,
+  unread: false,
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
 };

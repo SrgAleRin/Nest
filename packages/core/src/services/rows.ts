@@ -11,6 +11,7 @@ import type {
   Task,
   TaskKind,
   TaskStatus,
+  TaskWorkflowStatus,
 } from '@nest/shared';
 
 export interface ProjectRow {
@@ -19,6 +20,8 @@ export interface ProjectRow {
   path: string;
   setup_script: string | null;
   default_base_ref: string | null;
+  sort_order: number | null;
+  hidden: number | null;
   created_at: string;
 }
 
@@ -33,6 +36,12 @@ export interface TaskRow {
   workspace_path: string;
   status: TaskStatus;
   setup_error: string | null;
+  workflow_status: TaskWorkflowStatus | null;
+  pinned: number | null;
+  sort_order: number | null;
+  notes: string | null;
+  archived_at: string | null;
+  unread: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -81,6 +90,8 @@ export function toProject(row: ProjectRow): Project {
     path: row.path,
     setupScript: row.setup_script,
     defaultBaseRef: row.default_base_ref ?? null,
+    sortOrder: Number(row.sort_order ?? 0),
+    hidden: Boolean(row.hidden),
     createdAt: row.created_at,
   };
 }
@@ -97,6 +108,12 @@ export function toTask(row: TaskRow): Task {
     workspacePath: row.workspace_path,
     status: row.status,
     setupError: row.setup_error,
+    workflowStatus: row.workflow_status ?? 'in_progress',
+    pinned: Boolean(row.pinned),
+    sortOrder: Number(row.sort_order ?? 0),
+    notes: row.notes ?? null,
+    archivedAt: row.archived_at ?? null,
+    unread: Boolean(row.unread),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

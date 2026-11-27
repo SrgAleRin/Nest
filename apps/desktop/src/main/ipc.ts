@@ -73,7 +73,13 @@ export function registerIpc(context: IpcContext): void {
       await shell.openPath(project.path);
     },
 
-    'tasks.list': ({ projectId }) => core.tasks.list(projectId),
+    'projects.update': ({ projectId, name, setupScript, defaultBaseRef, hidden }) =>
+      core.projects.update(projectId, { name, setupScript, defaultBaseRef, hidden }),
+
+    'projects.reorder': ({ projectIds }) => core.projects.reorder(projectIds),
+
+    'tasks.list': ({ projectId, includeArchived }) =>
+      core.tasks.list(projectId, { includeArchived }),
 
     'tasks.preview': ({ projectId, title, baseRef }) =>
       core.tasks.preview({ projectId, title, baseRef }),
@@ -86,10 +92,27 @@ export function registerIpc(context: IpcContext): void {
 
     'tasks.abort': async ({ operationId }) => core.tasks.abort(operationId),
 
-    'tasks.remove': async ({ taskId, force }) => {
-      await core.tasks.remove(taskId, { force });
+    'tasks.remove': async ({ taskId, force, deleteBranch }) => {
+      await core.tasks.remove(taskId, { force, deleteBranch });
       tasksChanged();
     },
+
+    'tasks.update': ({ taskId, title, workflowStatus, pinned, notes, unread, sortOrder }) =>
+      core.tasks.update(taskId, { title, workflowStatus, pinned, notes, unread, sortOrder }),
+
+    'tasks.archive': async ({ taskId }) => {
+      const task = await core.tasks.archive(taskId);
+      tasksChanged();
+      return task;
+    },
+
+    'tasks.restore': ({ taskId }) => {
+      const task = core.tasks.restore(taskId);
+      tasksChanged();
+      return task;
+    },
+
+    'tasks.reorder': ({ taskIds }) => core.tasks.reorder(taskIds),
 
     'tasks.openCheckout': ({ projectId }) => core.tasks.ensureCheckout(projectId),
 

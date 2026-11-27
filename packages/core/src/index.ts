@@ -54,7 +54,7 @@ export function createCore(options: CoreOptions): Core {
     customCommand: options.customCommand,
     getSettings: () => settings.get(),
   });
-  const projects = new ProjectService(db);
+  const projects = new ProjectService(db, emit);
   const tasks = new TaskService(db, projects, options.worktreesRoot, emit, () => {
     const current = settings.get();
     return { worktreeRoot: current.worktreeRoot, copyEnvFiles: current.copyEnvFiles };
@@ -68,6 +68,10 @@ export function createCore(options: CoreOptions): Core {
   const comments = new CommentsService(db, tasks, sessions, git);
 
   tasks.onBeforeRemove((task) =>
+    sessions.stopTasksAndWait([task.id], { subject: 'task' }),
+  );
+
+  tasks.onBeforeArchive((task) =>
     sessions.stopTasksAndWait([task.id], { subject: 'task' }),
   );
 

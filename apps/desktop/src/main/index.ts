@@ -207,7 +207,7 @@ if (!allowMultipleInstances && !app.requestSingleInstanceLock()) {
     });
 
     watcher = new WorkspaceWatcher(broadcast);
-    void watcher.sync(core.tasks.list());
+    void watcher.sync(core.tasks.list(undefined, { includeArchived: false }));
 
     const updateService = new UpdateService(() => core!.settings.get(), broadcast);
     updates = updateService;
@@ -218,7 +218,9 @@ if (!allowMultipleInstances && !app.requestSingleInstanceLock()) {
       updates: updateService,
       getWindow: () => mainWindow,
       onTasksChanged: () => {
-        if (core && watcher) void watcher.sync(core.tasks.list());
+        if (core && watcher) {
+          void watcher.sync(core.tasks.list(undefined, { includeArchived: false }));
+        }
       },
       showNotification: (input) =>
         showNotification(input, (sessionId) => {

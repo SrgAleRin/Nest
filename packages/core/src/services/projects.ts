@@ -5,6 +5,7 @@ import {
   MAIN_CHECKOUT_TITLE,
   newId,
   nowIso,
+  type NestEvent,
   type Project,
   type Task,
 } from '@nest/shared';
@@ -18,7 +19,10 @@ import { normalizeSetupScript } from './setup.js';
 export class ProjectService {
   private beforeRemove: (project: Project) => void | Promise<void> = () => {};
 
-  constructor(private readonly db: Db) {}
+  constructor(
+    private readonly db: Db,
+    private readonly emit: (event: NestEvent) => void = () => {},
+  ) {}
 
   /**
    * Runs before a project row is deleted. Composition uses it to stop and verify
@@ -30,7 +34,7 @@ export class ProjectService {
 
   list(): Project[] {
     const rows = this.db
-      .prepare('SELECT * FROM projects ORDER BY name COLLATE NOCASE')
+      .prepare('SELECT * FROM projects ORDER BY sort_order ASC, name COLLATE NOCASE ASC')
       .all() as unknown as ProjectRow[];
     return rows.map(toProject);
   }
@@ -151,8 +155,23 @@ export class ProjectService {
     return resolved;
   }
 
-  update(projectId: string, patch: { setupScript?: string | null }): Project {
+  update(
+    projectId: string,
+    patch: {
+      name?: string;
+      setupScript?: string | null;
+      defaultBaseRef?: string | null;
+      hidden?: boolean;
+    },
+  ): Project {
     this.get(projectId);
+    if (patch.name !== undefined) {
+      const name = patch.name.trim();
+      if (!name || name.length > 200) {
+        throw new NestError('invalid_project_name', 'Project name must be 1 to 200 characters');
+      }
+      this.db.prepare('UPDATE projects SET name = ? WHERE id = ?').run(name, projectId);
+    }
     if (patch.setupScript !== undefined) {
       const script = normalizeSetupScript(patch.setupScript);
       if (script && script.length > 2000) {
@@ -160,8 +179,44 @@ export class ProjectService {
       }
       this.db.prepare('UPDATE projects SET setup_script = ? WHERE id = ?').run(script, projectId);
     }
-    return this.get(projectId);
+    if (patch.defaultBaseRef !== undefined) {
+      this.db
+        .prepare('UPDATE projects SET default_base_ref = ? WHERE id = ?')
+        .run(normalizeBaseRef(patch.defaultBaseRef), projectId);
+    }
+    if (patch.hidden !== undefined) {
+      this.db
+        .prepare('UPDATE projects SET hidden = ? WHERE id = ?')
+        .run(patch.hidden ? 1 : 0, projectId);
+    }
+    const updated = this.get(projectId);
+    this.emit({ type: 'project:updated', project: updated });
+    return updated;
   }
+
+  /** Stores the sidebar order exactly as given: index becomes `sort_order`. */
+  reorder(projectIds: string[]): void {
+    const update = this.db.prepare('UPDATE projects SET sort_order = ? WHERE id = ?');
+    this.db.exec('BEGIN');
+    try {
+      projectIds.forEach((projectId, index) => update.run(index, projectId));
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+}
+
+/** Empty or whitespace-only means "no override": the project falls back to HEAD. */
+function normalizeBaseRef(value: string | null): string | null {
+  if (value === null) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.length > 250) {
+    throw new NestError('invalid_base_ref', 'Base ref is too long (max 250 chars)');
+  }
+  return trimmed;
 }
 
 export function normalizePath(value: string): string {

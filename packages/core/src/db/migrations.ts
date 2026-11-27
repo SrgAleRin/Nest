@@ -216,4 +216,22 @@ export const migrations: Migration[] = [
         ADD COLUMN default_base_ref TEXT;
     `,
   },
+  {
+    id: 13,
+    name: 'sidebar_workspace_metadata',
+    sql: `
+      ALTER TABLE projects ADD COLUMN sort_order REAL NOT NULL DEFAULT 0;
+      ALTER TABLE projects ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;
+
+      ALTER TABLE tasks ADD COLUMN workflow_status TEXT NOT NULL DEFAULT 'in_progress'
+        CHECK (workflow_status IN ('todo', 'in_progress', 'in_review', 'done'));
+      ALTER TABLE tasks ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE tasks ADD COLUMN sort_order REAL NOT NULL DEFAULT 0;
+      ALTER TABLE tasks ADD COLUMN notes TEXT;
+      ALTER TABLE tasks ADD COLUMN archived_at TEXT;
+      ALTER TABLE tasks ADD COLUMN unread INTEGER NOT NULL DEFAULT 0;
+
+      CREATE INDEX tasks_project_status ON tasks (project_id, status);
+    `,
+  },
 ];

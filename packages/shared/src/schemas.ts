@@ -13,6 +13,10 @@ export const ProjectSchema = z.object({
    * for rows registered before the column existed; those resolve on first use.
    */
   defaultBaseRef: z.string().min(1).nullable(),
+  /** Position of the project in the sidebar; lower comes first. */
+  sortOrder: z.number(),
+  /** Collapsed out of the main project list, without removing it. */
+  hidden: z.boolean(),
   createdAt: z.string().min(1),
 });
 export type Project = z.infer<typeof ProjectSchema>;
@@ -22,6 +26,10 @@ export type TaskKind = z.infer<typeof TaskKindSchema>;
 
 export const TaskStatusSchema = z.enum(['active', 'archived']);
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
+
+/** Where a task sits in the review flow, independent of its archived state. */
+export const TaskWorkflowStatusSchema = z.enum(['todo', 'in_progress', 'in_review', 'done']);
+export type TaskWorkflowStatus = z.infer<typeof TaskWorkflowStatusSchema>;
 
 export const MAIN_CHECKOUT_SLUG = '@main';
 export const MAIN_CHECKOUT_TITLE = 'main checkout';
@@ -38,6 +46,17 @@ export const TaskSchema = z.object({
   workspacePath: z.string().min(1),
   status: TaskStatusSchema,
   setupError: z.string().nullable(),
+  workflowStatus: TaskWorkflowStatusSchema,
+  /** Kept at the top of its section in the sidebar. */
+  pinned: z.boolean(),
+  /** Position inside its section; lower comes first. */
+  sortOrder: z.number(),
+  /** Free-form task notes, shown next to the task in the sidebar. */
+  notes: z.string().nullable(),
+  /** When the task was archived; null while it is active. */
+  archivedAt: z.string().nullable(),
+  /** New activity the user has not looked at yet. */
+  unread: z.boolean(),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
 });

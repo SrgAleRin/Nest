@@ -35,6 +35,8 @@ export function createMockClient(): NestClient {
       path: 'D:\\dev\\nest-demo',
       setupScript: 'pnpm install',
       defaultBaseRef: 'origin/main',
+      sortOrder: 0,
+      hidden: false,
       createdAt: now,
     },
   ];
@@ -50,6 +52,12 @@ export function createMockClient(): NestClient {
       workspacePath: 'D:\\dev\\nest-demo',
       status: 'active',
       setupError: null,
+      workflowStatus: 'in_progress',
+      pinned: false,
+      sortOrder: 0,
+      notes: null,
+      archivedAt: null,
+      unread: false,
       createdAt: now,
       updatedAt: now,
     },
@@ -64,6 +72,12 @@ export function createMockClient(): NestClient {
       workspacePath: 'D:\\dev\\nest-worktrees\\nest-demo\\terminal-reconnect',
       status: 'active',
       setupError: null,
+      workflowStatus: 'in_progress',
+      pinned: false,
+      sortOrder: 0,
+      notes: null,
+      archivedAt: null,
+      unread: false,
       createdAt: now,
       updatedAt: now,
     },
@@ -647,6 +661,8 @@ export function createMockClient(): NestClient {
           path,
           setupScript: null,
           defaultBaseRef: 'origin/main',
+          sortOrder: projects.length,
+          hidden: false,
           createdAt: new Date().toISOString(),
         };
         projects.push(project);
@@ -661,6 +677,12 @@ export function createMockClient(): NestClient {
           workspacePath: path,
           status: 'active',
           setupError: null,
+          workflowStatus: 'in_progress',
+          pinned: false,
+          sortOrder: 0,
+          notes: null,
+          archivedAt: null,
+          unread: false,
           createdAt: now,
           updatedAt: now,
         };
@@ -681,8 +703,37 @@ export function createMockClient(): NestClient {
       case 'projects.reveal':
       case 'tasks.reveal':
         return undefined;
-      case 'tasks.list':
-        return tasks;
+      case 'projects.update': {
+        const project = projects.find((candidate) => candidate.id === params.projectId);
+        if (!project) throw new Error('project not found');
+        if (params.name !== undefined) project.name = String(params.name).trim();
+        if (params.setupScript !== undefined) {
+          project.setupScript = params.setupScript ? String(params.setupScript) : null;
+        }
+        if (params.defaultBaseRef !== undefined) {
+          const ref = params.defaultBaseRef ? String(params.defaultBaseRef).trim() : '';
+          project.defaultBaseRef = ref || null;
+        }
+        if (params.hidden !== undefined) project.hidden = Boolean(params.hidden);
+        emit({ type: 'project:updated', project: { ...project } });
+        return { ...project };
+      }
+      case 'projects.reorder': {
+        (params.projectIds as string[]).forEach((projectId, index) => {
+          const project = projects.find((candidate) => candidate.id === projectId);
+          if (project) project.sortOrder = index;
+        });
+        projects.sort((a, b) => a.sortOrder - b.sortOrder);
+        return undefined;
+      }
+      case 'tasks.list': {
+        const includeArchived = params.includeArchived !== false;
+        return tasks.filter(
+          (task) =>
+            (params.projectId === undefined || task.projectId === params.projectId) &&
+            (includeArchived || task.status === 'active'),
+        );
+      }
       case 'tasks.openCheckout': {
         const checkout = tasks.find(
           (candidate) => candidate.projectId === params.projectId && candidate.kind === 'checkout',
@@ -737,6 +788,12 @@ export function createMockClient(): NestClient {
           workspacePath: `D:\\dev\\nest-worktrees\\nest-demo\\${slug}`,
           status: 'active',
           setupError: null,
+          workflowStatus: 'in_progress',
+          pinned: false,
+          sortOrder: 0,
+          notes: null,
+          archivedAt: null,
+          unread: false,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
@@ -755,6 +812,56 @@ export function createMockClient(): NestClient {
       case 'tasks.remove': {
         const index = tasks.findIndex((task) => task.id === params.taskId);
         if (index >= 0) tasks.splice(index, 1);
+        return undefined;
+      }
+      case 'tasks.update': {
+        const task = tasks.find((candidate) => candidate.id === params.taskId);
+        if (!task) throw new Error('task not found');
+        if (params.title !== undefined) {
+          if (task.kind === 'checkout') throw new Error('Main checkout cannot be renamed');
+          const title = String(params.title).trim();
+          if (!title) throw new Error('Task title cannot be empty');
+          task.title = title;
+        }
+        if (params.workflowStatus !== undefined) {
+          task.workflowStatus = params.workflowStatus as Task['workflowStatus'];
+        }
+        if (params.pinned !== undefined) task.pinned = Boolean(params.pinned);
+        if (params.notes !== undefined) {
+          const notes = params.notes === null ? '' : String(params.notes).trim();
+          task.notes = notes ? String(params.notes) : null;
+        }
+        if (params.unread !== undefined) task.unread = Boolean(params.unread);
+        if (params.sortOrder !== undefined) task.sortOrder = Number(params.sortOrder);
+        task.updatedAt = new Date().toISOString();
+        emit({ type: 'task:updated', task: { ...task } });
+        return { ...task };
+      }
+      case 'tasks.archive': {
+        const task = tasks.find((candidate) => candidate.id === params.taskId);
+        if (!task) throw new Error('task not found');
+        if (task.kind === 'checkout') throw new Error('Main checkout cannot be archived');
+        task.status = 'archived';
+        task.archivedAt = new Date().toISOString();
+        task.pinned = false;
+        task.updatedAt = new Date().toISOString();
+        emit({ type: 'task:updated', task: { ...task } });
+        return { ...task };
+      }
+      case 'tasks.restore': {
+        const task = tasks.find((candidate) => candidate.id === params.taskId);
+        if (!task) throw new Error('task not found');
+        task.status = 'active';
+        task.archivedAt = null;
+        task.updatedAt = new Date().toISOString();
+        emit({ type: 'task:updated', task: { ...task } });
+        return { ...task };
+      }
+      case 'tasks.reorder': {
+        (params.taskIds as string[]).forEach((taskId, index) => {
+          const task = tasks.find((candidate) => candidate.id === taskId);
+          if (task) task.sortOrder = index;
+        });
         return undefined;
       }
       case 'sessions.list':

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { Session, Task, UpdateStatus } from './schemas.js';
+import type { Project, Session, Task, UpdateStatus } from './schemas.js';
 import { CommentViewSchema } from './comments.js';
 import {
   AppSettingsPatchSchema,
@@ -9,6 +9,7 @@ import {
   ReviewCommentSchema,
   SessionSchema,
   TaskSchema,
+  TaskWorkflowStatusSchema,
   UpdateStatusSchema,
 } from './schemas.js';
 import {
@@ -77,9 +78,23 @@ export const rpcMethods = {
   },
   'projects.remove': { params: z.object({ projectId: id }), result: z.void() },
   'projects.reveal': { params: z.object({ projectId: id }), result: z.void() },
+  'projects.update': {
+    params: z.object({
+      projectId: id,
+      name: z.string().trim().min(1).max(200).optional(),
+      setupScript: z.string().max(2000).nullable().optional(),
+      defaultBaseRef: z.string().trim().min(1).max(250).nullable().optional(),
+      hidden: z.boolean().optional(),
+    }),
+    result: ProjectSchema,
+  },
+  'projects.reorder': {
+    params: z.object({ projectIds: z.array(id) }),
+    result: z.void(),
+  },
 
   'tasks.list': {
-    params: z.object({ projectId: id.optional() }),
+    params: z.object({ projectId: id.optional(), includeArchived: z.boolean().optional() }),
     result: z.array(TaskSchema),
   },
   'tasks.preview': {
@@ -113,7 +128,30 @@ export const rpcMethods = {
     result: z.object({ aborted: z.boolean() }),
   },
   'tasks.remove': {
-    params: z.object({ taskId: id, force: z.boolean().optional() }),
+    params: z.object({
+      taskId: id,
+      force: z.boolean().optional(),
+      /** Delete the task branch too, when nothing else uses it. */
+      deleteBranch: z.boolean().optional(),
+    }),
+    result: z.void(),
+  },
+  'tasks.update': {
+    params: z.object({
+      taskId: id,
+      title: z.string().trim().min(1).max(200).optional(),
+      workflowStatus: TaskWorkflowStatusSchema.optional(),
+      pinned: z.boolean().optional(),
+      notes: z.string().max(10000).nullable().optional(),
+      unread: z.boolean().optional(),
+      sortOrder: z.number().optional(),
+    }),
+    result: TaskSchema,
+  },
+  'tasks.archive': { params: z.object({ taskId: id }), result: TaskSchema },
+  'tasks.restore': { params: z.object({ taskId: id }), result: TaskSchema },
+  'tasks.reorder': {
+    params: z.object({ taskIds: z.array(id) }),
     result: z.void(),
   },
   'tasks.openCheckout': { params: z.object({ projectId: id }), result: TaskSchema },
@@ -405,6 +443,7 @@ export type NestEvent =
       end: number;
     }
   | { type: 'session:status'; session: Session }
+  | { type: 'project:updated'; project: Project }
   | { type: 'task:updated'; task: Task }
   | {
       type: 'task:progress';
