@@ -87,5 +87,5 @@ P0.1–P0.3 закрыты; ниже — что именно сделано и �
 - **Чужая ветка читается без `checkout`.** Инспектор ветки (`↑ahead ↓behind`, `Compare with HEAD`, `Browse files`, `New task from branch`, `Switch here`), `Compare` с кликабельным файлом в read-only патч, `Files` с селектором ревизии и плашкой `Viewing <ref> (read-only)`. Рабочее дерево, индекс и PTY не трогаются.
 - **Исправленные дефекты ревью.** По-сторонние `+/-`, `Discard` по стороне частично staged файла, `unborn` из `git.status` вместо вывода из списка веток, очередь мутаций на workspace, счётчик подписчиков вместо флага видимости, сброс `Amend` после коммита и подстановка сообщения `HEAD`, `Escape` в drawer, компактные действия в строке.
 
-Осознанно отложено: side-by-side diff и word-level подсветка (`@pierre/diffs`), staging по строкам, PR и checks. `%(worktreepath)` требует Git 2.23; на более старом Git бейдж `worktree` просто не показывается — fallback через `git worktree list` не делали.
+Осознанно отложено: side-by-side diff и word-level подсветка (`@pierre/diffs`), staging по строкам, PR и checks. `%(worktreepath)` требует Git 2.23; на более старом Git список веток читается форматом без этого атома, и бейдж `worktree` просто не показывается.
 

@@ -22,7 +22,12 @@ import type {
 import type { Db } from '../db/database.js';
 import { NestError } from '../errors.js';
 import { git, gitOrNull, type GitResult } from '../git/exec.js';
-import { BRANCH_FORMAT, parseBranches, type BranchRecord } from '../git/branches.js';
+import {
+  BRANCH_FORMAT,
+  BRANCH_FORMAT_LEGACY,
+  parseBranches,
+  type BranchRecord,
+} from '../git/branches.js';
 import { LOG_FORMAT, parseLog } from '../git/log.js';
 import { parseNameStatus, toCompareFiles } from '../git/compare.js';
 import { buildUntrackedDiff, parseUnifiedDiff } from '../git/diff.js';
@@ -496,9 +501,7 @@ export class GitService {
     const task = this.tasks.get(taskId);
     const cwd = task.workspacePath;
     const [refs, remotesRaw, currentRaw, headRaw] = await Promise.all([
-      git(cwd, ['for-each-ref', `--format=${BRANCH_FORMAT}`, 'refs/heads', 'refs/remotes'], {
-        timeout: LOG_TIMEOUT_MS,
-      }),
+      readBranchRefs(cwd),
       gitOrNull(cwd, ['remote', '-v']),
       gitOrNull(cwd, ['symbolic-ref', '--short', '-q', 'HEAD']),
       gitOrNull(cwd, ['rev-parse', '--verify', '-q', 'HEAD']),
@@ -916,6 +919,31 @@ function matchesLogSearch(commit: GitCommit, query: string): boolean {
     commit.authorName.toLowerCase().includes(needle) ||
     commit.authorEmail.toLowerCase().includes(needle)
   );
+}
+
+/**
+ * `%(worktreepath)` exists since Git 2.23; older versions reject the whole
+ * format, so a failed read is retried without the atom. The branch list keeps
+ * working and only the worktree ownership stays unknown.
+ */
+async function readBranchRefs(cwd: string): Promise<GitResult> {
+  const format = `--format=${BRANCH_FORMAT}`;
+  try {
+    return await git(cwd, ['for-each-ref', format, 'refs/heads', 'refs/remotes'], {
+      timeout: LOG_TIMEOUT_MS,
+    });
+  } catch (error) {
+    try {
+      return await git(
+        cwd,
+        ['for-each-ref', `--format=${BRANCH_FORMAT_LEGACY}`, 'refs/heads', 'refs/remotes'],
+        { timeout: LOG_TIMEOUT_MS },
+      );
+    } catch {
+      // Both reads failed, so the first one's failure is the real reason.
+      throw error;
+    }
+  }
 }
 
 function parseRemotes(raw: string): GitRemote[] {

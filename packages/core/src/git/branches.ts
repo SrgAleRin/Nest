@@ -5,7 +5,7 @@ import type { GitBranch } from '@nest/shared';
  * `%(worktreepath)` (Git >= 2.23) is the checkout that already holds the ref,
  * so the panel knows which branch is taken without spawning `git worktree list`.
  */
-export const BRANCH_FORMAT = [
+const BRANCH_FIELDS = [
   '%(refname)',
   '%(objectname)',
   '%(upstream:short)',
@@ -14,8 +14,16 @@ export const BRANCH_FORMAT = [
   '%(subject)',
   '%(HEAD)',
   '%(symref)',
-  '%(worktreepath)',
-].join('%00');
+];
+
+export const BRANCH_FORMAT = [...BRANCH_FIELDS, '%(worktreepath)'].join('%00');
+
+/**
+ * The same record without `%(worktreepath)`, for a Git older than 2.23 that
+ * rejects the atom outright. The branch list still works; only the worktree
+ * ownership stays unknown, which the UI shows as "no badge".
+ */
+export const BRANCH_FORMAT_LEGACY = BRANCH_FIELDS.join('%00');
 
 const FIELD_SEPARATOR = '\u0000';
 const HEADS_PREFIX = 'refs/heads/';
@@ -40,10 +48,20 @@ export function parseBranches(raw: string): BranchRecord[] {
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;
     const fields = line.split(FIELD_SEPARATOR);
-    if (fields.length < 9) continue;
+    // The legacy format has no `%(worktreepath)` column.
+    if (fields.length < 8) continue;
 
-    const [refname, tip, upstream, track, committedAt, subject, head, symref, worktreePath] =
-      fields as [string, string, string, string, string, string, string, string, string];
+    const [refname, tip, upstream, track, committedAt, subject, head, symref] = fields as [
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+    ];
+    const worktreePath = fields[8] ?? '';
 
     // `origin/HEAD` and other symbolic refs only point at another branch and
     // would show up twice in the branch list.

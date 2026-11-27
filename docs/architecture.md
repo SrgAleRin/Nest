@@ -597,7 +597,7 @@ Rollback:
 | discard | `git restore --source=HEAD --staged --worktree -- <path>`; при `side: unstaged` у частично staged файла — `git restore --worktree -- <path>` (индекс сохраняется); у rename — оба пути, у copy — только новый; untracked — `git clean -f -- <path>` |
 | commit | `git commit -m <message>`; с `amend` — `git commit --amend -m <message>` |
 | push | без upstream — `git push -u <remote> <branch>`; со своим upstream — `git push`; force — `--force-with-lease` после подтверждения; чужой upstream — `upstream_mismatch` и публикация только с `publish` |
-| log | `git log --max-count=<n+1> --skip=<m> --format=<NUL-поля>`; `scope` → `--topo-order --branches --remotes --tags` (`all`), без `--remotes` (`branches`), `HEAD` (`head`) или проверенный `<ref>`; `search` → `--regexp-ignore-case --fixed-strings --grep=<text>`; лимит 300; без HEAD — пустая страница |
+| log | `git log --max-count=<n+1> --skip=<m> --format=<NUL-поля>`; `scope` → `--topo-order --branches --remotes --tags` (`all`), без `--remotes` (`branches`), `HEAD` (`head`) или проверенный `<ref>`; `search` → фильтрация разобранной страницы (subject/body/author/email/префикс хеша, окно скана 2000 коммитов); лимит 300; без HEAD — пустая страница |
 | commit detail | `git log -1 --format=<meta>` + `git diff <parent> <hash>` (корневой — `git show`, merge — первый parent) |
 | branches | `git for-each-ref --format=... refs/heads refs/remotes` (в формате есть `%(worktreepath)`) + `git symbolic-ref --short -q HEAD`, `git remote -v` |
 | files по ревизии | `git ls-tree -r -z --name-only <ref> --`, размер — `git cat-file -s <ref>:<path>`, содержимое — `git show <ref>:<path>` |
@@ -624,7 +624,7 @@ Rollback:
 
 **`Git Graph` — всё дерево репозитория.** Граф читает `git.log` с `scope`: `all` (по умолчанию) — `--topo-order --branches --remotes --tags`, то есть локальные ветки, remote-tracking и теги, но намеренно не `--all`, чтобы `refs/stash` не засорял дерево; `branches` — без remote-tracking (шумные репозитории); `head` — только история текущей ветки; `ref` — конкретная ветка или тег после `assertRef`/`assertRevision`. Раскладка дорожек считается в renderer (`gitGraph.ts`) по `hash`/`parents[]` в `--topo-order`, без внешних библиотек: обычные merge, octopus-слияния и обрыв на границе пагинации; список виртуализирован (`@tanstack/react-virtual`), предки `HEAD` подсвечены, ref-бейджи кликабельны. Поиск по сообщению, автору и префиксу хеша — параметр `search` в `git.log`, а не фильтрация в UI, поэтому он одинаково работает для загруженных и ещё не загруженных страниц.
 
-`GitBranchSchema.worktreePath` заполняется из `%(worktreepath)` в `git for-each-ref`, поэтому UI знает, какая ветка уже открыта в другом worktree, не запуская второй процесс `git worktree list`. Спецификатор есть в Git 2.23 и новее; на более старом Git поле остаётся `null` и бейдж `worktree` просто не показывается — отдельного fallback-запроса в этом выпуске нет.
+`GitBranchSchema.worktreePath` заполняется из `%(worktreepath)` в `git for-each-ref`, поэтому UI знает, какая ветка уже открыта в другом worktree, не запуская второй процесс `git worktree list`. Спецификатор есть в Git 2.23 и новее; на более старом Git чтение повторяется форматом без этого атома, поле остаётся `null`, и бейдж `worktree` просто не показывается.
 
 **Чужую ветку читают без `checkout`.** Просмотр не трогает рабочее дерево, индекс и живые PTY:
 
