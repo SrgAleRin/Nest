@@ -17,6 +17,7 @@
 | ADR-009 | **Без spike** | Orca подтвердила Electron + PTY + worktrees; начинаем сразу с Phase 1 |
 | ADR-010 | **SQLite через `node:sqlite`** | встроен в Node 24 внутри Electron 45: не нужен native rebuild, WAL, синхронный API; при необходимости переход на `better-sqlite3` — за тонким интерфейсом `Db` |
 | ADR-011 | **Единый контекст изменений на задачу** (реализовано) | `Source Control`, список и diff используют общее состояние выбранного workspace; Git и существующий IPC остаются источником данных, см. §7.2.2 |
+| ADR-012 | **Карточная левая панель рабочих пространств** (реализовано) | вместо дерева сессий и отдельного блока `Activity` сайдбар строится из карточек задач по модели Orca: агрегированный статус, умная сортировка `Agent Activity`, группировка/фильтры в `localStorage` и архивация/пин/этап в SQLite, см. §6.5.1 и [план](left-panel-plan.md) |
 
 Tauri-заметка: если позже понадобится установщик < 30 МБ, мобильный клиент или минимальный runtime, делаем отдельный spike на Tauri 2 + `portable-pty` + `xterm`. Это не «переезд одной кнопкой»: Node-core придётся переписать на Rust или тащить sidecar. Поэтому решение по Tauri принимается отдельно и по цифрам, а не по умолчанию.
 
@@ -170,8 +171,11 @@ export const ProjectSchema = z.object({
   id: z.string(),
   name: z.string(),
   path: z.string(),
-  baseRef: z.string(),
-  createdAt: z.number(),
+  defaultBaseRef: z.string().nullable(),
+  setupScript: z.string().nullable(),
+  sortOrder: z.number(),
+  hidden: z.boolean(),
+  createdAt: z.string(),
 });
 
 export const TaskSchema = z.object({
@@ -181,8 +185,14 @@ export const TaskSchema = z.object({
   kind: z.enum(['worktree', 'checkout']),
   branch: z.string(),
   workspacePath: z.string(),
-  baseRef: z.string(),
-  status: z.enum(['creating', 'active', 'review', 'done', 'archived', 'error']),
+  baseRef: z.string().nullable(),
+  status: z.enum(['active', 'archived']),
+  workflowStatus: z.enum(['todo', 'in_progress', 'in_review', 'done']),
+  pinned: z.boolean(),
+  sortOrder: z.number(),
+  notes: z.string().nullable(),
+  archivedAt: z.string().nullable(),
+  unread: z.boolean(),
 });
 
 export const SessionSchema = z.object({
@@ -212,20 +222,26 @@ export const CommentSchema = z.object({
 });
 
 export const rpcContract = {
-  'projects.list':   { input: z.void(), output: z.array(ProjectSchema) },
-  'projects.add':    { input: z.object({ path: z.string() }), output: ProjectSchema },
-  'projects.remove': { input: z.object({ id: z.string() }), output: z.void() },
+  'projects.list':    { input: z.void(), output: z.array(ProjectSchema) },
+  'projects.add':     { input: z.object({ path: z.string() }), output: z.object({ project: ProjectSchema, checkout: TaskSchema }) },
+  'projects.update':  { input: z.object({ projectId: z.string(), name: z.string().optional(), setupScript: z.string().nullable().optional(), defaultBaseRef: z.string().nullable().optional(), hidden: z.boolean().optional() }), output: ProjectSchema },
+  'projects.reorder': { input: z.object({ projectIds: z.array(z.string()) }), output: z.void() },
+  'projects.remove':  { input: z.object({ projectId: z.string() }), output: z.void() },
 
-  'tasks.list':   { input: z.object({ projectId: z.string().optional() }), output: z.array(TaskSchema) },
-  'tasks.create': { input: z.object({
+  'tasks.list':    { input: z.object({ projectId: z.string().optional(), includeArchived: z.boolean().optional() }), output: z.array(TaskSchema) },
+  'tasks.create':  { input: z.object({
     projectId: z.string(),
     title: z.string().min(1),
-    location: z.enum(['worktree', 'checkout']).default('worktree'),
     baseRef: z.string().optional(),
-    harnessId: z.string().optional(),
+    setupScript: z.string().nullable().optional(),
+    operationId: z.string(),
   }), output: TaskSchema },
-  'tasks.delete': { input: z.object({ id: z.string(), deleteBranch: z.boolean() }), output: z.void() },
-  'tasks.mainCheckout': { input: z.object({ projectId: z.string() }), output: TaskSchema },
+  'tasks.update':  { input: z.object({ taskId: z.string(), title: z.string().optional(), workflowStatus: z.enum(['todo', 'in_progress', 'in_review', 'done']).optional(), pinned: z.boolean().optional(), notes: z.string().nullable().optional(), unread: z.boolean().optional(), sortOrder: z.number().optional() }), output: TaskSchema },
+  'tasks.archive': { input: z.object({ taskId: z.string() }), output: TaskSchema },
+  'tasks.restore': { input: z.object({ taskId: z.string() }), output: TaskSchema },
+  'tasks.reorder': { input: z.object({ taskIds: z.array(z.string()) }), output: z.void() },
+  'tasks.remove':  { input: z.object({ taskId: z.string(), force: z.boolean().optional(), deleteBranch: z.boolean().optional() }), output: z.void() },
+  'tasks.openCheckout': { input: z.object({ projectId: z.string() }), output: TaskSchema },
 
   'sessions.start':  { input: z.object({ taskId: z.string(), harnessId: z.string(), cols: z.number(), rows: z.number() }), output: SessionSchema },
   'sessions.write':  { input: z.object({ id: z.string(), data: z.string() }), output: z.void() },
@@ -435,7 +451,17 @@ finished после Quit/рестарта.
 - При переключении задачи не убиваем PTY; скрываем контейнер.
 - Крестик на вкладке (или средний клик) закрывает её окончательно: PTY останавливается, строка сессии и scrollback удаляются из БД; `Stop` в терминале, наоборот, оставляет сессию для resume.
 - Кнопка `+` открывает новую вкладку, стрелка рядом — общий пикер профилей (Terminal + агенты). Что делает сам `+`, задаёт настройка `newSessionDefault`: `ask` (пикер) или конкретный профиль.
-- Секция **Activity** в сайдбаре показывает не все открытые вкладки, а только те, что требуют внимания: `Working` (PTY выдаёт вывод), `Idle` (агент затих, но процесс жив) и `Finished` (завершился, пока пользователь смотрел другое). Выбранная вкладка и простой shell в `Idle` не попадают. `Idle` намеренно не утверждает, что агент ждёт ответа: без hooks Nest не отличает вопрос от законченного хода, поэтому `needs_input` в статусах нет. Сессии всех задач остаются видимы в дереве проектов, даже когда задача не активна.
+- Сайдбар (ADR-012, см. §6.5.1) агрегирует статус сессий на уровне карточки задачи и ранжирует задачи по вниманию (`Agent Activity`), не дублируя завершённые вкладки под каждой задачей. `Idle` по-прежнему означает «агент затих, процесс жив», а не «ждёт ответа»: без hooks Nest не выделяет `needs_input`.
+
+### 6.5.1 Левая панель рабочих пространств (ADR-012)
+
+Детальный план переработки, макет, разбивка по этапам и итог реализации — в [left-panel-plan.md](left-panel-plan.md).
+
+- **Единица навигации — карточка задачи (`WorkspaceCard`), а не дерево PTY-строк.** Исторические и завершённые сессии принадлежат вкладкам центра и панели `Sessions` справа; карточка в левой панели показывает название задачи (с бейджем `main` для `checkout`), ветку, этап работы (`todo` / `in_progress` / `in_review` / `done`), агрегированный слот статуса (`failed > working > idle > unread > inactive`), сводку живых агентов и локальные изменения Git (`+/-` из `gitSnapshot`, без блокировки холодного старта). Отдельный прыгающий блок `Activity` над проектами убирается: задачи, требующие внимания, поднимаются сортировкой `Agent Activity`, а у свёрнутых групп в заголовке горит сводный индикатор работающих и непрочитанных карточек.
+- **Чистый планировщик списка (`sidebarPlan.ts`).** Фильтрация, поиск, секция `Pinned`, группировка (`Project` / `Status` / `None`), сортировка (`Agent Activity` / `Recent` / `Name` / `Manual` с 5-минутным окном защиты новых задач `CREATE_GRACE_MS`, чтобы фоновый вывод в старой задаче не топил только что созданную) и `orderMainCheckoutFirst` считаются чистой функцией без React и DOM. Результат — плоский массив строк для рендера, виртуализации и навигации стрелками.
+- **Разделение хранения: домен в SQLite, раскладка и вид в `localStorage`.** Свойства самой сущности (`tasks.workflow_status`, `pinned`, `notes`, `archived_at`, `unread`, `sort_order`; `projects.sort_order`, `hidden`) хранятся в SQLite (миграция 13). Геометрия колонки (`leftPanelLayout.ts` → `nest.leftPanel`: ширина `220…440 px`, коллапс в рейл `28 px`, overlay `.left-drawer` при ширине окна `<= 980 px`) и настройки вида (`sidebarView.ts` → `nest.sidebarView`: группировка, сортировка, `Detailed`/`Compact`, свёрнутые группы и фильтры) хранятся в `localStorage` и не требуют миграций БД.
+- **Переименование без поломки путей.** `tasks.update({ title })` меняет только отображаемый заголовок задачи и шлёт `task:updated`; каталог `workspace_path`, `slug` и ветка на диске не переименовываются, поэтому живые PTY и открытые дескрипторы файлов продолжают работать без перезапуска.
+- **Архивация против удаления.** `tasks.archive` запрещён для `main checkout` (`cannot_archive_checkout`); для worktree-задачи он останавливает живые PTY (`stop_requested = 1`), снимает `pinned`, ставит `status = 'archived'` и исключает путь из `WorkspaceWatcher.sync`, чтобы архивные worktree не тратили файловые наблюдатели. Сам worktree на диске, ветка, scrollback и комментарии сохраняются; `tasks.restore` возвращает задачу в активный список и заново подписывает watcher. Полное удаление с диска остаётся отдельным действием `tasks.remove` через неблокирующий `DeleteTaskDialog` (с проверкой dirty-файлов и опцией `deleteBranch`, без системного `window.confirm`).
 
 ### 6.6 Жизненный цикл и приложение
 
@@ -504,12 +530,13 @@ worktree не трогаются, сессия не стартует. `Cancel` �
 `resolveShortcut(event, { terminalFocused })` и покрыты unit-тестами:
 
 - `Ctrl+N` — диалог новой задачи для выбранного проекта;
+- `Ctrl+B` / `Ctrl+Shift+B` — свернуть или развернуть левую панель (`Ctrl+B` — только вне терминала, `Ctrl+Shift+B` — везде);
 - `Ctrl+W` — закрыть активную вкладку задачи;
 - `Ctrl+Tab` / `Ctrl+Shift+Tab` — следующая / предыдущая вкладка задачи;
 - `Ctrl+`` — вернуть каретку в активный терминал.
 
-`Ctrl+Tab` и `Ctrl+`` не заняты шеллом, поэтому xterm-хендлер возвращает для них `false` всегда.
-`Ctrl+N` (history-next) и `Ctrl+W` (kill-word) остаются за PTY, пока фокус внутри терминала:
+`Ctrl+Tab`, `Ctrl+Shift+B` и `Ctrl+`` не заняты шеллом, поэтому xterm-хендлер возвращает для них `false` всегда.
+`Ctrl+N` (history-next), `Ctrl+B` (backward-char / префикс tmux) и `Ctrl+W` (kill-word) остаются за PTY, пока фокус внутри терминала:
 глобальный listener получает их только при фокусе вне xterm, иначе bash теряет свои биндинги.
 Пока открыт любой модал (палитра, Settings, новая задача), все сочетания кроме `Ctrl+Shift+P`
 игнорируются.
@@ -878,27 +905,38 @@ PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE projects (
-  id            TEXT PRIMARY KEY,
-  name          TEXT NOT NULL,
-  path          TEXT NOT NULL UNIQUE,
-  base_ref      TEXT NOT NULL DEFAULT 'origin/main',
-  setup_script  TEXT,
-  created_at    INTEGER NOT NULL
+  id               TEXT PRIMARY KEY,
+  name             TEXT NOT NULL,
+  path             TEXT NOT NULL UNIQUE,
+  default_base_ref TEXT,
+  setup_script     TEXT,
+  sort_order       REAL NOT NULL DEFAULT 0,
+  hidden           INTEGER NOT NULL DEFAULT 0,
+  created_at       TEXT NOT NULL
 );
 
 CREATE TABLE tasks (
-  id             TEXT PRIMARY KEY,
-  project_id     TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  title          TEXT NOT NULL,
-  slug           TEXT NOT NULL,
-  kind           TEXT NOT NULL DEFAULT 'worktree'
-                 CHECK (kind IN ('worktree', 'checkout')),
-  branch         TEXT NOT NULL,
-  workspace_path TEXT NOT NULL UNIQUE,
-  base_ref       TEXT NOT NULL,
-  status         TEXT NOT NULL DEFAULT 'active',
-  created_at     INTEGER NOT NULL,
-  archived_at    INTEGER,
+  id              TEXT PRIMARY KEY,
+  project_id      TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  title           TEXT NOT NULL,
+  slug            TEXT NOT NULL,
+  kind            TEXT NOT NULL DEFAULT 'worktree'
+                  CHECK (kind IN ('worktree', 'checkout')),
+  branch          TEXT NOT NULL,
+  workspace_path  TEXT NOT NULL,
+  base_ref        TEXT,
+  status          TEXT NOT NULL DEFAULT 'active'
+                  CHECK (status IN ('active', 'archived')),
+  workflow_status TEXT NOT NULL DEFAULT 'in_progress'
+                  CHECK (workflow_status IN ('todo', 'in_progress', 'in_review', 'done')),
+  pinned          INTEGER NOT NULL DEFAULT 0,
+  sort_order      REAL NOT NULL DEFAULT 0,
+  notes           TEXT,
+  setup_error     TEXT,
+  unread          INTEGER NOT NULL DEFAULT 0,
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL,
+  archived_at     TEXT,
   UNIQUE(project_id, slug)
 );
 
