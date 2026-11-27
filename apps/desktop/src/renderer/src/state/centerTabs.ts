@@ -151,11 +151,13 @@ export function forgetTaskViews(
   targets: {
     git: { forgetTask(taskId: string): void };
     center: { forgetTaskCenter(taskId: string): void };
+    files: { clear(taskId: string): void };
   },
   taskId: string,
 ): void {
   targets.git.forgetTask(taskId);
   targets.center.forgetTaskCenter(taskId);
+  targets.files.clear(taskId);
 }
 
 /** Drops a task's center state; the next visit starts from the default. */

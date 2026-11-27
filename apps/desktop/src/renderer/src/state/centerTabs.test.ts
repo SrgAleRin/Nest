@@ -207,20 +207,27 @@ describe('center tabs', () => {
   });
 
   describe('forget task views', () => {
-    it('drops the git snapshot and the center state of a removed task together', () => {
+    it('drops the git snapshot, the center state and the viewed revision together', () => {
       const center = createCenterTabsStore();
       const forgotten: string[] = [];
+      const cleared: string[] = [];
       const git = {
         forgetTask(taskId: string) {
           forgotten.push(taskId);
         },
       };
+      const files = {
+        clear(taskId: string) {
+          cleared.push(taskId);
+        },
+      };
 
       center.openGraph('task-a', { ref: 'nest/a' });
       center.openWorkingDiff('task-b');
-      forgetTaskViews({ git, center }, 'task-a');
+      forgetTaskViews({ git, center, files }, 'task-a');
 
       expect(forgotten).toEqual(['task-a']);
+      expect(cleared).toEqual(['task-a']);
       expect(center.getSnapshot()).not.toHaveProperty('task-a');
       // The other task keeps its own surface: only the removed one is dropped.
       expect(center.getTask('task-b').active).toBe('diff');

@@ -62,6 +62,7 @@ import {
 import { changedPathCount } from './sourceControl';
 import { resolveShortcut } from './shortcuts';
 import { eventSessionData } from './state/terminalBus';
+import { filesViewActions } from './state/filesView';
 import { sessionEndEffect, unreadTotal } from './notifications';
 import { errorMessage, resumeTone, shortPath, upsert } from './utils';
 
@@ -330,7 +331,7 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
           if (event.state === 'aborted' && event.taskId) {
             const taskId = event.taskId;
             setTasks((prev) => prev.filter((task) => task.id !== taskId));
-            forgetTaskViews({ git: gitStore, center: centerTabs }, taskId);
+            forgetTaskViews({ git: gitStore, center: centerTabs, files: filesViewActions }, taskId);
           }
           return;
         case 'git:changed':
@@ -461,7 +462,7 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
         await client.invoke('projects.remove', { projectId: project.id });
         setProjects((prev) => prev.filter((candidate) => candidate.id !== project.id));
         // Every task of the project is gone, so its caches are dead weight.
-        for (const task of removed) forgetTaskViews({ git: gitStore, center: centerTabs }, task.id);
+        for (const task of removed) forgetTaskViews({ git: gitStore, center: centerTabs, files: filesViewActions }, task.id);
         await refreshAll();
       } catch (error) {
         notify('error', errorMessage(error));
@@ -705,7 +706,7 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
         await client.invoke('tasks.remove', { taskId: task.id, force });
         setTasks((prev) => prev.filter((candidate) => candidate.id !== task.id));
         // The task's caches go with it: its git snapshot and its center state.
-        forgetTaskViews({ git: gitStore, center: centerTabs }, task.id);
+        forgetTaskViews({ git: gitStore, center: centerTabs, files: filesViewActions }, task.id);
         setStartFailures((prev) => {
           if (!(task.id in prev)) return prev;
           const next = { ...prev };
@@ -1024,9 +1025,10 @@ function AppShell({ client, gitStore }: { client: NestClient; gitStore: GitSnaps
         if (selectedTaskId) centerTabs.openGraph(selectedTaskId, { commitHash: hash });
       },
       onCompareWithHead: (ref) => openCompareDiff({ base: 'HEAD', head: ref, path: null }),
-      onBrowseFiles: () => {
-        // The `Files` panel reads the revision from the shared store of the
-        // right-panel unit; this only brings that panel on screen.
+      onBrowseFiles: (ref) => {
+        // The `Files` panel reads the revision from the shared store, so setting
+        // it and showing the panel is the whole handoff; no checkout happens.
+        if (selectedTaskId) filesViewActions.setInspectedRef(selectedTaskId, ref);
         setRightTab('files');
         rightLayout.openPanel();
       },
